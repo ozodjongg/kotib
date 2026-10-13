@@ -97,4 +97,7 @@ type Store interface {
 	// ListSubscriptionsEnding — tugash vaqti (Until) [from, to) oralig'ida bo'lgan obunalar.
 	ListSubscriptionsEnding(ctx context.Context, from, to time.Time) ([]Subscription, error)
 	Stats(ctx context.Context, now time.Time) (Stats, error)
+	// UseDaily — day kuni (YYYY-MM-DD) uchun hisobni atomar bittaga oshiradi, agar u
+	// limit'dan kichik bo'lsa; limitga yetgan bo'lsa hech narsa o'zgarmaydi va false.
+	UseDaily(ctx context.Context, owner int64, day string, limit int) (bool, error)
 }

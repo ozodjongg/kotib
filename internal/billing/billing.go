@@ -18,7 +18,6 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/ozodjongg/secretar_ai_agent/internal/store"
@@ -67,10 +66,6 @@ type Service struct {
 	TrialDailyLimit int
 	Log             *slog.Logger
 	Now             func() time.Time
-
-	quotaMu   sync.Mutex
-	quotaDay  string
-	quotaUsed map[int64]int
 }
 
 // quotaZone — kunlik limit Toshkent vaqti bilan yarim tunda yangilanadi (UTC+5, yozgi vaqt yo'q).
@@ -164,7 +159,8 @@ func (s *Service) Entitled(ctx context.Context, owner int64) bool {
 
 // UseQuota model chaqirilishidan oldin: sinovdagi mijozga kuniga TrialDailyLimit tadan
 // ko'p javob tayyorlanmaydi. Ruxsat bo'lsa hisoblagich bittaga oshadi. To'langan obuna va
-// adminlar cheklanmaydi. Hisob xotirada: ilova qayta ishga tushsa, o'sha kun hisobi noldan boshlanadi.
+// adminlar cheklanmaydi. Hisob bazada (usage_daily) — qayta ishga tushish uni tozalamaydi.
+// Baza xatosida yopiq (false), Entitled kabi.
 func (s *Service) UseQuota(ctx context.Context, owner int64) bool {
 	if !s.Enabled() || s.TrialDailyLimit <= 0 || s.Exempt[owner] {
 		return true
@@ -180,17 +176,12 @@ func (s *Service) UseQuota(ctx context.Context, owner int64) bool {
 	if sub.PaidUntil.After(now) {
 		return true
 	}
-	day := now.In(quotaZone).Format(time.DateOnly)
-	s.quotaMu.Lock()
-	defer s.quotaMu.Unlock()
-	if day != s.quotaDay || s.quotaUsed == nil {
-		s.quotaDay, s.quotaUsed = day, map[int64]int{}
-	}
-	if s.quotaUsed[owner] >= s.TrialDailyLimit {
+	ok, err := s.Store.UseDaily(ctx, owner, now.In(quotaZone).Format(time.DateOnly), s.TrialDailyLimit)
+	if err != nil {
+		s.log().Error("billing quota", "owner", owner, "err", err)
 		return false
 	}
-	s.quotaUsed[owner]++
-	return true
+	return ok
 }
 
 // subscription obuna yozuvini qaytaradi. To'lov yoqilishidan OLDIN rozilik bergan

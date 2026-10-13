@@ -35,7 +35,7 @@ func TestStoreContract(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if _, err := db.Exec(`TRUNCATE accounts, subscriptions, payments CASCADE`); err != nil {
+		if _, err := db.Exec(`TRUNCATE accounts, subscriptions, payments, usage_daily CASCADE`); err != nil {
 			t.Fatal(err)
 		}
 		contract(t, store.NewPostgres(db))
@@ -163,8 +163,26 @@ func contract(t *testing.T, s store.Store) {
 		t.Fatalf("stats: %+v %v", stt, err)
 	}
 
+	for i := 0; i < 2; i++ {
+		if ok, err := s.UseDaily(ctx, 1, "2026-10-13", 2); !ok || err != nil {
+			t.Fatalf("limit ichida %d: %v %v", i, ok, err)
+		}
+	}
+	if ok, err := s.UseDaily(ctx, 1, "2026-10-13", 2); ok || err != nil {
+		t.Fatalf("limitdan oshmasligi kerak: %v %v", ok, err)
+	}
+	if ok, _ := s.UseDaily(ctx, 1, "2026-10-14", 2); !ok {
+		t.Fatal("yangi kun — yangi hisob")
+	}
+	if ok, _ := s.UseDaily(ctx, 2, "2026-10-13", 2); !ok {
+		t.Fatal("har egasi alohida")
+	}
+
 	if err := s.DeleteAccount(ctx, 1); err != nil {
 		t.Fatal(err)
+	}
+	if ok, _ := s.UseDaily(ctx, 1, "2026-10-13", 2); ok {
+		t.Fatal("akkaunt o'chirilsa ham kunlik hisob saqlanishi kerak")
 	}
 	if _, err := s.GetSubscription(ctx, 1); err != nil {
 		t.Fatal("obuna yozuvi akkaunt o'chirilganda saqlanishi kerak (qayta sinov bo'lmasin)")

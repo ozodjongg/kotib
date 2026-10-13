@@ -101,7 +101,7 @@ Wordmark shrifti — Source Serif 4 (SIL Open Font License), matn vektor konturg
 `PRICE_STARS` berilsa, to'lov yoqiladi:
 
 - Rozilik berilganda **bepul sinov** (`TRIAL_DAYS`) boshlanadi. Sinov bir marta beriladi: akkauntni o'chirib qayta ochish yangi sinov bermaydi.
-  Sinovda kuniga ko'pi bilan `TRIAL_DAILY_LIMIT` (default 50) ta javob tayyorlanadi; limit Toshkent vaqti bilan yarim tunda yangilanadi.
+  Sinovda kuniga ko'pi bilan `TRIAL_DAILY_LIMIT` (default 50) ta javob tayyorlanadi; limit Toshkent vaqti bilan yarim tunda yangilanadi, hisob Postgres'da (`usage_daily`) — qayta ishga tushish uni tozalamaydi.
   To'lov yoqilishidan oldin ro'yxatdan o'tgan mijozlar ham sinovni oladi (xizmat ogohlantirishsiz to'xtamaydi). `ADMIN_IDS` dagilar uchun bepul.
 - Mini App → **Hisob → Obuna bo'lish**: `createInvoiceLink` (XTR, `subscription_period` = 30 kun) → `Telegram.WebApp.openInvoice`.
   Bot buyrug'i `/obuna` ham to'lov havolasini beradi.
