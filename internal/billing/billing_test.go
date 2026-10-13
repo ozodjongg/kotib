@@ -212,3 +212,38 @@ func TestExemptAdmins(t *testing.T) {
 		t.Fatalf("status: %+v", st)
 	}
 }
+
+func TestTrialDailyQuota(t *testing.T) {
+	s, _, _, c := newSvc(t)
+	s.TrialDailyLimit = 3
+	s.Exempt = map[int64]bool{42: true}
+	ctx := context.Background()
+	_ = s.StartTrial(ctx, 1)
+	for i := 0; i < 3; i++ {
+		if !s.UseQuota(ctx, 1) {
+			t.Fatalf("%d-chaqiruv limit ichida", i+1)
+		}
+	}
+	if s.UseQuota(ctx, 1) {
+		t.Fatal("sinovda kunlik limitdan oshmasligi kerak")
+	}
+	if st, _ := s.Status(ctx, 1); st.TrialDaily != 3 {
+		t.Fatalf("status: %+v", st)
+	}
+	// Toshkent vaqti bilan yarim tunda (19:00 UTC) yangilanadi.
+	c.t = time.Date(2026, 10, 13, 18, 59, 0, 0, time.UTC)
+	if s.UseQuota(ctx, 1) {
+		t.Fatal("hali o'sha kun")
+	}
+	c.t = time.Date(2026, 10, 13, 19, 0, 0, 0, time.UTC)
+	if !s.UseQuota(ctx, 1) {
+		t.Fatal("yangi kunda limit qaytishi kerak")
+	}
+	// To'langan obuna va adminlar cheklanmaydi.
+	_ = s.PaymentReceived(ctx, 1, PaymentInfo{Currency: Currency, Amount: 100, ChargeID: "q1", Payload: "sub:1:0123456789abcdef"})
+	for i := 0; i < 10; i++ {
+		if !s.UseQuota(ctx, 1) || !s.UseQuota(ctx, 42) {
+			t.Fatal("to'langan obuna/admin uchun cheklov bo'lmasligi kerak")
+		}
+	}
+}

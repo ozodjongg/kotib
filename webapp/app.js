@@ -244,7 +244,7 @@ function renderConsent() {
         h('li', {}, 'Faqat kontaktlaringizga; guruh va kanallarga javob yo\'q, botlarga — standart holatda yo\'q'),
         h('li', {}, 'Pul, parol, hujjat kabi sezgir mavzular hech qachon avtomatik yuborilmaydi'),
         h('li', {}, 'Sessiya shifrlangan; istalgan payt uzib, hammasini o\'chirishingiz mumkin')),
-      b.enabled ? h('p', { class: 'muted' }, `Birinchi ${b.trial_days} kun bepul, keyin oyiga ${b.price} ⭐ (Telegram Stars).`) : null),
+      b.enabled ? h('p', { class: 'muted' }, `Birinchi ${b.trial_days} kun bepul${b.trial_daily_limit ? ` (kuniga ${b.trial_daily_limit} tagacha javob)` : ''}, keyin oyiga ${b.price} ⭐ (Telegram Stars).`) : null),
     h('div', { class: 'card soft' },
       h('p', { class: 'small muted' }, "Muhim: Telegram avtomatik javoblarni cheklashi mumkin — akkauntingiz cheklanish xavfi doim mavjud. Suhbatdoshlaringizning xabarlari javob tayyorlash uchun AI xizmatiga (Google Gemini) yuboriladi. Javoblar siz nomidan ketadi — mas'uliyat sizda."),
       h('label', { class: 'row' }, agree, h('span', { class: 'small' }, 'Tushundim va roziman'))),
@@ -653,6 +653,7 @@ function subscriptionCard(b) {
         h('li', {}, 'Shaxsiy qoidalar va uslublar'),
         h('li', {}, 'Har oy avtomatik yangilanadi, istalgan payt bekor qilinadi')),
       b.on_trial ? h('div', { class: 'progress' }, h('i', { 'data-w': pct })) : null,
+      b.on_trial && b.trial_daily_limit ? h('p', { class: 'muted small' }, `Sinovda kuniga ${b.trial_daily_limit} tagacha javob tayyorlanadi.`) : null,
       h('button', { class: 'btn block', onclick: busy(pay) }, `Obuna bo'lish · ${b.price} ⭐`),
       h('p', { class: 'muted small center' }, "To'lov Telegram Stars orqali — karta ma'lumotlari bizga kelmaydi."),
     ];

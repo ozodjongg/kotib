@@ -70,6 +70,10 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	trialDaily, err := intEnv("TRIAL_DAILY_LIMIT", 50, 0, 100000)
+	if err != nil {
+		return err
+	}
 	admins, err := parseIDs(env("ADMIN_IDS"))
 	if err != nil {
 		return err
@@ -131,15 +135,16 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
-	bill := &billing.Service{Store: st, API: ctrlBot, Price: price, TrialDays: trialDays, Exempt: admins, Log: log}
+	bill := &billing.Service{Store: st, API: ctrlBot, Price: price, TrialDays: trialDays, TrialDailyLimit: trialDaily, Exempt: admins, Log: log}
 	if bill.Enabled() {
-		log.Info("to'lov yoqilgan (Telegram Stars)", "price", price, "trial_days", trialDays)
+		log.Info("to'lov yoqilgan (Telegram Stars)", "price", price, "trial_days", trialDays, "trial_daily_limit", trialDaily)
 	}
 
 	mgr := &userbot.Manager{
 		Store: st, Conn: conn, Log: log, Notify: notify,
 		LLM:      llm.NewGemini(env("GEMINI_API_KEY"), env("GEMINI_MODEL")),
 		Entitled: bill.Entitled,
+		Quota:    bill.UseQuota,
 	}
 	ctrlBot.Handler = &botcmd.Handler{
 		Store: st, Billing: bill, Ctl: mgr, Admins: admins, Log: log,
