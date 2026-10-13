@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestGeminiReply(t *testing.T) {
@@ -52,6 +54,7 @@ func TestGeminiErrorDoesNotLeakBody(t *testing.T) {
 	defer srv.Close()
 	g := NewGemini("k", "m")
 	g.BaseURL = srv.URL
+	g.RetryDelay = time.Millisecond
 	_, err := g.Reply(context.Background(), Request{Incoming: "x"})
 	if err == nil || strings.Contains(err.Error(), "SECRET-DETAIL") {
 		t.Fatalf("xato tanani sizdirmasligi kerak: %v", err)
@@ -70,5 +73,60 @@ func TestBuildContentsMergesSameRoleAndStartsWithUser(t *testing.T) {
 		if cs[i]["role"] == cs[i-1]["role"] {
 			t.Fatal("ketma-ket bir xil rol")
 		}
+	}
+}
+
+func TestThinkingConfigPerModel(t *testing.T) {
+	cases := map[string]string{
+		"gemini-3.5-flash-lite": `{"thinkingLevel":"minimal"}`,
+		"gemini-2.5-flash":      `{"thinkingBudget":0}`,
+		"gemini-2.5-pro":        `{"thinkingBudget":128}`,
+		"gemini-2.0-flash":      `null`,
+	}
+	for model, want := range cases {
+		b, _ := json.Marshal(thinkingConfig(model))
+		if string(b) != want {
+			t.Errorf("%s: %s, kutilgan %s", model, b, want)
+		}
+	}
+}
+
+func TestGeminiRetriesWithoutThinkingOn400(t *testing.T) {
+	var calls int
+	var lastHadThinking bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		b, _ := io.ReadAll(r.Body)
+		lastHadThinking = strings.Contains(string(b), "thinkingConfig")
+		if lastHadThinking {
+			w.WriteHeader(400)
+			return
+		}
+		w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"o'ylayapman","thought":true},{"text":"Salom!"}]}}]}`))
+	}))
+	defer srv.Close()
+	g := NewGemini("k", "gemini-3.5-flash-lite")
+	g.BaseURL = srv.URL
+	out, err := g.Reply(context.Background(), Request{Incoming: "x"})
+	if err != nil || out != "Salom!" || calls != 2 || lastHadThinking {
+		t.Fatalf("out=%q err=%v calls=%d", out, err, calls)
+	}
+}
+
+func TestGeminiRetriesOnTimeout(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			time.Sleep(300 * time.Millisecond) // birinchi urinish vaqti tugaydi
+		}
+		w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}`))
+	}))
+	defer srv.Close()
+	g := NewGemini("k", "m")
+	g.BaseURL = srv.URL
+	g.HTTP.Timeout = 100 * time.Millisecond
+	out, err := g.Reply(context.Background(), Request{Incoming: "x"})
+	if err != nil || out != "ok" || calls.Load() != 2 {
+		t.Fatalf("out=%q err=%v calls=%d", out, err, calls.Load())
 	}
 }

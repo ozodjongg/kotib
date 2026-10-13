@@ -226,7 +226,8 @@ func (p *Pipeline) Handle(ctx context.Context, in Incoming) {
 	// Oxirgi kontakt xabarlari (Incoming) tarixda takrorlanmasin.
 	hist = trimTrailingContact(hist, in.Text)
 
-	lctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	// Model sekin javob berishi va bir marta qayta urinish uchun yetarli, lekin cheksiz emas.
+	lctx, cancel := context.WithTimeout(ctx, 75*time.Second)
 	defer cancel()
 	reply, err := p.LLM.Reply(lctx, llm.Request{
 		OwnerName: st.OwnerName, Persona: dec.Persona, Language: st.Language,

@@ -40,6 +40,8 @@ type Gemini struct {
 	Model   string // masalan GEMINI_MODEL env orqali: aniq nomni Google AI Studio'dan oling
 	BaseURL string // test uchun; default https://generativelanguage.googleapis.com
 	HTTP    *http.Client
+	// RetryDelay 429/5xx'dan keyin kutishning asosiy qadami (default 2s; test uchun kichik).
+	RetryDelay time.Duration
 }
 
 func NewGemini(apiKey, model string) *Gemini {
@@ -47,23 +49,85 @@ func NewGemini(apiKey, model string) *Gemini {
 		APIKey:  apiKey,
 		Model:   model,
 		BaseURL: "https://generativelanguage.googleapis.com",
-		HTTP:    &http.Client{Timeout: 25 * time.Second},
+		// Bitta urinish uchun chegara; umumiy muddatni chaqiruvchi ctx belgilaydi.
+		HTTP:       &http.Client{Timeout: 30 * time.Second},
+		RetryDelay: 2 * time.Second,
 	}
 }
 
 var ErrEmpty = errors.New("model bo'sh javob qaytardi")
 
+// thinkingConfig model oilasiga mos "o'ylash" sozlamasi. Kotib javobi qisqa, chuqur
+// mulohaza kerak emas: o'ylash qancha kam bo'lsa, javob shuncha tez (Gemini 3.x da
+// sozlanmasa default — eng yuqori daraja, bu 25+ soniyaga cho'zilishi mumkin).
+func thinkingConfig(model string) map[string]any {
+	m := strings.ToLower(model)
+	switch {
+	case strings.HasPrefix(m, "gemini-1") || strings.HasPrefix(m, "gemini-2.0"):
+		return nil // o'ylash yo'q
+	case strings.HasPrefix(m, "gemini-2.5"):
+		if strings.Contains(m, "pro") {
+			return map[string]any{"thinkingBudget": 128} // pro'da 0 qilib bo'lmaydi
+		}
+		return map[string]any{"thinkingBudget": 0}
+	default: // gemini-3 va keyingilar
+		return map[string]any{"thinkingLevel": "minimal"}
+	}
+}
+
+// httpStatusError — Gemini'dan 200 bo'lmagan javob (tana sizdirilmaydi).
+type httpStatusError struct{ code int }
+
+func (e *httpStatusError) Error() string { return fmt.Sprintf("gemini status %d", e.code) }
+
 func (g *Gemini) Reply(ctx context.Context, r Request) (string, error) {
+	gen := map[string]any{
+		"temperature": 0.8,
+		// O'ylash tokenlari ham shu limitga kiradi — javob kesilib qolmasligi uchun zaxira bilan.
+		"maxOutputTokens": 1024,
+	}
+	if tc := thinkingConfig(g.Model); tc != nil {
+		gen["thinkingConfig"] = tc
+	}
 	body := map[string]any{
 		"systemInstruction": map[string]any{"parts": []map[string]string{{"text": SystemPrompt(r)}}},
 		"contents":          buildContents(r),
-		"generationConfig": map[string]any{
-			"temperature":     0.8,
-			"maxOutputTokens": 300,
-		},
+		"generationConfig":  gen,
 	}
-	raw, _ := json.Marshal(body)
 
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		text, err := g.call(ctx, body)
+		if err == nil {
+			return text, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil {
+			break
+		}
+		var se *httpStatusError
+		switch {
+		case errors.As(err, &se) && se.code == http.StatusBadRequest && gen["thinkingConfig"] != nil:
+			// Model bu o'ylash sozlamasini qo'llamaydi — sozlamasiz qayta urinamiz.
+			delete(gen, "thinkingConfig")
+		case errors.As(err, &se) && (se.code == http.StatusTooManyRequests || se.code >= 500):
+			if sleepCtx(ctx, time.Duration(attempt+1)*g.RetryDelay) != nil {
+				return "", lastErr
+			}
+		case errors.As(err, &se), errors.Is(err, ErrEmpty):
+			return "", err // qayta urinish foydasiz
+		default:
+			// tarmoq xatosi yoki urinish vaqti tugadi — bir marta qayta urinamiz
+			if attempt >= 1 {
+				return "", err
+			}
+		}
+	}
+	return "", lastErr
+}
+
+func (g *Gemini) call(ctx context.Context, body map[string]any) (string, error) {
+	raw, _ := json.Marshal(body)
 	endpoint := fmt.Sprintf("%s/v1beta/models/%s:generateContent", strings.TrimRight(g.BaseURL, "/"), url.PathEscape(g.Model))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
 	if err != nil {
@@ -80,7 +144,7 @@ func (g *Gemini) Reply(ctx context.Context, r Request) (string, error) {
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
 		// Javob tanasini logga/mijozga qaytarmaymiz (kalit/kontent bo'lishi mumkin).
-		return "", fmt.Errorf("gemini status %d", resp.StatusCode)
+		return "", &httpStatusError{code: resp.StatusCode}
 	}
 
 	var out struct {
@@ -88,7 +152,8 @@ func (g *Gemini) Reply(ctx context.Context, r Request) (string, error) {
 			FinishReason string `json:"finishReason"`
 			Content      struct {
 				Parts []struct {
-					Text string `json:"text"`
+					Text    string `json:"text"`
+					Thought bool   `json:"thought"`
 				} `json:"parts"`
 			} `json:"content"`
 		} `json:"candidates"`
@@ -101,13 +166,26 @@ func (g *Gemini) Reply(ctx context.Context, r Request) (string, error) {
 	}
 	var sb strings.Builder
 	for _, p := range out.Candidates[0].Content.Parts {
-		sb.WriteString(p.Text)
+		if !p.Thought { // o'ylash qismlari javobga kirmaydi
+			sb.WriteString(p.Text)
+		}
 	}
 	text := strings.TrimSpace(sb.String())
 	if text == "" {
 		return "", ErrEmpty
 	}
 	return text, nil
+}
+
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 func buildContents(r Request) []map[string]any {
