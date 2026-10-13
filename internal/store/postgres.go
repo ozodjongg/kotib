@@ -225,6 +225,123 @@ func (p *Postgres) Audit(ctx context.Context, owner int64, event, detail string)
 	_, _ = p.DB.ExecContext(c, `INSERT INTO audit (owner_id, event, detail) VALUES ($1, $2, $3)`, owner, event, detail)
 }
 
+func (p *Postgres) ListAudit(ctx context.Context, owner int64, limit int) ([]AuditEntry, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := p.DB.QueryContext(ctx,
+		`SELECT at, event, detail FROM audit WHERE owner_id = $1 ORDER BY at DESC, id DESC LIMIT $2`, owner, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AuditEntry
+	for rows.Next() {
+		var e AuditEntry
+		if err := rows.Scan(&e.At, &e.Event, &e.Detail); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// ---- Billing ----
+
+func nullTime(t time.Time) sql.NullTime { return sql.NullTime{Time: t, Valid: !t.IsZero()} }
+
+const subCols = `owner_id, trial_until, paid_until, charge_id, canceled, reminded_for`
+
+func scanSub(sc interface{ Scan(...any) error }) (Subscription, error) {
+	var s Subscription
+	var trial, paid, reminded sql.NullTime
+	err := sc.Scan(&s.OwnerID, &trial, &paid, &s.ChargeID, &s.Canceled, &reminded)
+	s.TrialUntil, s.PaidUntil, s.RemindedFor = trial.Time, paid.Time, reminded.Time
+	return s, err
+}
+
+func (p *Postgres) GetSubscription(ctx context.Context, owner int64) (Subscription, error) {
+	s, err := scanSub(p.DB.QueryRowContext(ctx, `SELECT `+subCols+` FROM subscriptions WHERE owner_id = $1`, owner))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Subscription{}, ErrNotFound
+	}
+	return s, err
+}
+
+func (p *Postgres) SaveSubscription(ctx context.Context, s Subscription) error {
+	_, err := p.DB.ExecContext(ctx, `
+		INSERT INTO subscriptions (`+subCols+`, updated_at) VALUES ($1, $2, $3, $4, $5, $6, now())
+		ON CONFLICT (owner_id) DO UPDATE SET
+			trial_until = EXCLUDED.trial_until, paid_until = EXCLUDED.paid_until,
+			charge_id = EXCLUDED.charge_id, canceled = EXCLUDED.canceled,
+			reminded_for = EXCLUDED.reminded_for, updated_at = now()`,
+		s.OwnerID, nullTime(s.TrialUntil), nullTime(s.PaidUntil), s.ChargeID, s.Canceled, nullTime(s.RemindedFor))
+	return err
+}
+
+func (p *Postgres) AddPayment(ctx context.Context, pm Payment) (bool, error) {
+	res, err := p.DB.ExecContext(ctx, `
+		INSERT INTO payments (charge_id, owner_id, amount, currency, payload, recurring)
+		VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (charge_id) DO NOTHING`,
+		pm.ChargeID, pm.OwnerID, pm.Amount, pm.Currency, pm.Payload, pm.Recurring)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+func (p *Postgres) GetPayment(ctx context.Context, chargeID string) (Payment, error) {
+	var pm Payment
+	err := p.DB.QueryRowContext(ctx, `
+		SELECT charge_id, owner_id, amount, currency, payload, recurring, refunded, created_at
+		FROM payments WHERE charge_id = $1`, chargeID).
+		Scan(&pm.ChargeID, &pm.OwnerID, &pm.Amount, &pm.Currency, &pm.Payload, &pm.Recurring, &pm.Refunded, &pm.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Payment{}, ErrNotFound
+	}
+	return pm, err
+}
+
+func (p *Postgres) MarkRefunded(ctx context.Context, chargeID string) error {
+	res, err := p.DB.ExecContext(ctx,
+		`UPDATE payments SET refunded = true WHERE charge_id = $1 AND NOT refunded`, chargeID)
+	return affected(res, err)
+}
+
+func (p *Postgres) ListSubscriptionsEnding(ctx context.Context, from, to time.Time) ([]Subscription, error) {
+	rows, err := p.DB.QueryContext(ctx, `
+		SELECT `+subCols+` FROM subscriptions
+		WHERE GREATEST(COALESCE(trial_until, '-infinity'), COALESCE(paid_until, '-infinity')) >= $1
+		  AND GREATEST(COALESCE(trial_until, '-infinity'), COALESCE(paid_until, '-infinity')) < $2
+		ORDER BY owner_id`, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Subscription
+	for rows.Next() {
+		s, err := scanSub(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) Stats(ctx context.Context, now time.Time) (Stats, error) {
+	var st Stats
+	err := p.DB.QueryRowContext(ctx, `
+		SELECT
+			(SELECT count(*) FROM accounts),
+			(SELECT count(*) FROM accounts WHERE status = 'active'),
+			(SELECT count(*) FROM subscriptions WHERE paid_until > $1),
+			(SELECT COALESCE(sum(amount), 0) FROM payments WHERE NOT refunded)`, now).
+		Scan(&st.Accounts, &st.Active, &st.PaidActive, &st.StarsTotal)
+	return st, err
+}
+
 func affected(res sql.Result, err error) error {
 	if err != nil {
 		return err

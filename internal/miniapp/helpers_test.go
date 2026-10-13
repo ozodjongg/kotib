@@ -1,6 +1,8 @@
 package miniapp
 
 import (
+	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -27,3 +29,17 @@ func writeFile(t *testing.T, dir, name, body string) {
 }
 
 func containsStr(s, sub string) bool { return strings.Contains(s, sub) }
+
+func httptestReq(t *testing.T, url, auth string) []map[string]any {
+	t.Helper()
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("Authorization", auth)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out []map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	return out
+}

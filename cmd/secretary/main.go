@@ -11,10 +11,13 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/ozodjongg/secretar_ai_agent/internal/billing"
 	"github.com/ozodjongg/secretar_ai_agent/internal/bot"
+	"github.com/ozodjongg/secretar_ai_agent/internal/botcmd"
 	"github.com/ozodjongg/secretar_ai_agent/internal/crypto"
 	"github.com/ozodjongg/secretar_ai_agent/internal/llm"
 	"github.com/ozodjongg/secretar_ai_agent/internal/miniapp"
@@ -57,6 +60,19 @@ func run(log *slog.Logger) error {
 	}
 	if u, err := url.Parse(env("MINIAPP_URL")); err != nil || u.Scheme != "https" || u.Host == "" {
 		return errors.New("MINIAPP_URL https:// bilan boshlanadigan to'liq manzil bo'lishi kerak")
+	}
+
+	price, err := intEnv("PRICE_STARS", 0, 0, billing.MaxPrice)
+	if err != nil {
+		return err
+	}
+	trialDays, err := intEnv("TRIAL_DAYS", 7, 0, 90)
+	if err != nil {
+		return err
+	}
+	admins, err := parseIDs(env("ADMIN_IDS"))
+	if err != nil {
+		return err
 	}
 
 	keys, err := crypto.NewStaticKeyFromBase64(env("MASTER_KEY"))
@@ -115,9 +131,19 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
+	bill := &billing.Service{Store: st, API: ctrlBot, Price: price, TrialDays: trialDays, Exempt: admins, Log: log}
+	if bill.Enabled() {
+		log.Info("to'lov yoqilgan (Telegram Stars)", "price", price, "trial_days", trialDays)
+	}
+
 	mgr := &userbot.Manager{
 		Store: st, Conn: conn, Log: log, Notify: notify,
-		LLM: llm.NewGemini(env("GEMINI_API_KEY"), env("GEMINI_MODEL")),
+		LLM:      llm.NewGemini(env("GEMINI_API_KEY"), env("GEMINI_MODEL")),
+		Entitled: bill.Entitled,
+	}
+	ctrlBot.Handler = &botcmd.Handler{
+		Store: st, Billing: bill, Ctl: mgr, Admins: admins, Log: log,
+		Notify: func(ctx context.Context, owner int64, text string, openApp bool) { notify(ctx, owner, text, openApp) },
 	}
 
 	staticDir := env("STATIC_DIR")
@@ -125,6 +151,9 @@ func run(log *slog.Logger) error {
 		staticDir = "./webapp"
 	}
 	api := &miniapp.Server{BotToken: env("BOT_TOKEN"), Store: st, Ctl: mgr, Log: log, StaticDir: staticDir}
+	if bill.Enabled() {
+		api.Billing = bill
+	}
 
 	addr, err := listenAddr(env("LISTEN"), env("PORT"))
 	if err != nil {
@@ -137,8 +166,15 @@ func run(log *slog.Logger) error {
 		MaxHeaderBytes: 16 << 10,
 	}
 
+	go func() {
+		cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		if err := ctrlBot.SetCommands(cctx, botcmd.Commands); err != nil {
+			log.Warn("bot buyruqlari o'rnatilmadi", "err", err)
+		}
+	}()
 	go ctrlBot.Run(ctx)
-	go janitor(ctx, st, log)
+	go janitor(ctx, st, bill, notify, log)
 	go func() {
 		if err := mgr.Start(ctx); err != nil && ctx.Err() == nil {
 			log.Error("sessiyalarni ishga tushirish", "err", err)
@@ -161,6 +197,36 @@ func run(log *slog.Logger) error {
 	return nil
 }
 
+// intEnv butun sonli env qiymatini o'qiydi (bo'sh → def) va oraliqni tekshiradi.
+func intEnv(key string, def, min, max int) (int, error) {
+	v := env(key)
+	if v == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < min || n > max {
+		return 0, fmt.Errorf("%s %d–%d oralig'idagi butun son bo'lishi kerak", key, min, max)
+	}
+	return n, nil
+}
+
+// parseIDs "123,456" → {123, 456} (ADMIN_IDS).
+func parseIDs(v string) (map[int64]bool, error) {
+	out := map[int64]bool{}
+	for _, part := range strings.Split(v, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		id, err := strconv.ParseInt(part, 10, 64)
+		if err != nil || id <= 0 {
+			return nil, fmt.Errorf("ADMIN_IDS noto'g'ri: %q (vergul bilan ajratilgan Telegram ID'lar)", part)
+		}
+		out[id] = true
+	}
+	return out, nil
+}
+
 // listenAddr tinglash manzilini tanlaydi: aniq LISTEN > PORT (Railway/Heroku kabi
 // platformalar beradi, barcha interfeyslarda) > 127.0.0.1:8080 (TLS'ni reverse proxy tugatadi).
 func listenAddr(listen, port string) (string, error) {
@@ -178,7 +244,7 @@ func listenAddr(listen, port string) (string, error) {
 
 // janitor maxfiylik uchun eski ma'lumotni muntazam tozalaydi: draftlar 7 kun,
 // audit 90 kun. Har soatda (va ishga tushganda bir marta) ishlaydi.
-func janitor(ctx context.Context, st store.Store, log *slog.Logger) {
+func janitor(ctx context.Context, st store.Store, bill *billing.Service, notify billing.Notifier, log *slog.Logger) {
 	t := time.NewTicker(time.Hour)
 	defer t.Stop()
 	for {
@@ -191,6 +257,7 @@ func janitor(ctx context.Context, st store.Store, log *slog.Logger) {
 		if _, err := st.PruneAudit(ctx, now.Add(-auditTTL)); err != nil {
 			log.Warn("janitor audit", "err", err)
 		}
+		bill.RemindExpiring(ctx, notify)
 		select {
 		case <-ctx.Done():
 			return

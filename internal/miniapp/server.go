@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/ozodjongg/secretar_ai_agent/internal/billing"
 	"github.com/ozodjongg/secretar_ai_agent/internal/config"
 	"github.com/ozodjongg/secretar_ai_agent/internal/ratelimit"
 	"github.com/ozodjongg/secretar_ai_agent/internal/store"
@@ -51,10 +52,20 @@ type Controller interface {
 	Contacts(ctx context.Context, owner int64) ([]ContactInfo, error)
 }
 
+// Billing — Telegram Stars obunasi (billing.Service). nil → to'lov o'chiq.
+type Billing interface {
+	Status(ctx context.Context, owner int64) (billing.Status, error)
+	StartTrial(ctx context.Context, owner int64) error
+	InvoiceLink(ctx context.Context, owner int64) (string, error)
+	Cancel(ctx context.Context, owner int64) error
+	Renew(ctx context.Context, owner int64) error
+}
+
 type Server struct {
 	BotToken string
 	Store    store.Store
 	Ctl      Controller
+	Billing  Billing
 	Log      *slog.Logger
 	// Static — Mini App fayllari (index.html...) joylashgan papka.
 	StaticDir string
@@ -62,6 +73,7 @@ type Server struct {
 	mu        sync.Mutex
 	limiters  map[int64]*limiterEntry
 	lastSweep time.Time
+	authFails *ratelimit.Bucket // noto'g'ri initData bilan so'rovlar oqimini cheklaydi
 }
 
 type limiterEntry struct {
@@ -88,6 +100,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/drafts/{id}/send", s.auth(s.handleSendDraft))
 	mux.HandleFunc("POST /api/drafts/{id}/reject", s.auth(s.handleRejectDraft))
 	mux.HandleFunc("DELETE /api/account", s.auth(s.handleDeleteAccount))
+	mux.HandleFunc("GET /api/activity", s.auth(s.handleActivity))
+	mux.HandleFunc("GET /api/billing", s.auth(s.handleBilling))
+	mux.HandleFunc("POST /api/billing/invoice", s.auth(s.handleInvoice))
+	mux.HandleFunc("POST /api/billing/cancel", s.auth(s.handleBillingCancel))
+	mux.HandleFunc("POST /api/billing/renew", s.auth(s.handleBillingRenew))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
 	if s.StaticDir != "" {
 		mux.Handle("GET /", staticFiles(s.StaticDir))
@@ -147,8 +164,17 @@ func (s *Server) auth(next func(http.ResponseWriter, *http.Request, int64)) http
 			httpErr(w, http.StatusUnauthorized, "avtorizatsiya kerak")
 			return
 		}
-		u, err := ValidateInitData(strings.TrimPrefix(hdr, pfx), s.BotToken, 24*time.Hour, time.Now())
+		raw := strings.TrimPrefix(hdr, pfx)
+		if len(raw) > 8<<10 {
+			httpErr(w, http.StatusUnauthorized, "initData yaroqsiz")
+			return
+		}
+		u, err := ValidateInitData(raw, s.BotToken, 24*time.Hour, time.Now())
 		if err != nil {
+			if !s.allowAuthFailure() {
+				httpErr(w, http.StatusTooManyRequests, "juda tez-tez so'rov")
+				return
+			}
 			httpErr(w, http.StatusUnauthorized, "initData yaroqsiz")
 			return
 		}
@@ -159,6 +185,18 @@ func (s *Server) auth(next func(http.ResponseWriter, *http.Request, int64)) http
 		r.Body = http.MaxBytesReader(w, r.Body, 256<<10)
 		next(w, r, u.ID)
 	}
+}
+
+// allowAuthFailure — yaroqsiz initData'li so'rovlar uchun umumiy chegara
+// (taxmin qilish/yuklama hujumlarini sekinlashtiradi).
+func (s *Server) allowAuthFailure() bool {
+	s.mu.Lock()
+	if s.authFails == nil {
+		s.authFails = ratelimit.NewBucket(60, 10)
+	}
+	b := s.authFails
+	s.mu.Unlock()
+	return b.Allow()
 }
 
 // allow — har mijoz uchun API tezlik cheklovi (brute-force: login kod/parol).
@@ -205,13 +243,25 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request, owner int64) {
 		httpErr(w, 500, "xatolik")
 		return
 	}
-	writeJSON(w, 200, map[string]any{
-		"owner_id":  owner,
-		"status":    acc.Status,
-		"note":      acc.StatusNote,
-		"consented": acc.ConsentAt != nil,
-		"presets":   config.Presets,
-	})
+	pending := 0
+	if ds, err := s.Store.ListDrafts(r.Context(), owner, store.DraftPending, 100); err == nil {
+		pending = len(ds)
+	}
+	out := map[string]any{
+		"owner_id":       owner,
+		"status":         acc.Status,
+		"note":           acc.StatusNote,
+		"consented":      acc.ConsentAt != nil,
+		"presets":        config.Presets,
+		"pending_drafts": pending,
+		"billing":        billing.Status{Active: true},
+	}
+	if s.Billing != nil {
+		if bs, err := s.Billing.Status(r.Context(), owner); err == nil {
+			out["billing"] = bs
+		}
+	}
+	writeJSON(w, 200, out)
 }
 
 func (s *Server) handleConsent(w http.ResponseWriter, r *http.Request, owner int64) {
@@ -236,6 +286,11 @@ func (s *Server) handleConsent(w http.ResponseWriter, r *http.Request, owner int
 		return
 	}
 	s.Store.Audit(r.Context(), owner, "consent", "")
+	if s.Billing != nil {
+		if err := s.Billing.StartTrial(r.Context(), owner); err != nil {
+			s.logger().Warn("start trial", "owner", owner, "err", err)
+		}
+	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
@@ -494,12 +549,103 @@ func (s *Server) handleDeleteAccount(w http.ResponseWriter, r *http.Request, own
 		httpErr(w, 400, `tasdiqlash uchun "DELETE" yuboring`)
 		return
 	}
+	if s.Billing != nil {
+		// Akkaunt o'chirilsa, keyingi oy pul yechilmasin.
+		if err := s.Billing.Cancel(context.WithoutCancel(r.Context()), owner); err != nil && !errors.Is(err, billing.ErrNoSubscription) {
+			s.logger().Warn("cancel on delete", "owner", owner, "err", err)
+		}
+	}
 	if err := s.Ctl.Revoke(context.WithoutCancel(r.Context()), owner); err != nil {
 		// Telegram tomonda uzib bo'lmasa ham lokal ma'lumot o'chiriladi; mijozga ogohlantiramiz.
 		s.logger().Warn("revoke", "owner", owner, "err", err)
 	}
 	if err := s.Store.DeleteAccount(r.Context(), owner); err != nil {
 		httpErr(w, 500, "o'chirishda xatolik")
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request, owner int64) {
+	es, err := s.Store.ListAudit(r.Context(), owner, 40)
+	if err != nil {
+		httpErr(w, 500, "xatolik")
+		return
+	}
+	type row struct {
+		At     time.Time `json:"at"`
+		Event  string    `json:"event"`
+		Detail string    `json:"detail"`
+	}
+	out := make([]row, 0, len(es))
+	for _, e := range es {
+		out = append(out, row{e.At, e.Event, e.Detail})
+	}
+	writeJSON(w, 200, out)
+}
+
+func (s *Server) handleBilling(w http.ResponseWriter, r *http.Request, owner int64) {
+	if s.Billing == nil {
+		writeJSON(w, 200, billing.Status{Active: true})
+		return
+	}
+	st, err := s.Billing.Status(r.Context(), owner)
+	if err != nil {
+		httpErr(w, 500, "xatolik")
+		return
+	}
+	writeJSON(w, 200, st)
+}
+
+func (s *Server) handleInvoice(w http.ResponseWriter, r *http.Request, owner int64) {
+	if s.Billing == nil {
+		httpErr(w, 404, "to'lov yoqilmagan")
+		return
+	}
+	if !s.requireConsent(w, r, owner) {
+		return
+	}
+	link, err := s.Billing.InvoiceLink(r.Context(), owner)
+	switch {
+	case errors.Is(err, billing.ErrAlreadySubscribed):
+		httpErr(w, 409, "obunangiz allaqachon faol")
+		return
+	case errors.Is(err, billing.ErrDisabled):
+		httpErr(w, 404, "to'lov yoqilmagan")
+		return
+	case err != nil:
+		s.logger().Warn("invoice", "owner", owner, "err", err)
+		httpErr(w, 502, "to'lov havolasini yaratib bo'lmadi")
+		return
+	}
+	writeJSON(w, 200, map[string]string{"link": link})
+}
+
+func (s *Server) handleBillingCancel(w http.ResponseWriter, r *http.Request, owner int64) {
+	s.billingToggle(w, r, owner, true)
+}
+
+func (s *Server) handleBillingRenew(w http.ResponseWriter, r *http.Request, owner int64) {
+	s.billingToggle(w, r, owner, false)
+}
+
+func (s *Server) billingToggle(w http.ResponseWriter, r *http.Request, owner int64, cancel bool) {
+	if s.Billing == nil {
+		httpErr(w, 404, "to'lov yoqilmagan")
+		return
+	}
+	var err error
+	if cancel {
+		err = s.Billing.Cancel(r.Context(), owner)
+	} else {
+		err = s.Billing.Renew(r.Context(), owner)
+	}
+	if errors.Is(err, billing.ErrNoSubscription) {
+		httpErr(w, 409, "faol obuna yo'q")
+		return
+	} else if err != nil {
+		s.logger().Warn("billing toggle", "owner", owner, "err", err)
+		httpErr(w, 502, "Telegram bilan bog'lanib bo'lmadi, keyinroq urinib ko'ring")
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})

@@ -20,3 +20,27 @@ func TestListenAddr(t *testing.T) {
 		}
 	}
 }
+
+func TestParseIDs(t *testing.T) {
+	ids, err := parseIDs(" 12, 34 ,")
+	if err != nil || !ids[12] || !ids[34] || len(ids) != 2 {
+		t.Fatal(ids, err)
+	}
+	if _, err := parseIDs("12,abc"); err == nil {
+		t.Fatal("noto'g'ri ID rad etilishi kerak")
+	}
+	if _, err := parseIDs("-5"); err == nil {
+		t.Fatal("manfiy ID rad etilishi kerak")
+	}
+}
+
+func TestIntEnv(t *testing.T) {
+	t.Setenv("X_TEST", "")
+	if n, _ := intEnv("X_TEST", 7, 0, 10); n != 7 {
+		t.Fatal(n)
+	}
+	t.Setenv("X_TEST", "11")
+	if _, err := intEnv("X_TEST", 7, 0, 10); err == nil {
+		t.Fatal("oraliqdan tashqari")
+	}
+}

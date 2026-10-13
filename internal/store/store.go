@@ -83,4 +83,18 @@ type Store interface {
 	Audit(ctx context.Context, owner int64, event, detail string)
 	// PruneAudit "before"dan eski audit yozuvlarini o'chiradi.
 	PruneAudit(ctx context.Context, before time.Time) (int64, error)
+	// ListAudit egasining oxirgi audit yozuvlari (yangidan eskiga).
+	ListAudit(ctx context.Context, owner int64, limit int) ([]AuditEntry, error)
+
+	// Billing (DeleteAccount bularni o'chirmaydi — moliyaviy yozuvlar)
+	GetSubscription(ctx context.Context, owner int64) (Subscription, error)
+	SaveSubscription(ctx context.Context, s Subscription) error
+	// AddPayment to'lovni yozadi; shu charge_id avval yozilgan bo'lsa false qaytaradi.
+	AddPayment(ctx context.Context, p Payment) (bool, error)
+	GetPayment(ctx context.Context, chargeID string) (Payment, error)
+	// MarkRefunded to'lovni qaytarilgan deb belgilaydi (allaqachon qaytarilgan bo'lsa ErrNotFound).
+	MarkRefunded(ctx context.Context, chargeID string) error
+	// ListSubscriptionsEnding — tugash vaqti (Until) [from, to) oralig'ida bo'lgan obunalar.
+	ListSubscriptionsEnding(ctx context.Context, from, to time.Time) ([]Subscription, error)
+	Stats(ctx context.Context, now time.Time) (Stats, error)
 }

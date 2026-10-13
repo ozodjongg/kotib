@@ -18,6 +18,8 @@ type Memory struct {
 	drafts   map[int64]Draft
 	nextID   int64
 	audit    []auditRow
+	subs     map[int64]Subscription
+	payments map[string]Payment
 }
 
 type auditRow struct {
@@ -32,6 +34,8 @@ func NewMemory() *Memory {
 		sessions: map[int64][]byte{},
 		settings: map[int64]config.Settings{},
 		drafts:   map[int64]Draft{},
+		subs:     map[int64]Subscription{},
+		payments: map[string]Payment{},
 	}
 }
 
@@ -246,4 +250,104 @@ func (m *Memory) PruneAudit(_ context.Context, before time.Time) (int64, error) 
 	n := int64(len(m.audit) - len(kept))
 	m.audit = kept
 	return n, nil
+}
+
+func (m *Memory) ListAudit(_ context.Context, owner int64, limit int) ([]AuditEntry, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []AuditEntry
+	for i := len(m.audit) - 1; i >= 0 && (limit <= 0 || len(out) < limit); i-- {
+		if r := m.audit[i]; r.Owner == owner {
+			out = append(out, AuditEntry{At: r.At, Event: r.Event, Detail: r.Detail})
+		}
+	}
+	return out, nil
+}
+
+func (m *Memory) GetSubscription(_ context.Context, owner int64) (Subscription, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.subs[owner]
+	if !ok {
+		return Subscription{}, ErrNotFound
+	}
+	return s, nil
+}
+
+func (m *Memory) SaveSubscription(_ context.Context, s Subscription) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.subs[s.OwnerID] = s
+	return nil
+}
+
+func (m *Memory) AddPayment(_ context.Context, p Payment) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, dup := m.payments[p.ChargeID]; dup {
+		return false, nil
+	}
+	if p.CreatedAt.IsZero() {
+		p.CreatedAt = time.Now()
+	}
+	m.payments[p.ChargeID] = p
+	return true, nil
+}
+
+func (m *Memory) GetPayment(_ context.Context, chargeID string) (Payment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.payments[chargeID]
+	if !ok {
+		return Payment{}, ErrNotFound
+	}
+	return p, nil
+}
+
+func (m *Memory) MarkRefunded(_ context.Context, chargeID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.payments[chargeID]
+	if !ok || p.Refunded {
+		return ErrNotFound
+	}
+	p.Refunded = true
+	m.payments[chargeID] = p
+	return nil
+}
+
+func (m *Memory) ListSubscriptionsEnding(_ context.Context, from, to time.Time) ([]Subscription, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []Subscription
+	for _, s := range m.subs {
+		if u := s.Until(); !u.Before(from) && u.Before(to) {
+			out = append(out, s)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].OwnerID < out[j].OwnerID })
+	return out, nil
+}
+
+func (m *Memory) Stats(_ context.Context, now time.Time) (Stats, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var st Stats
+	for _, a := range m.accounts {
+		st.Accounts++
+		if a.Status == StatusActive {
+			st.Active++
+		}
+	}
+	for _, s := range m.subs {
+		if s.PaidUntil.After(now) {
+			st.PaidActive++
+		}
+	}
+	for _, p := range m.payments {
+		if !p.Refunded {
+			st.StarsTotal += int64(p.Amount)
+		}
+	}
+	return st, nil
 }

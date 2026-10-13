@@ -37,6 +37,8 @@ type Manager struct {
 	Log     *slog.Logger
 	Limits  ratelimit.Config
 	BaseCtx context.Context
+	// Entitled — obuna tekshiruvi (billing.Service.Entitled); nil → doim ruxsat.
+	Entitled func(ctx context.Context, owner int64) bool
 
 	mu         sync.Mutex
 	workers    map[int64]*worker
@@ -120,7 +122,7 @@ func (m *Manager) startWorker(owner int64) {
 	w := &worker{cancel: cancel, done: make(chan struct{})}
 	w.pipe = &Pipeline{
 		Owner: owner, Store: m.Store, LLM: m.LLM, Notify: m.Notify, Log: m.Log,
-		Limiter: ratelimit.NewLimiter(m.Limits),
+		Limiter: ratelimit.NewLimiter(m.Limits), Entitled: m.Entitled,
 	}
 	w.pipe.OnFatal = func(reason string) { go m.breaker(owner, reason) }
 	m.workers[owner] = w

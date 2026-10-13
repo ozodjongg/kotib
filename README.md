@@ -16,7 +16,9 @@ internal/userbot/     pipeline (Telegram'dan mustaqil), manager, login, gotd.go 
 internal/miniapp/     initData HMAC auth + HTTP API
 internal/store/       Store interfeysi, Postgres, Memory (dev)
 internal/bot/         boshqaruv boti (/start, bildirishnoma)
-webapp/               Mini App (vanilla JS, innerHTML ishlatilmaydi)
+internal/billing/     Telegram Stars obunasi: sinov, to'lov tasdig'i, bekor qilish, refund, eslatmalar
+internal/botcmd/      bot buyruqlari (/status, /pause, /obuna, admin /stats, /refund) va to'lov hodisalari
+webapp/               Mini App (vanilla JS, innerHTML ishlatilmaydi; iliq fil suyagi/terrakota dizayn, yorug'/qorong'i)
 migrations/           Postgres sxema (binary ichiga joylangan, ishga tushganda avtomatik qo'llanadi)
 Dockerfile            distroless, root'siz production image
 docker-compose.yml    ilova + Postgres namunasi
@@ -70,10 +72,46 @@ Repoda `railway.json` bor: Dockerfile bilan yig'iladi, healthcheck `/healthz`, *
 | `MASTER_KEY` | `openssl rand -base64 32` — session shifrlash kaliti. **Bazada saqlanmaydi** |
 | `DATABASE_URL` | Postgres; sxema ishga tushganda avtomatik yaratiladi/yangilanadi |
 | `TG_PROXY` | ixtiyoriy `socks5://...` — barqaror IP |
+| `PRICE_STARS` | oylik obuna narxi (Telegram Stars, 1–10000). Bo'sh/0 — to'lov o'chiq, xizmat bepul |
+| `TRIAL_DAYS` | bepul sinov kunlari (default 7) |
+| `ADMIN_IDS` | admin Telegram ID'lari, vergul bilan: `/stats`, `/refund`; adminlar uchun kotib bepul |
 | `LISTEN` | aniq manzil (masalan `127.0.0.1:8080`); berilmasa `PORT` ishlatiladi |
 | `PORT` | platforma beradi (Railway); `0.0.0.0:$PORT` da tinglanadi. Ikkalasi ham bo'lmasa — `127.0.0.1:8080` |
 | `STATIC_DIR` | Mini App fayllari, default `./webapp` |
 | `DEV_MEMORY=1` | faqat dev: xotirada saqlash |
+
+## To'lov: Telegram Stars obunasi
+
+`PRICE_STARS` berilsa, to'lov yoqiladi:
+
+- Rozilik berilganda **bepul sinov** (`TRIAL_DAYS`) boshlanadi. Sinov bir marta beriladi: akkauntni o'chirib qayta ochish yangi sinov bermaydi.
+  To'lov yoqilishidan oldin ro'yxatdan o'tgan mijozlar ham sinovni oladi (xizmat ogohlantirishsiz to'xtamaydi). `ADMIN_IDS` dagilar uchun bepul.
+- Mini App → **Hisob → Obuna bo'lish**: `createInvoiceLink` (XTR, `subscription_period` = 30 kun) → `Telegram.WebApp.openInvoice`.
+  Bot buyrug'i `/obuna` ham to'lov havolasini beradi.
+- Telegram har 30 kunda pulni o'zi yechadi; har to'lov `successful_payment` bo'lib keladi va obuna `subscription_expiration_date` gacha uzaytiriladi.
+- Obuna tugasa, kotib yangi xabarlarga javob tayyorlamaydi (model umuman chaqirilmaydi) va bot bir marta eslatadi. Tugashidan 24 soat oldin ham eslatma keladi.
+- **Bekor qilish** (Mini App): `editUserStarSubscription` — to'langan muddat oxirigacha ishlaydi, keyin yangilanmaydi. Qayta yoqish mumkin. Akkaunt o'chirilsa — avtomatik bekor qilinadi.
+- **Qaytarish** (admin): `/refund <telegram_payment_charge_id>` — `refundStarPayment`, shu to'lov bergan muddat darhol tugaydi.
+  `charge_id` ni `payments` jadvalidan yoki logdan olasiz. Telegram tomonidan qaytarilgan to'lovlar (`refunded_payment`) ham avtomatik qayd etiladi.
+- Yig'ilgan Stars: @BotFather → bot → **Balance** (Fragment orqali chiqariladi).
+
+To'lov xavfsizligi:
+- Obuna faqat Telegram yuborgan `successful_payment` asosida yoqiladi — Mini App yoki mijoz "to'ladim" deya olmaydi.
+- `pre_checkout_query`: payload egasi = to'lovchi, valyuta `XTR`, summa = joriy narx; aks holda to'lov rad etiladi.
+- Payload tasodifiy nonce bilan; har `telegram_payment_charge_id` bir marta hisoblanadi (takroriy update'dan himoya).
+- Faol obunada ikkinchi to'lov havolasi berilmaydi (ikki marta yechilmasin).
+- `payments`/`subscriptions` akkaunt o'chirilganda ham saqlanadi (faqat ID, sana, summa — xabar matni yo'q).
+
+## Bot buyruqlari
+
+| Buyruq | Kim | Vazifa |
+|---|---|---|
+| `/start`, `/help` | hamma | Mini App'ni ochish, yordam |
+| `/status` | hamma | holat, kutilayotgan qoralamalar, obuna |
+| `/pause`, `/resume` | hamma | kotibni darhol to'xtatish / davom ettirish |
+| `/obuna` | hamma | Stars bilan obuna bo'lish |
+| `/stats` | `ADMIN_IDS` | akkauntlar, faol obunalar, tushum |
+| `/refund <charge_id>` | `ADMIN_IDS` | to'lovni qaytarish |
 
 ## Xavfsizlik dizayni
 
@@ -81,7 +119,8 @@ Repoda `railway.json` bor: Dockerfile bilan yig'iladi, healthcheck `/healthz`, *
 - **2FA paroli** va login kodi saqlanmaydi/log qilinmaydi.
 - **Mini App auth**: `initData` HMAC (Telegram algoritmi), 24 soat muddat, har foydalanuvchiga API tezlik cheklovi, barcha so'rovlar egasi bo'yicha ajratilgan.
 - **Login himoyasi**: bir soatda ko'pi bilan 5 ta login urinishi; kod/parol faqat rozilik berilgandan keyin qabul qilinadi; akkaunt o'chirilsa jarayondagi login bekor qilinadi.
-- **HTTP**: qat'iy CSP (`unsafe-inline`siz), HSTS, COOP/CORP, Permissions-Policy; statik serverda papka ro'yxati va yashirin fayllar (`.env`, `.git`) berilmaydi; JSON'da noma'lum maydonlar rad etiladi.
+- **HTTP**: qat'iy CSP (`unsafe-inline`siz), HSTS, COOP/CORP, Permissions-Policy; statik serverda papka ro'yxati va yashirin fayllar (`.env`, `.git`) berilmaydi; JSON'da noma'lum maydonlar rad etiladi; yaroqsiz `initData` oqimi umumiy limit bilan cheklanadi (429).
+- **Mini App**: hech qayerda `innerHTML` yo'q, inline skript/stil yo'q; tugmalar bosilganda bloklanadi (ikki marta yuborish/to'lovdan himoya).
 - **Default = draft rejimi.** Avto-rejimda ham: sezgir mavzu (pul, parol/kod, hujjat, "bot misan?"...) → faqat draft; prompt-injection belgisi → modelga umuman yuborilmaydi.
 - **Kontaktda yo'q** odamlar, guruh, kanal, botlar — default javobsiz. Birinchi bo'lib yozish kodda yo'q.
 - **Ban xavfini kamaytirish**: token-bucket (global/chat/kunlik), o'qish+yozish kechikishi, "typing", xabarlarni birlashtirish (debounce), FloodWait'ga hurmat, `PEER_FLOOD`/revoked → circuit breaker (avtomatik qayta yoqilmaydi), barqaror qurilma ma'lumoti, sessiyalarni 2s oraliqda ulash.
@@ -103,4 +142,4 @@ Repoda `railway.json` bor: Dockerfile bilan yig'iladi, healthcheck `/healthz`, *
 - `gotd` bilan real sinov (o'zingizning akkaunt); `updates.Manager` holatini Postgres'da saqlash.
 - `MASTER_KEY` rotatsiyasi uchun env/KMS'dan bir nechta kalit yuklash (`crypto.StaticKeys` buni qo'llaydi).
 - Model-asosli sezgir mavzu klassifikatori (regex birinchi qatlam, to'liq emas).
-- Mijoz uchun to'lov/obuna, admin panel, monitoring (Prometheus).
+- Admin panel (veb), monitoring (Prometheus).

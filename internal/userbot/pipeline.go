@@ -60,15 +60,17 @@ const maxPendingChats = 200
 type Notifier func(ctx context.Context, owner int64, text string, openApp bool)
 
 type Pipeline struct {
-	Owner    int64
-	Store    store.Store
-	LLM      llm.Generator
-	TG       Telegram
-	Notify   Notifier
-	Limiter  *ratelimit.Limiter
-	Log      *slog.Logger
-	OnFatal  func(reason string) // circuit breaker: manager akkauntni "broken"ga o'tkazadi
-	Debounce time.Duration       // ketma-ket xabarlarni birlashtirish oynasi (default 4s)
+	Owner   int64
+	Store   store.Store
+	LLM     llm.Generator
+	TG      Telegram
+	Notify  Notifier
+	Limiter *ratelimit.Limiter
+	Log     *slog.Logger
+	OnFatal func(reason string) // circuit breaker: manager akkauntni "broken"ga o'tkazadi
+	// Entitled — obuna/sinov faolmi (nil → doim ha). Faol bo'lmasa model chaqirilmaydi.
+	Entitled func(ctx context.Context, owner int64) bool
+	Debounce time.Duration // ketma-ket xabarlarni birlashtirish oynasi (default 4s)
 
 	// testda almashtiriladi
 	Now   func() time.Time
@@ -203,6 +205,13 @@ func (p *Pipeline) Handle(ctx context.Context, in Incoming) {
 		return
 	}
 
+	if p.Entitled != nil && !p.Entitled(ctx, p.Owner) {
+		p.Store.Audit(ctx, p.Owner, "skip", "obuna faol emas")
+		p.notifyOnce(ctx, "billing", 24*time.Hour,
+			"Obuna faol emas — kotib yangi xabarlarga javob tayyorlamayapti. Davom ettirish uchun ilovada obunani yoqing.", true)
+		return
+	}
+
 	forced := "" // bo'sh bo'lmasa: avtomatik yuborish taqiqlangan, sabab shu
 	verdict := guard.ClassifyIncoming(in.Text)
 	switch verdict.Verdict {
@@ -309,7 +318,11 @@ func (p *Pipeline) makeDraft(ctx context.Context, in Incoming, reply, reason str
 		return
 	}
 	p.Store.Audit(ctx, p.Owner, "draft_created", fmt.Sprintf("id=%d", id))
-	p.notifyOnce(ctx, "draft", 30*time.Second, "Yangi javob qoralamasi tayyor. Ko'rib chiqing.", true)
+	text := "Yangi javob qoralamasi tayyor. Ko'rib chiqing."
+	if ds, err := p.Store.ListDrafts(ctx, p.Owner, store.DraftPending, 100); err == nil && len(ds) > 1 {
+		text = fmt.Sprintf("%d ta javob qoralamasi sizni kutmoqda.", len(ds))
+	}
+	p.notifyOnce(ctx, "draft", 30*time.Second, text, true)
 }
 
 // handleTGErr — circuit breaker: FloodWait'ni hurmat qiladi, fatal xatoda to'xtaydi.

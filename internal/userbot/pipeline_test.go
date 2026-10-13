@@ -219,3 +219,18 @@ func TestSendDraftRespectsLimiter(t *testing.T) {
 		t.Fatalf("ikkinchisi limitga tushishi kerak: %v", err)
 	}
 }
+
+func TestNoSubscriptionNoLLM(t *testing.T) {
+	e := newEnv(t, auto)
+	var notified int
+	e.p.Notify = func(context.Context, int64, string, bool) { notified++ }
+	e.p.Entitled = func(context.Context, int64) bool { return false }
+	e.p.Handle(context.Background(), in("salom", true))
+	e.p.Handle(context.Background(), in("yana", true))
+	if e.llm.calls != 0 || e.tg.sentCount() != 0 || len(e.drafts()) != 0 {
+		t.Fatal("obunasiz model chaqirilmasligi va hech narsa yuborilmasligi kerak")
+	}
+	if notified != 1 {
+		t.Fatalf("eslatma bir marta: %d", notified)
+	}
+}

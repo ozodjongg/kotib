@@ -35,7 +35,7 @@ func TestStoreContract(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if _, err := db.Exec(`TRUNCATE accounts CASCADE`); err != nil {
+		if _, err := db.Exec(`TRUNCATE accounts, subscriptions, payments CASCADE`); err != nil {
 			t.Fatal(err)
 		}
 		contract(t, store.NewPostgres(db))
@@ -117,8 +117,57 @@ func contract(t *testing.T, s store.Store) {
 		t.Fatal(err)
 	}
 
+	if es, err := s.ListAudit(ctx, 1, 10); err != nil || len(es) != 0 {
+		t.Fatalf("prune'dan keyin audit bo'sh: %v %v", es, err)
+	}
+	s.Audit(ctx, 1, "a", "")
+	s.Audit(ctx, 2, "b", "")
+	if es, _ := s.ListAudit(ctx, 1, 10); len(es) != 1 || es[0].Event != "a" {
+		t.Fatalf("audit izolyatsiyasi: %v", es)
+	}
+
+	// ---- billing ----
+	if _, err := s.GetSubscription(ctx, 1); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("obuna yo'q bo'lishi kerak")
+	}
+	trial := time.Now().Add(48 * time.Hour).Truncate(time.Second)
+	if err := s.SaveSubscription(ctx, store.Subscription{OwnerID: 1, TrialUntil: trial}); err != nil {
+		t.Fatal(err)
+	}
+	sub, err := s.GetSubscription(ctx, 1)
+	if err != nil || !sub.TrialUntil.Equal(trial) || !sub.PaidUntil.IsZero() {
+		t.Fatalf("subscription: %+v %v", sub, err)
+	}
+	if ls, _ := s.ListSubscriptionsEnding(ctx, time.Now(), time.Now().Add(72*time.Hour)); len(ls) != 1 {
+		t.Fatalf("ending: %v", ls)
+	}
+	if ls, _ := s.ListSubscriptionsEnding(ctx, time.Now(), time.Now().Add(time.Hour)); len(ls) != 0 {
+		t.Fatalf("ending (tor oraliq): %v", ls)
+	}
+	if ok, err := s.AddPayment(ctx, store.Payment{ChargeID: "c1", OwnerID: 1, Amount: 100, Currency: "XTR"}); !ok || err != nil {
+		t.Fatal(ok, err)
+	}
+	if ok, _ := s.AddPayment(ctx, store.Payment{ChargeID: "c1", OwnerID: 1, Amount: 100, Currency: "XTR"}); ok {
+		t.Fatal("takroriy charge_id qabul qilinmasligi kerak")
+	}
+	if p, err := s.GetPayment(ctx, "c1"); err != nil || p.Amount != 100 {
+		t.Fatal(p, err)
+	}
+	if err := s.MarkRefunded(ctx, "c1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkRefunded(ctx, "c1"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("ikki marta refund bo'lmasligi kerak")
+	}
+	if stt, err := s.Stats(ctx, time.Now()); err != nil || stt.Accounts != 2 || stt.StarsTotal != 0 {
+		t.Fatalf("stats: %+v %v", stt, err)
+	}
+
 	if err := s.DeleteAccount(ctx, 1); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := s.GetSubscription(ctx, 1); err != nil {
+		t.Fatal("obuna yozuvi akkaunt o'chirilganda saqlanishi kerak (qayta sinov bo'lmasin)")
 	}
 	if _, err := s.LoadSession(ctx, 1); !errors.Is(err, store.ErrNotFound) {
 		t.Fatal("session o'chirilishi kerak")

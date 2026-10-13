@@ -1,6 +1,7 @@
 // Package bot: boshqaruv boti (Bot API, faqat stdlib). Vazifasi:
-//   - /start → Mini App'ni ochish tugmasi;
-//   - userbot'dan mijozga bildirishnoma (draft tayyor, akkaunt to'xtadi va h.k.).
+//   - buyruqlar (/start, /status, /pause...) → Handler;
+//   - userbot'dan mijozga bildirishnoma (draft tayyor, akkaunt to'xtadi va h.k.);
+//   - Telegram Stars to'lovlari (invoice, pre_checkout, successful_payment, refund).
 //
 // Mijozning shaxsiy xabarlari bu bot orqali O'TMAYDI — ular faqat userbot sessiyasida.
 package bot
@@ -14,7 +15,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
+
+	"github.com/ozodjongg/secretar_ai_agent/internal/billing"
 )
 
 type Bot struct {
@@ -23,6 +27,7 @@ type Bot struct {
 	HTTP       *http.Client
 	Log        *slog.Logger
 	BaseURL    string // test uchun; default https://api.telegram.org
+	Handler    Handler
 }
 
 func New(token, miniAppURL string, log *slog.Logger) *Bot {
@@ -67,6 +72,7 @@ func (b *Bot) call(ctx context.Context, method string, payload any, out any) err
 type inlineBtn struct {
 	Text   string      `json:"text"`
 	WebApp *webAppInfo `json:"web_app,omitempty"`
+	URL    string      `json:"url,omitempty"`
 }
 type webAppInfo struct {
 	URL string `json:"url"`
@@ -75,34 +81,135 @@ type webAppInfo struct {
 // Notify mijozga xabar yuboradi; openApp=true bo'lsa "Ochish" (Mini App) tugmasi bilan.
 // Xabar matniga kontakt xabarlarini QO'SHMANG — bildirishnomalar faqat meta ma'lumot.
 func (b *Bot) Notify(ctx context.Context, chatID int64, text string, openApp bool) error {
-	p := map[string]any{"chat_id": chatID, "text": text}
-	if openApp && b.MiniAppURL != "" {
-		p["reply_markup"] = map[string]any{
-			"inline_keyboard": [][]inlineBtn{{{Text: "Ochish", WebApp: &webAppInfo{URL: b.MiniAppURL}}}},
-		}
+	return b.send(ctx, chatID, Reply{Text: text, OpenApp: openApp})
+}
+
+// Reply — buyruqqa javob.
+type Reply struct {
+	Text      string
+	OpenApp   bool   // "Ochish" (Mini App) tugmasi
+	ButtonURL string // ixtiyoriy havola tugmasi (masalan, to'lov)
+	Button    string // ButtonURL matni
+}
+
+func (b *Bot) send(ctx context.Context, chatID int64, r Reply) error {
+	p := map[string]any{"chat_id": chatID, "text": r.Text}
+	var row []inlineBtn
+	if r.ButtonURL != "" {
+		row = append(row, inlineBtn{Text: r.Button, URL: r.ButtonURL})
+	}
+	if r.OpenApp && b.MiniAppURL != "" {
+		row = append(row, inlineBtn{Text: "Ochish", WebApp: &webAppInfo{URL: b.MiniAppURL}})
+	}
+	if len(row) > 0 {
+		p["reply_markup"] = map[string]any{"inline_keyboard": [][]inlineBtn{row}}
 	}
 	return b.call(ctx, "sendMessage", p, nil)
+}
+
+// ---- Telegram Stars (billing.API) ----
+
+var _ billing.API = (*Bot)(nil)
+
+func (b *Bot) CreateInvoiceLink(ctx context.Context, in billing.InvoiceLink) (string, error) {
+	var link string
+	err := b.call(ctx, "createInvoiceLink", map[string]any{
+		"title":               in.Title,
+		"description":         in.Description,
+		"payload":             in.Payload,
+		"currency":            billing.Currency,
+		"prices":              []map[string]any{{"label": in.Label, "amount": in.Amount}},
+		"subscription_period": in.SubscriptionPeriod,
+	}, &link)
+	return link, err
+}
+
+func (b *Bot) EditUserStarSubscription(ctx context.Context, userID int64, chargeID string, canceled bool) error {
+	return b.call(ctx, "editUserStarSubscription", map[string]any{
+		"user_id": userID, "telegram_payment_charge_id": chargeID, "is_canceled": canceled,
+	}, nil)
+}
+
+func (b *Bot) RefundStarPayment(ctx context.Context, userID int64, chargeID string) error {
+	return b.call(ctx, "refundStarPayment", map[string]any{
+		"user_id": userID, "telegram_payment_charge_id": chargeID,
+	}, nil)
+}
+
+// Command — bot menyusidagi buyruq.
+type Command struct {
+	Name, Description string
+}
+
+// SetCommands bot menyusini ("/" tugmasi) o'rnatadi.
+func (b *Bot) SetCommands(ctx context.Context, cmds []Command) error {
+	list := make([]map[string]string, 0, len(cmds))
+	for _, c := range cmds {
+		list = append(list, map[string]string{"command": c.Name, "description": c.Description})
+	}
+	return b.call(ctx, "setMyCommands", map[string]any{"commands": list}, nil)
+}
+
+// ---- Update'larni qayta ishlash ----
+
+// Handler — buyruqlar va to'lov hodisalari. Barcha "from" qiymatlari Telegram
+// update'idan olinadi (soxtalashtirib bo'lmaydi).
+type Handler interface {
+	// Command shaxsiy chatdagi "/buyruq args"ga javob; bo'sh Text — javobsiz.
+	Command(ctx context.Context, from int64, cmd, args string) Reply
+	// PreCheckout nil qaytarsa to'lovga ruxsat beriladi; aks holda xato matni mijozga ko'rsatiladi.
+	PreCheckout(ctx context.Context, from int64, currency string, amount int, payload string) error
+	Paid(ctx context.Context, from int64, p billing.PaymentInfo)
+	Refunded(ctx context.Context, from int64, chargeID string)
+}
+
+type user struct {
+	ID int64 `json:"id"`
+}
+
+type successfulPayment struct {
+	Currency                   string `json:"currency"`
+	TotalAmount                int    `json:"total_amount"`
+	InvoicePayload             string `json:"invoice_payload"`
+	SubscriptionExpirationDate int64  `json:"subscription_expiration_date"`
+	IsRecurring                bool   `json:"is_recurring"`
+	IsFirstRecurring           bool   `json:"is_first_recurring"`
+	TelegramPaymentChargeID    string `json:"telegram_payment_charge_id"`
+}
+
+type refundedPayment struct {
+	TelegramPaymentChargeID string `json:"telegram_payment_charge_id"`
 }
 
 type update struct {
 	UpdateID int `json:"update_id"`
 	Message  *struct {
 		Text string `json:"text"`
+		From *user  `json:"from"`
 		Chat struct {
 			ID   int64  `json:"id"`
 			Type string `json:"type"`
 		} `json:"chat"`
+		SuccessfulPayment *successfulPayment `json:"successful_payment"`
+		RefundedPayment   *refundedPayment   `json:"refunded_payment"`
 	} `json:"message"`
+	PreCheckoutQuery *struct {
+		ID             string `json:"id"`
+		From           user   `json:"from"`
+		Currency       string `json:"currency"`
+		TotalAmount    int    `json:"total_amount"`
+		InvoicePayload string `json:"invoice_payload"`
+	} `json:"pre_checkout_query"`
 }
 
-// Run long-polling bilan /start'ga javob beradi. ctx bekor qilinganda to'xtaydi.
+// Run long-polling bilan update'larni qabul qiladi. ctx bekor qilinganda to'xtaydi.
 func (b *Bot) Run(ctx context.Context) {
 	offset := 0
 	backoff := time.Second
 	for ctx.Err() == nil {
 		var ups []update
 		err := b.call(ctx, "getUpdates", map[string]any{
-			"offset": offset, "timeout": 30, "allowed_updates": []string{"message"},
+			"offset": offset, "timeout": 30, "allowed_updates": []string{"message", "pre_checkout_query"},
 		}, &ups)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -122,15 +229,74 @@ func (b *Bot) Run(ctx context.Context) {
 		backoff = time.Second
 		for _, u := range ups {
 			offset = u.UpdateID + 1
-			if u.Message == nil || u.Message.Chat.Type != "private" {
-				continue
-			}
-			if t := u.Message.Text; len(t) >= 6 && t[:6] == "/start" {
-				if err := b.Notify(ctx, u.Message.Chat.ID,
-					"Salom! Kotibni sozlash va draftlarni ko'rish uchun pastdagi tugmani bosing.", true); err != nil {
-					b.Log.Warn("bot /start", "err", err)
-				}
-			}
+			b.dispatch(ctx, u)
 		}
 	}
+}
+
+func (b *Bot) dispatch(ctx context.Context, u update) {
+	if q := u.PreCheckoutQuery; q != nil {
+		// Telegram 10 soniya ichida javob kutadi — sinxron javob beramiz.
+		ans := map[string]any{"pre_checkout_query_id": q.ID, "ok": true}
+		if b.Handler == nil {
+			ans["ok"], ans["error_message"] = false, "To'lov hozircha qabul qilinmaydi."
+		} else if err := b.Handler.PreCheckout(ctx, q.From.ID, q.Currency, q.TotalAmount, q.InvoicePayload); err != nil {
+			ans["ok"], ans["error_message"] = false, err.Error()
+		}
+		if err := b.call(ctx, "answerPreCheckoutQuery", ans, nil); err != nil {
+			b.Log.Warn("answerPreCheckoutQuery", "err", err)
+		}
+		return
+	}
+	m := u.Message
+	if m == nil || m.Chat.Type != "private" || m.From == nil {
+		return
+	}
+	from := m.From.ID
+	if sp := m.SuccessfulPayment; sp != nil && b.Handler != nil {
+		p := billing.PaymentInfo{
+			Currency: sp.Currency, Amount: sp.TotalAmount, Payload: sp.InvoicePayload,
+			ChargeID: sp.TelegramPaymentChargeID, Recurring: sp.IsRecurring, FirstRecurring: sp.IsFirstRecurring,
+		}
+		if sp.SubscriptionExpirationDate > 0 {
+			p.ExpiresAt = time.Unix(sp.SubscriptionExpirationDate, 0)
+		}
+		b.Handler.Paid(ctx, from, p)
+		return
+	}
+	if rp := m.RefundedPayment; rp != nil && b.Handler != nil {
+		b.Handler.Refunded(ctx, from, rp.TelegramPaymentChargeID)
+		return
+	}
+	cmd, args, ok := parseCommand(m.Text)
+	if !ok {
+		return
+	}
+	var r Reply
+	if b.Handler != nil {
+		r = b.Handler.Command(ctx, from, cmd, args)
+	} else if cmd == "start" {
+		r = Reply{Text: "Salom! Kotibni sozlash va qoralamalarni ko'rish uchun pastdagi tugmani bosing.", OpenApp: true}
+	}
+	if r.Text == "" {
+		return
+	}
+	if err := b.send(ctx, m.Chat.ID, r); err != nil {
+		b.Log.Warn("bot reply", "cmd", cmd, "err", err)
+	}
+}
+
+// parseCommand "/cmd@BotName args" → ("cmd", "args").
+func parseCommand(text string) (cmd, args string, ok bool) {
+	text = strings.TrimSpace(text)
+	if !strings.HasPrefix(text, "/") || len(text) > 512 {
+		return "", "", false
+	}
+	head, rest, _ := strings.Cut(text[1:], " ")
+	head, _, _ = strings.Cut(head, "@")
+	head = strings.ToLower(head)
+	if head == "" || len(head) > 32 {
+		return "", "", false
+	}
+	return head, strings.TrimSpace(rest), true
 }
