@@ -61,6 +61,21 @@ Repoda `railway.json` bor: Dockerfile bilan yig'iladi, healthcheck `/healthz`, *
 **Replica sonini oshirmang**: ikki nusxa bitta Telegram sessiyasiga ulanib, ban xavfini oshiradi
 (login holati ham xotirada). Railway IP'lari umumiy — Telegram login'ni bloklasa, `TG_PROXY` qo'shing.
 
+## Brending
+
+`branding/` — logo (gap pufagi ichida qalam uchi: "siz nomingizdan yozadi"), terrakota/fil suyagi ranglarida.
+
+| Fayl | Qayerda ishlatiladi |
+|---|---|
+| `logo.svg` | asosiy belgi (vektor) |
+| `logo-640.png` | @BotFather → `/setuserpic` (bot avatari) |
+| `logo-1024.png`, `logo-512.png` | do'kon, ijtimoiy tarmoqlar, taqdimot |
+| `logo-192.png`, `logo-64.png`, `logo-32.png` | ilova ikonkasi, favicon |
+| `wordmark.svg/.png`, `wordmark-dark.svg/.png` | belgi + "Kotib" yozuvi (yorug' / qorong'i fon) |
+| `preview.png` | umumiy ko'rinish |
+
+Wordmark shrifti — Source Serif 4 (SIL Open Font License), matn vektor konturga aylantirilgan: shrift o'rnatish shart emas.
+
 ## Sozlash (env)
 
 | O'zgaruvchi | Izoh |

@@ -192,7 +192,7 @@ textarea { min-height: 96px; resize: vertical; line-height: 1.5; }
 .steps { display: flex; gap: 6px; margin: 4px 0 18px; }
 .steps i { flex: 1; height: 4px; border-radius: 999px; background: var(--border); }
 .steps i.on { background: var(--accent); }
-.logo { width: 48px; height: 48px; border-radius: 14px; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; font-family: var(--serif); font-size: 26px; margin-bottom: 14px; }
+.logo { display: block; width: 56px; height: 56px; margin-bottom: 14px; }
 
 /* ---- pastki navigatsiya ---- */
 #nav {

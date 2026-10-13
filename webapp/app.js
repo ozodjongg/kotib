@@ -176,7 +176,7 @@ async function boot() {
   }
   if (!tg || !tg.initData) {
     swap(root, h('div', { class: 'empty' },
-      h('div', { class: 'logo' }, 'K'),
+      h('img', { class: 'logo', src: 'logo.svg', alt: 'Kotib', width: 56, height: 56 }),
       h('div', { class: 'big' }, 'Ilovani Telegram ichidan oching'),
       h('p', { class: 'muted' }, 'Kotib faqat Telegram bot orqali ishlaydi: botga /start yozing va «Ochish» tugmasini bosing.')));
     return;
@@ -234,14 +234,14 @@ function renderConsent() {
 
   swap(root, 
     steps(1),
-    h('div', { class: 'logo' }, 'K'),
+    h('img', { class: 'logo', src: 'logo.svg', alt: 'Kotib', width: 56, height: 56 }),
     h('div', { class: 'hero' },
       h('h1', {}, 'Kotibingiz bilan tanishing'),
       h('p', { class: 'muted' }, "Kiruvchi shaxsiy xabarlaringizga sizning uslubingizda javob qoralamasini tayyorlaydi. Siz tasdiqlamaguncha hech narsa yuborilmaydi.")),
     h('div', { class: 'card' },
       h('ul', { class: 'perks' },
         h('li', {}, 'Standart rejim — qoralama: har bir javobni o\'zingiz ko\'rib yuborasiz'),
-        h('li', {}, 'Faqat kontaktlaringizga; guruh, kanal va botlarga javob yo\'q'),
+        h('li', {}, 'Faqat kontaktlaringizga; guruh va kanallarga javob yo\'q, botlarga — standart holatda yo\'q'),
         h('li', {}, 'Pul, parol, hujjat kabi sezgir mavzular hech qachon avtomatik yuborilmaydi'),
         h('li', {}, 'Sessiya shifrlangan; istalgan payt uzib, hammasini o\'chirishingiz mumkin')),
       b.enabled ? h('p', { class: 'muted' }, `Birinchi ${b.trial_days} kun bepul, keyin oyiga ${b.price} ⭐ (Telegram Stars).`) : null),
