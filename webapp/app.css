@@ -1,0 +1,38 @@
+:root {
+  --bg: var(--tg-theme-bg-color, #fff);
+  --fg: var(--tg-theme-text-color, #111);
+  --muted: var(--tg-theme-hint-color, #777);
+  --link: var(--tg-theme-link-color, #2481cc);
+  --btn: var(--tg-theme-button-color, #2481cc);
+  --btn-fg: var(--tg-theme-button-text-color, #fff);
+  --card: var(--tg-theme-secondary-bg-color, #f2f3f5);
+  --danger: #d33;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.4 -apple-system, system-ui, sans-serif; }
+#app { padding: 12px 14px 80px; max-width: 640px; margin: 0 auto; }
+h2 { font-size: 17px; margin: 18px 0 8px; }
+.muted { color: var(--muted); font-size: 13px; }
+.card { background: var(--card); border-radius: 12px; padding: 12px; margin: 10px 0; }
+.row { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
+.row > label { flex: 1 1 100%; font-size: 13px; color: var(--muted); }
+input[type=text], input[type=password], input[type=tel], input[type=time], select, textarea {
+  width: 100%; padding: 10px; border-radius: 10px; border: 1px solid #8884; background: var(--bg); color: var(--fg); font: inherit;
+}
+textarea { min-height: 70px; resize: vertical; }
+button { border: 0; border-radius: 10px; padding: 10px 14px; font: inherit; background: var(--btn); color: var(--btn-fg); }
+button.secondary { background: var(--card); color: var(--fg); border: 1px solid #8884; }
+button.danger { background: var(--danger); color: #fff; }
+button:disabled { opacity: .5; }
+.tabs { display: flex; gap: 6px; position: sticky; top: 0; background: var(--bg); padding: 8px 0; z-index: 2; }
+.tabs button { flex: 1; background: var(--card); color: var(--fg); }
+.tabs button.on { background: var(--btn); color: var(--btn-fg); }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #8883; font-size: 12px; }
+.badge.ok { background: #2a72; color: #1a7a3a; }
+.badge.bad { background: #d332; color: var(--danger); }
+.clist { max-height: 180px; overflow: auto; border: 1px solid #8884; border-radius: 10px; padding: 6px; }
+.clist label { display: flex; gap: 8px; padding: 4px 2px; font-size: 14px; }
+.msg { white-space: pre-wrap; word-break: break-word; }
+.in { color: var(--muted); border-left: 3px solid #8886; padding-left: 8px; }
+.err { color: var(--danger); font-size: 13px; margin: 6px 0; }
+.full { width: 100%; }
