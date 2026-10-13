@@ -70,6 +70,9 @@ type Pipeline struct {
 	OnFatal func(reason string) // circuit breaker: manager akkauntni "broken"ga o'tkazadi
 	// Entitled — obuna/sinov faolmi (nil → doim ha). Faol bo'lmasa model chaqirilmaydi.
 	Entitled func(ctx context.Context, owner int64) bool
+	// Quota — kunlik limit (sinovda); har model chaqiruvidan oldin, false → chaqirilmaydi.
+	// nil → cheklovsiz.
+	Quota    func(ctx context.Context, owner int64) bool
 	Debounce time.Duration // ketma-ket xabarlarni birlashtirish oynasi (default 4s)
 
 	// testda almashtiriladi
@@ -228,6 +231,13 @@ func (p *Pipeline) Handle(ctx context.Context, in Incoming) {
 	}
 	if forced == "" && now.Before(p.blockedUntilTime()) {
 		forced = "Telegram kutishni so'radi (FloodWait)" // kutamiz, faqat draft tayyorlaymiz
+	}
+
+	if p.Quota != nil && !p.Quota(ctx, p.Owner) {
+		p.Store.Audit(ctx, p.Owner, "skip", "sinov kunlik limiti")
+		p.notifyOnce(ctx, "quota", 12*time.Hour,
+			"Bepul sinovda bugungi javoblar limiti tugadi — kotib ertagacha yangi xabarlarga javob tayyorlamaydi. Obuna bo'lsangiz, cheklov yo'qoladi.", true)
+		return
 	}
 
 	hist, err := tg.History(ctx, in.ChatID, 8)

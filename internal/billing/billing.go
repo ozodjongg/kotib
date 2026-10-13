@@ -61,9 +61,15 @@ type Service struct {
 	Price     int // oyiga Stars; 0 → to'lov o'chiq, xizmat hammaga bepul
 	TrialDays int
 	Exempt    map[int64]bool // to'lovdan ozod (ADMIN_IDS) — o'z botingizni bepul ishlatish/sinash uchun
-	Log       *slog.Logger
-	Now       func() time.Time
+	// TrialDailyLimit — sinovdagi mijozga kuniga ko'pi bilan shuncha javob tayyorlanadi
+	// (bepul sinov xarajatini cheklash). 0 → cheksiz.
+	TrialDailyLimit int
+	Log             *slog.Logger
+	Now             func() time.Time
 }
+
+// quotaZone — kunlik limit Toshkent vaqti bilan yarim tunda yangilanadi (UTC+5, yozgi vaqt yo'q).
+var quotaZone = time.FixedZone("Asia/Tashkent", 5*60*60)
 
 func (s *Service) Enabled() bool { return s != nil && s.Price > 0 }
 
@@ -96,6 +102,7 @@ type Status struct {
 	PaidUntil  *time.Time `json:"paid_until"`
 	Until      *time.Time `json:"until"`
 	DaysLeft   int        `json:"days_left"`
+	TrialDaily int        `json:"trial_daily_limit"` // sinovda kuniga javoblar limiti; 0 — cheksiz
 }
 
 func ptr(t time.Time) *time.Time {
@@ -109,7 +116,7 @@ func (s *Service) Status(ctx context.Context, owner int64) (Status, error) {
 	if !s.Enabled() {
 		return Status{Active: true}, nil
 	}
-	st := Status{Enabled: true, Price: s.Price, TrialDays: s.TrialDays}
+	st := Status{Enabled: true, Price: s.Price, TrialDays: s.TrialDays, TrialDaily: s.TrialDailyLimit}
 	if s.Exempt[owner] {
 		st.Active, st.Exempt = true, true
 		return st, nil
@@ -148,6 +155,33 @@ func (s *Service) Entitled(ctx context.Context, owner int64) bool {
 		return false
 	}
 	return sub.Until().After(s.now())
+}
+
+// UseQuota model chaqirilishidan oldin: sinovdagi mijozga kuniga TrialDailyLimit tadan
+// ko'p javob tayyorlanmaydi. Ruxsat bo'lsa hisoblagich bittaga oshadi. To'langan obuna va
+// adminlar cheklanmaydi. Hisob bazada (usage_daily) — qayta ishga tushish uni tozalamaydi.
+// Baza xatosida yopiq (false), Entitled kabi.
+func (s *Service) UseQuota(ctx context.Context, owner int64) bool {
+	if !s.Enabled() || s.TrialDailyLimit <= 0 || s.Exempt[owner] {
+		return true
+	}
+	sub, err := s.subscription(ctx, owner)
+	if err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			s.log().Error("billing quota", "owner", owner, "err", err)
+		}
+		return false
+	}
+	now := s.now()
+	if sub.PaidUntil.After(now) {
+		return true
+	}
+	ok, err := s.Store.UseDaily(ctx, owner, now.In(quotaZone).Format(time.DateOnly), s.TrialDailyLimit)
+	if err != nil {
+		s.log().Error("billing quota", "owner", owner, "err", err)
+		return false
+	}
+	return ok
 }
 
 // subscription obuna yozuvini qaytaradi. To'lov yoqilishidan OLDIN rozilik bergan

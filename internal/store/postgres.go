@@ -358,3 +358,19 @@ func affected(res sql.Result, err error) error {
 
 var _ Store = (*Postgres)(nil)
 var _ Store = (*Memory)(nil)
+
+func (p *Postgres) UseDaily(ctx context.Context, owner int64, day string, limit int) (bool, error) {
+	if limit <= 0 {
+		return false, nil
+	}
+	var used int
+	err := p.DB.QueryRowContext(ctx, `
+		INSERT INTO usage_daily (owner_id, day, used) VALUES ($1, $2::date, 1)
+		ON CONFLICT (owner_id, day) DO UPDATE SET used = usage_daily.used + 1
+		WHERE usage_daily.used < $3
+		RETURNING used`, owner, day, limit).Scan(&used)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil // limitga yetgan: UPDATE sharti bajarilmadi
+	}
+	return err == nil, err
+}

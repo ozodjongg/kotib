@@ -89,6 +89,7 @@ Wordmark shrifti — Source Serif 4 (SIL Open Font License), matn vektor konturg
 | `TG_PROXY` | ixtiyoriy `socks5://...` — barqaror IP |
 | `PRICE_STARS` | oylik obuna narxi (Telegram Stars, 1–10000). Bo'sh/0 — to'lov o'chiq, xizmat bepul |
 | `TRIAL_DAYS` | bepul sinov kunlari (default 7) |
+| `TRIAL_DAILY_LIMIT` | sinovda kuniga ko'pi bilan nechta javob tayyorlanadi (default 50; 0 — cheksiz). To'langan obunada cheklov yo'q |
 | `ADMIN_IDS` | admin Telegram ID'lari, vergul bilan: `/stats`, `/refund`; adminlar uchun kotib bepul |
 | `LISTEN` | aniq manzil (masalan `127.0.0.1:8080`); berilmasa `PORT` ishlatiladi |
 | `PORT` | platforma beradi (Railway); `0.0.0.0:$PORT` da tinglanadi. Ikkalasi ham bo'lmasa — `127.0.0.1:8080` |
@@ -100,6 +101,7 @@ Wordmark shrifti — Source Serif 4 (SIL Open Font License), matn vektor konturg
 `PRICE_STARS` berilsa, to'lov yoqiladi:
 
 - Rozilik berilganda **bepul sinov** (`TRIAL_DAYS`) boshlanadi. Sinov bir marta beriladi: akkauntni o'chirib qayta ochish yangi sinov bermaydi.
+  Sinovda kuniga ko'pi bilan `TRIAL_DAILY_LIMIT` (default 50) ta javob tayyorlanadi; limit Toshkent vaqti bilan yarim tunda yangilanadi, hisob Postgres'da (`usage_daily`) — qayta ishga tushish uni tozalamaydi.
   To'lov yoqilishidan oldin ro'yxatdan o'tgan mijozlar ham sinovni oladi (xizmat ogohlantirishsiz to'xtamaydi). `ADMIN_IDS` dagilar uchun bepul.
 - Mini App → **Hisob → Obuna bo'lish**: `createInvoiceLink` (XTR, `subscription_period` = 30 kun) → `Telegram.WebApp.openInvoice`.
   Bot buyrug'i `/obuna` ham to'lov havolasini beradi.

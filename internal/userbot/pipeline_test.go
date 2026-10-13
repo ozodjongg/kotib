@@ -235,6 +235,23 @@ func TestNoSubscriptionNoLLM(t *testing.T) {
 	}
 }
 
+func TestQuotaExceededNoLLM(t *testing.T) {
+	e := newEnv(t, auto)
+	var notified int
+	e.p.Notify = func(context.Context, int64, string, bool) { notified++ }
+	left := 1
+	e.p.Quota = func(context.Context, int64) bool { left--; return left >= 0 }
+	e.p.Handle(context.Background(), in("salom", true))
+	e.p.Handle(context.Background(), in("yana", true))
+	e.p.Handle(context.Background(), in("yana bir", true))
+	if e.llm.calls != 1 {
+		t.Fatalf("limitdan keyin model chaqirilmasligi kerak: %d", e.llm.calls)
+	}
+	if notified != 1 {
+		t.Fatalf("eslatma bir marta: %d", notified)
+	}
+}
+
 func TestBotNeverAutoSent(t *testing.T) {
 	e := newEnv(t, func(s *config.Settings) { s.Mode = config.ModeAuto; s.ReplyBots = true })
 	e.p.Handle(context.Background(), Incoming{ChatID: 50, MsgID: 1, Text: "salom", Contact: config.Contact{UserID: 50, IsBot: true}})

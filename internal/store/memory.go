@@ -20,6 +20,12 @@ type Memory struct {
 	audit    []auditRow
 	subs     map[int64]Subscription
 	payments map[string]Payment
+	usage    map[usageKey]int
+}
+
+type usageKey struct {
+	owner int64
+	day   string
 }
 
 type auditRow struct {
@@ -36,6 +42,7 @@ func NewMemory() *Memory {
 		drafts:   map[int64]Draft{},
 		subs:     map[int64]Subscription{},
 		payments: map[string]Payment{},
+		usage:    map[usageKey]int{},
 	}
 }
 
@@ -350,4 +357,18 @@ func (m *Memory) Stats(_ context.Context, now time.Time) (Stats, error) {
 		}
 	}
 	return st, nil
+}
+
+func (m *Memory) UseDaily(_ context.Context, owner int64, day string, limit int) (bool, error) {
+	if _, err := time.Parse(time.DateOnly, day); err != nil {
+		return false, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := usageKey{owner, day}
+	if m.usage[k] >= limit {
+		return false, nil
+	}
+	m.usage[k]++
+	return true, nil
 }
