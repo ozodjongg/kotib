@@ -223,6 +223,9 @@ func (p *Pipeline) Handle(ctx context.Context, in Incoming) {
 	case guard.Confirm:
 		forced = "sezgir mavzu: " + verdict.Reason // hech qachon avtomatik emas
 	}
+	if forced == "" && in.Contact.IsBot {
+		forced = "bot — faqat qoralama" // ikkinchi himoya qatlami (config.Resolve ham draft qiladi)
+	}
 	if forced == "" && now.Before(p.blockedUntilTime()) {
 		forced = "Telegram kutishni so'radi (FloodWait)" // kutamiz, faqat draft tayyorlaymiz
 	}

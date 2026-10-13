@@ -234,3 +234,19 @@ func TestNoSubscriptionNoLLM(t *testing.T) {
 		t.Fatalf("eslatma bir marta: %d", notified)
 	}
 }
+
+func TestBotNeverAutoSent(t *testing.T) {
+	e := newEnv(t, func(s *config.Settings) { s.Mode = config.ModeAuto; s.ReplyBots = true })
+	e.p.Handle(context.Background(), Incoming{ChatID: 50, MsgID: 1, Text: "salom", Contact: config.Contact{UserID: 50, IsBot: true}})
+	if e.tg.sentCount() != 0 || len(e.drafts()) != 1 {
+		t.Fatalf("botga faqat qoralama: sent=%d drafts=%d", e.tg.sentCount(), len(e.drafts()))
+	}
+}
+
+func TestBotIgnoredByDefault(t *testing.T) {
+	e := newEnv(t, auto)
+	e.p.Handle(context.Background(), Incoming{ChatID: 50, MsgID: 1, Text: "salom", Contact: config.Contact{UserID: 50, IsBot: true}})
+	if e.llm.calls != 0 || len(e.drafts()) != 0 {
+		t.Fatal("default holatda botga hech narsa qilinmasligi kerak")
+	}
+}

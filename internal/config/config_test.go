@@ -135,3 +135,28 @@ func TestTelegramServiceNeverAnswered(t *testing.T) {
 		t.Fatal("botga javob bo'lmasligi kerak")
 	}
 }
+
+func TestReplyBotsSetting(t *testing.T) {
+	s := Default()
+	s.Quiet.Enabled = false
+	s.Mode = ModeAuto
+	bot := Contact{UserID: 9, IsBot: true}
+	if s.ReplyBots {
+		t.Fatal("default false bo'lishi kerak")
+	}
+	if d := s.Resolve(bot, noon()); d.Reply {
+		t.Fatal("o'chiq bo'lsa botga javob yo'q")
+	}
+	s.ReplyBots = true
+	d := s.Resolve(bot, noon())
+	if !d.Reply || d.Mode != ModeDraft {
+		t.Fatalf("yoqilsa javob bo'ladi, lekin faqat draft: %+v", d)
+	}
+	if d := s.Resolve(Contact{UserID: 777000, IsBot: true}, noon()); d.Reply {
+		t.Fatal("Telegram xizmati baribir bloklangan")
+	}
+	// oddiy kontaktga avto-rejim o'zgarmaydi
+	if d := s.Resolve(Contact{UserID: 10, IsContact: true}, noon()); d.Mode != ModeAuto {
+		t.Fatalf("kontakt: %+v", d)
+	}
+}

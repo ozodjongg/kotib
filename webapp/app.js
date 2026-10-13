@@ -477,6 +477,7 @@ function viewSettings(view) {
     h('h2', {}, 'Kimga javob beriladi'),
     h('div', { class: 'card' },
       switchRow("Kontaktda yo'qlarga ham", 'Tavsiya etilmaydi: spam va firibgarlar ko\'p', s.reply_unknown, (v) => { s.reply_unknown = v; }),
+      switchRow('Botlarga ham', "Faqat qoralama: bot bilan cheksiz yozishma bo'lmasligi uchun avtomatik yuborilmaydi", s.reply_bots, (v) => { s.reply_bots = v; }),
       switchRow('Javobda havolalar', "O'chiq bo'lsa, havolali javoblar qoralamada qoladi", s.allow_links, (v) => { s.allow_links = v; })),
     h('h2', {}, 'Tinch soatlar'),
     h('div', { class: 'card' },

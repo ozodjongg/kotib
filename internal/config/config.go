@@ -48,9 +48,12 @@ type QuietHours struct {
 
 // Settings — bitta mijozning to'liq sozlamasi.
 type Settings struct {
-	Mode           Mode       `json:"mode"`
-	ReplyUnknown   bool       `json:"reply_unknown"`   // kontaktda yo'qlarga javob (default: false)
-	ReplyGroups    bool       `json:"reply_groups"`    // guruhlarda javob (default: false, tavsiya etilmaydi)
+	Mode         Mode `json:"mode"`
+	ReplyUnknown bool `json:"reply_unknown"` // kontaktda yo'qlarga javob (default: false)
+	ReplyGroups  bool `json:"reply_groups"`  // guruhlarda javob (default: false, tavsiya etilmaydi)
+	// ReplyBots — botlarga ham javob tayyorlash (default: false). Yoqilsa ham faqat
+	// qoralama: bot bilan avtomatik yozishma cheksiz aylanishga (spam, ban) olib keladi.
+	ReplyBots      bool       `json:"reply_bots"`
 	AllowLinks     bool       `json:"allow_links"`     // javobda havola (default: false)
 	DefaultPersona string     `json:"default_persona"` // preset kaliti
 	DefaultCustom  string     `json:"default_custom,omitempty"`
@@ -68,6 +71,7 @@ func Default() Settings {
 		Mode:           ModeDraft,
 		ReplyUnknown:   false,
 		ReplyGroups:    false,
+		ReplyBots:      false,
 		AllowLinks:     false,
 		DefaultPersona: "neutral",
 		Language:       "auto",
@@ -233,7 +237,7 @@ func (s *Settings) Resolve(c Contact, now time.Time) Decision {
 	if IsTelegramService(c.UserID) {
 		return no("Telegram xizmati")
 	}
-	if c.IsBot {
+	if c.IsBot && !s.ReplyBots {
 		return no("bot")
 	}
 	if c.IsChannel {
@@ -242,7 +246,8 @@ func (s *Settings) Resolve(c Contact, now time.Time) Decision {
 	if c.IsGroup && !s.ReplyGroups {
 		return no("guruh")
 	}
-	if !c.IsContact && !s.ReplyUnknown {
+	// Botlar kontaktlarda bo'lmaydi: ReplyBots yoqilgan bo'lsa, kontakt sharti ularga qo'llanmaydi.
+	if !c.IsContact && !s.ReplyUnknown && !c.IsBot {
 		return no("kontaktda yo'q")
 	}
 	if s.inQuiet(now) {
@@ -269,6 +274,10 @@ func (s *Settings) Resolve(c Contact, now time.Time) Decision {
 	}
 	// Mijoz Settings.Mode=draft qilgan bo'lsa, qoida uni "auto"ga ko'tara olmaydi.
 	if s.Mode == ModeDraft && d.Mode == ModeAuto {
+		d.Mode = ModeDraft
+	}
+	// Botga hech qachon avtomatik javob yo'q (bot ↔ kotib cheksiz yozishmasi).
+	if c.IsBot && d.Mode == ModeAuto {
 		d.Mode = ModeDraft
 	}
 	return d

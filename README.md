@@ -123,6 +123,7 @@ To'lov xavfsizligi:
 - **Mini App**: hech qayerda `innerHTML` yo'q, inline skript/stil yo'q; tugmalar bosilganda bloklanadi (ikki marta yuborish/to'lovdan himoya).
 - **Default = draft rejimi.** Avto-rejimda ham: sezgir mavzu (pul, parol/kod, hujjat, "bot misan?"...) → faqat draft; prompt-injection belgisi → modelga umuman yuborilmaydi.
 - **Kontaktda yo'q** odamlar, guruh, kanal, botlar — default javobsiz. Birinchi bo'lib yozish kodda yo'q.
+- **Botlar**: sozlamada "Botlarga ham" yoqilsa (default o'chiq) — faqat qoralama, hech qachon avtomatik emas (bot ↔ kotib cheksiz yozishmasi = spam/ban). Telegram xizmati (777000, login kodlari) har qanday sozlamada e'tiborsiz qoldiriladi va AI'ga yuborilmaydi.
 - **Ban xavfini kamaytirish**: token-bucket (global/chat/kunlik), o'qish+yozish kechikishi, "typing", xabarlarni birlashtirish (debounce), FloodWait'ga hurmat, `PEER_FLOOD`/revoked → circuit breaker (avtomatik qayta yoqilmaydi), barqaror qurilma ma'lumoti, sessiyalarni 2s oraliqda ulash.
 - **Model chiqishi** tekshiriladi: havola/@username/karta yoki telefon raqami/AI-sizib chiqishi/uzunlik → draft.
 - **Maxfiylik**: audit logda xabar matni yo'q; ilova har soatda 7 kundan eski draftlarni matni bilan tozalaydi, 90 kundan eski auditni o'chiradi; "Akkauntni o'chirish" → `auth.logOut` + CASCADE.
