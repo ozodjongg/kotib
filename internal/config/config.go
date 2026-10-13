@@ -209,6 +209,11 @@ type Contact struct {
 	IsChannel bool
 }
 
+// IsTelegramService — Telegram'ning rasmiy xizmat akkauntlari (777000 — login kodlari,
+// xavfsizlik ogohlantirishlari; 42777 — eski xizmat ID'si). Ularning xabarlari hech qachon
+// qayta ishlanmaydi va AI'ga yuborilmaydi: ichida kirish kodi bo'lishi mumkin.
+func IsTelegramService(userID int64) bool { return userID == 777000 || userID == 42777 }
+
 // Decision — Resolve natijasi.
 type Decision struct {
 	Reply   bool
@@ -224,6 +229,9 @@ func (s *Settings) Resolve(c Contact, now time.Time) Decision {
 
 	if s.Mode == ModeOff {
 		return no("o'chirilgan")
+	}
+	if IsTelegramService(c.UserID) {
+		return no("Telegram xizmati")
 	}
 	if c.IsBot {
 		return no("bot")

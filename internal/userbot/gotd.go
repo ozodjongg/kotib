@@ -156,17 +156,28 @@ func (c *GotdConnector) Run(ctx context.Context, owner int64, onReady func(Teleg
 		if !ok {
 			return nil
 		}
+		if config.IsTelegramService(pu.UserID) {
+			return nil // login kodlari: pipeline'ga ham, AI'ga ham bormaydi
+		}
 		// Shaxsiy xabarlar ko'pincha UpdateShortMessage bo'lib keladi — unda foydalanuvchi
-		// ma'lumoti yo'q. Shunda kontaktlar keshiga tayanamiz: keshda yo'q = kontakt emas.
+		// ma'lumoti (bot belgisi ham) yo'q. Avval kontaktlar keshi, keyin xabarning o'zi
+		// (messages.getMessages foydalanuvchini to'liq qaytaradi).
 		info, known := g.user(pu.UserID)
 		if !known {
 			g.refreshContacts(ctx)
+			info, known = g.user(pu.UserID)
+		}
+		if !known {
+			g.resolveSender(ctx, m.ID)
 			info, known = g.user(pu.UserID)
 		}
 		contact := config.Contact{UserID: pu.UserID}
 		if known {
 			contact.IsContact = info.contact
 			contact.IsBot = info.bot
+		} else {
+			// Kimligi aniqlanmadi — xavfsiz tomon: bot deb hisoblaymiz (javob yozilmaydi).
+			contact.IsBot = true
 		}
 		onMsg(Incoming{ChatID: pu.UserID, MsgID: m.ID, Text: m.Message, Contact: contact})
 		return nil
@@ -280,6 +291,28 @@ func (g *gotdTG) refreshContacts(ctx context.Context) {
 	g.mu.Lock()
 	g.contactsList = list
 	g.mu.Unlock()
+}
+
+// resolveSender xabarni ID bo'yicha olib, jo'natuvchi ma'lumotini keshga yozadi.
+func (g *gotdTG) resolveSender(ctx context.Context, msgID int) {
+	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	res, err := g.api.MessagesGetMessages(cctx, []tg.InputMessageClass{&tg.InputMessageID{ID: msgID}})
+	if err != nil {
+		return
+	}
+	var users []tg.UserClass
+	switch r := res.(type) {
+	case *tg.MessagesMessages:
+		users = r.Users
+	case *tg.MessagesMessagesSlice:
+		users = r.Users
+	}
+	for _, uc := range users {
+		if u, ok := uc.(*tg.User); ok {
+			g.remember(u)
+		}
+	}
 }
 
 func (g *gotdTG) peer(ctx context.Context, id int64) (*tg.InputPeerUser, error) {

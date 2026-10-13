@@ -121,3 +121,17 @@ func TestValidateLimits(t *testing.T) {
 		t.Fatal("rules nil bo'lmasligi kerak")
 	}
 }
+
+func TestTelegramServiceNeverAnswered(t *testing.T) {
+	s := Default()
+	s.ReplyUnknown = true // hatto "hammaga javob" yoqilgan bo'lsa ham
+	s.Quiet.Enabled = false
+	for _, id := range []int64{777000, 42777} {
+		if d := s.Resolve(Contact{UserID: id, IsContact: true}, noon()); d.Reply {
+			t.Fatalf("%d: Telegram xizmati xabariga javob bo'lmasligi kerak", id)
+		}
+	}
+	if d := s.Resolve(Contact{UserID: 5, IsBot: true}, noon()); d.Reply {
+		t.Fatal("botga javob bo'lmasligi kerak")
+	}
+}
