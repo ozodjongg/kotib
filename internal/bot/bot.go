@@ -15,6 +15,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -51,7 +52,7 @@ func (b *Bot) call(ctx context.Context, method string, payload any, out any) err
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return fmt.Errorf("bot %s: tarmoq xatosi", method)
+		return fmt.Errorf("bot %s: tarmoq xatosi: %s", method, b.redact(err))
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
@@ -67,6 +68,20 @@ func (b *Bot) call(ctx context.Context, method string, payload any, out any) err
 		return json.Unmarshal(env.Result, out)
 	}
 	return nil
+}
+
+// redact xato matnidan URL va tokenni olib tashlaydi: *url.Error to'liq URL'ni
+// (ichida bot tokeni) o'z ichiga oladi — logga faqat ichki sabab yoziladi.
+func (b *Bot) redact(err error) string {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		err = ue.Err
+	}
+	msg := err.Error()
+	if b.Token != "" {
+		msg = strings.ReplaceAll(msg, b.Token, "***")
+	}
+	return msg
 }
 
 type inlineBtn struct {

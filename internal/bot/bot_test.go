@@ -172,3 +172,18 @@ func TestParseCommand(t *testing.T) {
 		}
 	}
 }
+
+func TestNetworkErrorHidesToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	addr := srv.URL
+	srv.Close() // ulanish rad etiladi
+	b := New("123:SECRET-TOKEN", "", slog.Default())
+	b.BaseURL = addr
+	err := b.Notify(context.Background(), 1, "x", false)
+	if err == nil || strings.Contains(err.Error(), "SECRET-TOKEN") || strings.Contains(err.Error(), "/bot") {
+		t.Fatalf("token yoki URL sizib chiqdi: %v", err)
+	}
+	if !strings.Contains(err.Error(), "tarmoq xatosi: ") || !strings.Contains(err.Error(), "refused") {
+		t.Fatalf("aniq sabab ko'rinishi kerak: %v", err)
+	}
+}
