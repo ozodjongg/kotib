@@ -142,6 +142,22 @@ function fmtAgo(iso) {
   return fmtDate(iso);
 }
 
+// ---------- tinch soatlar ----------
+function hmToMin(v) { const m = /^(\d{2}):(\d{2})$/.exec(v || ''); return m ? (+m[1]) * 60 + (+m[2]) : null; }
+// quietInfo: oraliq davomiyligi (soat) va hozir shu oraliqdami (tanlangan mintaqa bo'yicha).
+function quietInfo(q) {
+  const a = hmToMin(q.start), b = hmToMin(q.end);
+  if (!q.enabled || a == null || b == null || a === b) return null;
+  const hours = Math.round(((b - a + 1440) % 1440) / 6) / 10;
+  let now = null;
+  try {
+    const t = new Intl.DateTimeFormat('en-GB', { timeZone: q.tz, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date());
+    now = hmToMin(t);
+  } catch (_) { /* noma'lum mintaqa */ }
+  const active = now != null && (a < b ? now >= a && now < b : now >= a || now < b);
+  return { hours, active };
+}
+
 // ---------- mavzu ----------
 function applyTheme() {
   const dark = tg ? tg.colorScheme === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -350,6 +366,13 @@ function viewHome(view) {
       h('h3', {}, 'Obuna faol emas'),
       h('p', { class: 'small' }, 'Kotib yangi xabarlarga javob tayyorlamayapti.'),
       h('button', { class: 'btn', onclick: () => go('account') }, `Obunani yoqish · ${b.price} ⭐`)) : null,
+    (() => {
+      const q = state.settings.quiet_hours, info = q && quietInfo(q);
+      return info && info.active ? h('div', { class: 'card accent' },
+        h('h3', {}, 'Hozir tinch soatlar'),
+        h('p', { class: 'small' }, `${q.start} – ${q.end}: kotib yangi xabarlarga javob tayyorlamaydi.`),
+        h('button', { class: 'btn ghost sm', onclick: () => go('settings') }, "O'zgartirish")) : null;
+    })(),
     me.status === 'broken' ? h('div', { class: 'card danger' },
       h('h3', {}, "Xavfsizlik uchun to'xtatildi"),
       h('p', { class: 'small muted' }, (me.note ? me.note + '. ' : '') + "Telegram cheklov qo'ygan bo'lishi mumkin. Bir necha soat kutib, keyin davom ettiring.")) : null,
@@ -463,6 +486,18 @@ function viewSettings(view) {
   const s = state.settings;
   const custom = h('textarea', { maxlength: 600, placeholder: "Masalan: qisqa va samimiy yoz, «siz» deb murojaat qil…" }, s.default_custom || '');
   custom.addEventListener('input', () => { s.default_custom = custom.value; markDirty(); });
+  // Jonli izoh: 24 soatlik formatda (AM/PM chalkashligi bo'lmasin) va uzun oraliqqa ogohlantirish.
+  const hint = h('div', {});
+  const quietHint = () => {
+    const q = s.quiet_hours;
+    const info = quietInfo(q);
+    if (!info) { swap(hint, q.enabled ? h('p', { class: 'hint' }, "Boshlanishi va tugashi bir xil bo'lmasin.") : null); return; }
+    swap(hint,
+      h('p', { class: 'hint' }, `Kotib har kuni ${q.start} dan ${q.end} gacha jim turadi (${info.hours} soat).` + (info.active ? ' Hozir — tinch soat.' : '')),
+      info.hours > 12 ? h('div', { class: 'card accent' }, h('p', { class: 'small' },
+        `Diqqat: bu kunning ${info.hours} soati. «11:00 AM» — kunduzi soat 11; tunni nazarda tutgan bo'lsangiz, PM ni tanlang (masalan 11:00 PM = 23:00).`)) : null);
+  };
+  quietHint();
   const tzList = TIMEZONES.some(([k]) => k === s.quiet_hours.tz) ? TIMEZONES : [[s.quiet_hours.tz, s.quiet_hours.tz], ...TIMEZONES];
 
   put(view, 
@@ -481,11 +516,12 @@ function viewSettings(view) {
       switchRow('Javobda havolalar', "O'chiq bo'lsa, havolali javoblar qoralamada qoladi", s.allow_links, (v) => { s.allow_links = v; })),
     h('h2', {}, 'Tinch soatlar'),
     h('div', { class: 'card' },
-      switchRow('Tunda javob yozilmasin', 'Shu vaqt oralig\'ida kotib jim turadi', s.quiet_hours.enabled, (v) => { s.quiet_hours.enabled = v; }),
+      switchRow('Tunda javob yozilmasin', 'Shu vaqt oralig\'ida kotib jim turadi', s.quiet_hours.enabled, (v) => { s.quiet_hours.enabled = v; quietHint(); }),
       h('div', { class: 'two' },
-        field('Boshlanishi', h('input', { type: 'time', value: s.quiet_hours.start, onchange: (e) => { s.quiet_hours.start = e.target.value; markDirty(); } })),
-        field('Tugashi', h('input', { type: 'time', value: s.quiet_hours.end, onchange: (e) => { s.quiet_hours.end = e.target.value; markDirty(); } }))),
-      field('Vaqt mintaqasi', select(tzList, s.quiet_hours.tz, (v) => { s.quiet_hours.tz = v; }))),
+        field('Boshlanishi', h('input', { type: 'time', value: s.quiet_hours.start, onchange: (e) => { s.quiet_hours.start = e.target.value; markDirty(); quietHint(); } })),
+        field('Tugashi', h('input', { type: 'time', value: s.quiet_hours.end, onchange: (e) => { s.quiet_hours.end = e.target.value; markDirty(); quietHint(); } }))),
+      field('Vaqt mintaqasi', select(tzList, s.quiet_hours.tz, (v) => { s.quiet_hours.tz = v; quietHint(); })),
+      hint),
     saveButton(),
   );
 }
