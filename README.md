@@ -48,6 +48,17 @@ docker compose up -d --build
 Ilova faqat `127.0.0.1:8080` da tinglaydi — HTTPS'ni Caddy/nginx tugatsin, masalan Caddy:
 `secretary.example.com { reverse_proxy 127.0.0.1:8080 }`.
 
+### Railway
+
+Repoda `railway.json` bor: Dockerfile bilan yig'iladi, healthcheck `/healthz`, **1 ta replica**.
+
+1. New Project → Deploy from GitHub repo; + New → Database → PostgreSQL.
+2. App Variables: `DATABASE_URL=${{Postgres.DATABASE_URL}}`, qolganlari pastdagi jadvaldan (`PORT`ni Railway o'zi beradi).
+3. Settings → Networking → Generate Domain; domenni `MINIAPP_URL`ga qo'ying va @BotFather → Menu Button'ga ulang.
+
+**Replica sonini oshirmang**: ikki nusxa bitta Telegram sessiyasiga ulanib, ban xavfini oshiradi
+(login holati ham xotirada). Railway IP'lari umumiy — Telegram login'ni bloklasa, `TG_PROXY` qo'shing.
+
 ## Sozlash (env)
 
 | O'zgaruvchi | Izoh |
@@ -59,7 +70,8 @@ Ilova faqat `127.0.0.1:8080` da tinglaydi — HTTPS'ni Caddy/nginx tugatsin, mas
 | `MASTER_KEY` | `openssl rand -base64 32` — session shifrlash kaliti. **Bazada saqlanmaydi** |
 | `DATABASE_URL` | Postgres; sxema ishga tushganda avtomatik yaratiladi/yangilanadi |
 | `TG_PROXY` | ixtiyoriy `socks5://...` — barqaror IP |
-| `LISTEN` | default `127.0.0.1:8080`; TLS'ni Caddy/nginx tugatsin |
+| `LISTEN` | aniq manzil (masalan `127.0.0.1:8080`); berilmasa `PORT` ishlatiladi |
+| `PORT` | platforma beradi (Railway); `0.0.0.0:$PORT` da tinglanadi. Ikkalasi ham bo'lmasa — `127.0.0.1:8080` |
 | `STATIC_DIR` | Mini App fayllari, default `./webapp` |
 | `DEV_MEMORY=1` | faqat dev: xotirada saqlash |
 

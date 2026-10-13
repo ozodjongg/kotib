@@ -126,9 +126,9 @@ func run(log *slog.Logger) error {
 	}
 	api := &miniapp.Server{BotToken: env("BOT_TOKEN"), Store: st, Ctl: mgr, Log: log, StaticDir: staticDir}
 
-	addr := env("LISTEN")
-	if addr == "" {
-		addr = "127.0.0.1:8080" // TLS'ni reverse proxy (Caddy/nginx) tugatadi
+	addr, err := listenAddr(env("LISTEN"), env("PORT"))
+	if err != nil {
+		return err
 	}
 	srv := &http.Server{
 		Addr: addr, Handler: api.Handler(),
@@ -159,6 +159,21 @@ func run(log *slog.Logger) error {
 	_ = srv.Shutdown(shCtx)
 	mgr.Shutdown()
 	return nil
+}
+
+// listenAddr tinglash manzilini tanlaydi: aniq LISTEN > PORT (Railway/Heroku kabi
+// platformalar beradi, barcha interfeyslarda) > 127.0.0.1:8080 (TLS'ni reverse proxy tugatadi).
+func listenAddr(listen, port string) (string, error) {
+	if listen != "" {
+		return listen, nil
+	}
+	if port != "" {
+		if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+			return "", errors.New("PORT 1–65535 oralig'idagi raqam bo'lishi kerak")
+		}
+		return "0.0.0.0:" + port, nil
+	}
+	return "127.0.0.1:8080", nil
 }
 
 // janitor maxfiylik uchun eski ma'lumotni muntazam tozalaydi: draftlar 7 kun,
