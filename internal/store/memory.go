@@ -24,6 +24,7 @@ type Memory struct {
 	google   map[int64]GoogleLink
 	actions  map[int64]Action
 	hooks    map[int64]string // owner → token xeshi
+	follow   map[[2]int64]Followup
 }
 
 type usageKey struct {
@@ -49,6 +50,7 @@ func NewMemory() *Memory {
 		google:   map[int64]GoogleLink{},
 		actions:  map[int64]Action{},
 		hooks:    map[int64]string{},
+		follow:   map[[2]int64]Followup{},
 	}
 }
 
@@ -113,6 +115,11 @@ func (m *Memory) DeleteAccount(_ context.Context, owner int64) error {
 	delete(m.settings, owner)
 	delete(m.google, owner)
 	delete(m.hooks, owner)
+	for k := range m.follow {
+		if k[0] == owner {
+			delete(m.follow, k)
+		}
+	}
 	for id, a := range m.actions {
 		if a.OwnerID == owner {
 			delete(m.actions, id)
@@ -496,4 +503,86 @@ func (m *Memory) OwnerByHook(_ context.Context, tokenHash []byte) (int64, error)
 		}
 	}
 	return 0, ErrNotFound
+}
+
+func (m *Memory) CountAudit(_ context.Context, owner int64, events []string, since time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, r := range m.audit {
+		if r.Owner != owner || r.At.Before(since) {
+			continue
+		}
+		for _, e := range events {
+			if r.Event == e {
+				n++
+				break
+			}
+		}
+	}
+	return n, nil
+}
+
+func (m *Memory) SaveFollowup(_ context.Context, f Followup) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.accounts[f.OwnerID]; !ok {
+		return ErrNotFound
+	}
+	f.Status, f.CreatedAt = FollowupPending, time.Now()
+	m.follow[[2]int64{f.OwnerID, f.ChatID}] = f
+	return nil
+}
+
+func (m *Memory) followups(match func(Followup) bool) []Followup {
+	var out []Followup
+	for _, f := range m.follow {
+		if match(f) {
+			out = append(out, f)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].DueAt.Before(out[j].DueAt) })
+	return out
+}
+
+func (m *Memory) ListDueFollowups(_ context.Context, before time.Time, limit int) ([]Followup, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := m.followups(func(f Followup) bool { return f.Status == FollowupPending && !f.DueAt.After(before) })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (m *Memory) ListOpenFollowups(_ context.Context, owner int64) ([]Followup, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.followups(func(f Followup) bool { return f.OwnerID == owner && f.Status != FollowupDone }), nil
+}
+
+func (m *Memory) SetFollowupStatus(_ context.Context, owner, chatID int64, st FollowupStatus) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := [2]int64{owner, chatID}
+	f, ok := m.follow[k]
+	if !ok {
+		return ErrNotFound
+	}
+	f.Status = st
+	m.follow[k] = f
+	return nil
+}
+
+func (m *Memory) PruneFollowups(_ context.Context, before time.Time) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var n int64
+	for k, f := range m.follow {
+		if f.CreatedAt.Before(before) {
+			delete(m.follow, k)
+			n++
+		}
+	}
+	return n, nil
 }

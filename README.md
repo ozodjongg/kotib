@@ -104,6 +104,26 @@ Wordmark shrifti — Source Serif 4 (SIL Open Font License), matn vektor konturg
 | `STATIC_DIR` | Mini App fayllari, default `./webapp` |
 | `DEV_MEMORY=1` | faqat dev: xotirada saqlash |
 
+## Suhbat konteksti
+
+Har javobdan oldin chatdagi oxirgi xabarlar (egasi va kontaktniki) modelga beriladi: **obunada 20 ta,
+sinovda 8 ta** (`billing.HistoryPaid` / `HistoryTrial`). Bitta chatdagi xabarlar qat'iy navbat bilan
+qayta ishlanadi: keyingi javob oldingisi yuborilgandan keyin tayyorlanadi va uni tarixda ko'radi
+(bir xil javob takrorlanmaydi, tartib buzilmaydi).
+
+## Kechki xulosa, va'dalar va tejalgan vaqt
+
+- **Kechki xulosa** — har kuni soat 21:00 da (egasining vaqt zonasi) bot yuboradi: tayyorlangan va
+  yuborilgan javoblar, tasdiq kutayotgan qoralamalar, «keyinroq yozaman» deyilgan kontaktlar va oylik
+  tejalgan vaqt. Faoliyat bo'lmagan kuni yuborilmaydi; kuniga bir marta (audit `digest_sent`).
+- **Va'dalarni kuzatish** — kotib (avtomatik yoki tasdiqlangan qoralama) «keyinroq yozaman» kabi
+  javob yuborsa, 3 soatdan keyin chat tekshiriladi: egasining oxirgi xabari hali o'sha javob bo'lsa —
+  bot eslatadi, egasi o'zi yozgan bo'lsa — jim yopiladi. Xabar matni saqlanmaydi, faqat xesh (`followups`).
+- **Tejalgan vaqt** — kotib orqali yuborilgan har javob ≈ 1 daqiqa (`store.SavedPerReply`).
+  Mini App bosh sahifasida, `/status` va xulosada ko'rsatiladi.
+
+Ikkala bildirishnoma Sozlamalarda o'chiriladi. Tekshiruv har 5 daqiqada, faqat bitta nusxada (gate).
+
 ## To'lov: Telegram Stars obunasi
 
 `PRICE_STARS` berilsa, to'lov yoqiladi:

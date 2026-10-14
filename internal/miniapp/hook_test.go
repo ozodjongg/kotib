@@ -111,3 +111,21 @@ func TestICSEndpoint(t *testing.T) {
 		t.Fatal("imzo boshqa egaga mos kelmasligi kerak")
 	}
 }
+
+func TestTGLoginPage(t *testing.T) {
+	srv := newTestServer(t, &Server{BotToken: tok, Store: store.NewMemory()})
+	resp, err := http.Get(srv.URL + "/tglogin?token=QUJDREVGR0hJSktM")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || !strings.Contains(string(b), `href="tg://login?token=QUJDREVGR0hJSktM"`) {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	for _, bad := range []string{"", "abc", "QUJD%22%3E%3Cscript%3E", "javascript:alert(1)aaaaaa"} {
+		if code := doReq(t, srv.URL+"/tglogin?token="+bad, "GET", ""); code != 400 {
+			t.Fatalf("%q rad etilishi kerak: %d", bad, code)
+		}
+	}
+}

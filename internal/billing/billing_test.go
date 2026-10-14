@@ -247,3 +247,23 @@ func TestTrialDailyQuota(t *testing.T) {
 		}
 	}
 }
+
+func TestHistoryLimit(t *testing.T) {
+	s, _, _, _ := newSvc(t)
+	ctx := context.Background()
+	s.Exempt = map[int64]bool{42: true}
+	_ = s.StartTrial(ctx, 1)
+	if n := s.HistoryLimit(ctx, 1); n != HistoryTrial {
+		t.Fatalf("sinovda %d, kutilgan %d", n, HistoryTrial)
+	}
+	_ = s.PaymentReceived(ctx, 1, PaymentInfo{Currency: Currency, Amount: 100, ChargeID: "h1", Payload: "sub:1:0123456789abcdef"})
+	if n := s.HistoryLimit(ctx, 1); n != HistoryPaid {
+		t.Fatalf("obunada %d, kutilgan %d", n, HistoryPaid)
+	}
+	if s.HistoryLimit(ctx, 42) != HistoryPaid {
+		t.Fatal("admin uchun to'liq kontekst")
+	}
+	if (&Service{Store: store.NewMemory()}).HistoryLimit(ctx, 1) != HistoryPaid {
+		t.Fatal("to'lov o'chiq bo'lsa to'liq kontekst")
+	}
+}

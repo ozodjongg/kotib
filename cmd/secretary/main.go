@@ -150,6 +150,8 @@ func run(log *slog.Logger) error {
 		LLM:      llm.NewGemini(env("GEMINI_API_KEY"), env("GEMINI_MODEL")),
 		Entitled: bill.Entitled,
 		Quota:    bill.UseQuota,
+		// Kontekst: obunada oxirgi 20 ta, sinovda 8 ta xabar.
+		HistoryLimit: bill.HistoryLimit,
 	}
 	// Tasdiq tugmali takliflar (uchrashuv/vazifa) — Google bo'lsa ham, bo'lmasa ham (.ics).
 	mgr.Propose = func(ctx context.Context, owner, id int64, text string) {
@@ -251,6 +253,7 @@ func run(log *slog.Logger) error {
 		}
 	}()
 	go janitor(ctx, st, bill, notify, log)
+	go insights(ctx, mgr, gate)
 	go func() {
 		if err := mgr.Start(ctx); err != nil && ctx.Err() == nil {
 			log.Error("sessiyalarni ishga tushirish", "err", err)
@@ -415,6 +418,28 @@ func listenAddr(listen, port string) (string, error) {
 	return "127.0.0.1:8080", nil
 }
 
+// insights har 5 daqiqada: muddati kelgan "keyinroq yozaman" va'dalarini tekshiradi va
+// soat 21:00 da kechki xulosani yuboradi. Faqat bitta nusxa (gate) ishlatadi — takror yuborilmasin.
+func insights(ctx context.Context, mgr *userbot.Manager, gate <-chan struct{}) {
+	select {
+	case <-gate:
+	case <-ctx.Done():
+		return
+	}
+	t := time.NewTicker(5 * time.Minute)
+	defer t.Stop()
+	for {
+		now := time.Now()
+		mgr.CheckFollowups(ctx, now)
+		mgr.SendDigests(ctx, now)
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
 // janitor maxfiylik uchun eski ma'lumotni muntazam tozalaydi: draftlar 7 kun,
 // audit 90 kun. Har soatda (va ishga tushganda bir marta) ishlaydi.
 func janitor(ctx context.Context, st store.Store, bill *billing.Service, notify billing.Notifier, log *slog.Logger) {
@@ -429,6 +454,9 @@ func janitor(ctx context.Context, st store.Store, bill *billing.Service, notify 
 		}
 		if _, err := st.PruneAudit(ctx, now.Add(-auditTTL)); err != nil {
 			log.Warn("janitor audit", "err", err)
+		}
+		if _, err := st.PruneFollowups(ctx, now.Add(-draftTTL)); err != nil {
+			log.Warn("janitor followups", "err", err)
 		}
 		if _, err := st.PruneActions(ctx, now.Add(-draftTTL)); err != nil {
 			log.Warn("janitor actions", "err", err)

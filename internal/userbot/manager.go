@@ -51,6 +51,8 @@ type Manager struct {
 	Entitled func(ctx context.Context, owner int64) bool
 	// Quota — sinovdagi kunlik limit (billing.Service.UseQuota); nil → cheklovsiz.
 	Quota func(ctx context.Context, owner int64) bool
+	// HistoryLimit — modelga beriladigan oxirgi xabarlar soni (billing.Service.HistoryLimit).
+	HistoryLimit func(ctx context.Context, owner int64) int
 	// Google — taqvim/kontakt integratsiyasi; nil → o'chiq.
 	Google Google
 	// Propose — taklif qilingan amalni egasiga tasdiqlash uchun yuborish (bot).
@@ -146,7 +148,7 @@ func (m *Manager) startWorker(owner int64) {
 	w := &worker{cancel: cancel, done: make(chan struct{})}
 	w.pipe = &Pipeline{
 		Owner: owner, Store: m.Store, LLM: m.LLM, Notify: m.Notify, Log: m.Log,
-		Limiter: ratelimit.NewLimiter(m.Limits), Entitled: m.Entitled, Quota: m.Quota, Google: m.Google, Propose: m.Propose,
+		Limiter: ratelimit.NewLimiter(m.Limits), Entitled: m.Entitled, Quota: m.Quota, HistoryLimit: m.HistoryLimit, Google: m.Google, Propose: m.Propose,
 		DraftCard: m.DraftCard, CalendarFallback: m.CalendarFallback,
 	}
 	w.pipe.OnFatal = func(reason string) { go m.breaker(owner, reason) }

@@ -35,7 +35,7 @@ func TestStoreContract(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if _, err := db.Exec(`TRUNCATE accounts, subscriptions, payments, usage_daily, google_links, actions, hooks CASCADE`); err != nil {
+		if _, err := db.Exec(`TRUNCATE accounts, subscriptions, payments, usage_daily, google_links, actions, hooks, followups CASCADE`); err != nil {
 			t.Fatal(err)
 		}
 		contract(t, store.NewPostgres(db))
@@ -226,8 +226,48 @@ func contract(t *testing.T, s store.Store) {
 		t.Fatal("has hook")
 	}
 
+	if n, err := s.CountAudit(ctx, 1, []string{"x_ev"}, time.Now().Add(-time.Hour)); err != nil || n != 0 {
+		t.Fatal(n, err)
+	}
+	s.Audit(ctx, 1, "x_ev", "")
+	s.Audit(ctx, 1, "x_ev", "")
+	s.Audit(ctx, 1, "y_ev", "")
+	s.Audit(ctx, 2, "x_ev", "")
+	if n, err := s.CountAudit(ctx, 1, []string{"x_ev", "y_ev"}, time.Now().Add(-time.Hour)); err != nil || n != 3 {
+		t.Fatalf("count: %d %v", n, err)
+	}
+	if n, _ := s.CountAudit(ctx, 1, []string{"x_ev"}, time.Now().Add(time.Hour)); n != 0 {
+		t.Fatal("since dan oldingilar sanalmasligi kerak")
+	}
+	due := time.Now().Add(-time.Minute)
+	if err := s.SaveFollowup(ctx, store.Followup{OwnerID: 1, ChatID: 100, Hash: "a", DueAt: due}); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.SaveFollowup(ctx, store.Followup{OwnerID: 1, ChatID: 101, Hash: "b", DueAt: time.Now().Add(time.Hour)})
+	_ = s.SaveFollowup(ctx, store.Followup{OwnerID: 1, ChatID: 100, Hash: "c", DueAt: due}) // almashtiradi
+	fs, err := s.ListDueFollowups(ctx, time.Now(), 10)
+	if err != nil || len(fs) != 1 || fs[0].ChatID != 100 || fs[0].Hash != "c" || fs[0].Status != store.FollowupPending {
+		t.Fatalf("due: %+v %v", fs, err)
+	}
+	if err := s.SetFollowupStatus(ctx, 1, 100, store.FollowupReminded); err != nil {
+		t.Fatal(err)
+	}
+	if fs, _ := s.ListDueFollowups(ctx, time.Now(), 10); len(fs) != 0 {
+		t.Fatal("eslatilgan qayta chiqmasligi kerak")
+	}
+	if fs, _ := s.ListOpenFollowups(ctx, 1); len(fs) != 2 {
+		t.Fatalf("ochiq va'dalar: %+v", fs)
+	}
+	_ = s.SetFollowupStatus(ctx, 1, 101, store.FollowupDone)
+	if fs, _ := s.ListOpenFollowups(ctx, 1); len(fs) != 1 {
+		t.Fatalf("done yopilishi kerak: %+v", fs)
+	}
+
 	if err := s.DeleteAccount(ctx, 1); err != nil {
 		t.Fatal(err)
+	}
+	if fs, _ := s.ListOpenFollowups(ctx, 1); len(fs) != 0 {
+		t.Fatal("va'dalar akkaunt bilan o'chirilishi kerak")
 	}
 	if _, err := s.OwnerByHook(ctx, []byte("h2")); !errors.Is(err, store.ErrNotFound) {
 		t.Fatal("havola akkaunt bilan o'chirilishi kerak")

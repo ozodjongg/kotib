@@ -157,6 +157,26 @@ func (s *Service) Entitled(ctx context.Context, owner int64) bool {
 	return sub.Until().After(s.now())
 }
 
+// Kontekst: model har javobda chatdagi oxirgi shuncha xabarni ko'radi. Obunada ko'proq —
+// uzun suhbatda oldingi savollar unutilmaydi (pullik ustunlik); sinovda xarajat kamroq.
+const (
+	HistoryPaid  = 20
+	HistoryTrial = 8
+)
+
+// HistoryLimit egasi uchun kontekst uzunligi: to'langan obuna, admin yoki to'lov o'chiq — HistoryPaid,
+// sinov (yoki holat noma'lum) — HistoryTrial.
+func (s *Service) HistoryLimit(ctx context.Context, owner int64) int {
+	if !s.Enabled() || s.Exempt[owner] {
+		return HistoryPaid
+	}
+	sub, err := s.Store.GetSubscription(ctx, owner)
+	if err == nil && sub.PaidUntil.After(s.now()) {
+		return HistoryPaid
+	}
+	return HistoryTrial
+}
+
 // UseQuota model chaqirilishidan oldin: sinovdagi mijozga kuniga TrialDailyLimit tadan
 // ko'p javob tayyorlanmaydi. Ruxsat bo'lsa hisoblagich bittaga oshadi. To'langan obuna va
 // adminlar cheklanmaydi. Hisob bazada (usage_daily) — qayta ishga tushish uni tozalamaydi.

@@ -146,6 +146,13 @@ func (h *Handler) status(ctx context.Context, owner int64) bot.Reply {
 	if ds, err := h.Store.ListDrafts(ctx, owner, store.DraftPending, 100); err == nil {
 		fmt.Fprintf(&b, "Kutilayotgan qoralamalar: %d\n", len(ds))
 	}
+	loc := time.UTC
+	if st, err := h.Store.GetSettings(ctx, owner); err == nil {
+		loc = st.Location()
+	}
+	if n, saved, err := store.ReplyStats(ctx, h.Store, owner, store.MonthStart(time.Now(), loc)); err == nil && n > 0 {
+		fmt.Fprintf(&b, "Bu oy: %d ta javob, ~%s tejaldi\n", n, store.FormatSaved(saved))
+	}
 	if h.Billing.Enabled() {
 		b.WriteString(h.subscriptionLine(ctx, owner))
 	}
