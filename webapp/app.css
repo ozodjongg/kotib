@@ -232,3 +232,4 @@ details ol { margin: 6px 0 0; padding-left: 20px; line-height: 1.55; }
 /* kodsiz kirish QR */
 img.qr { display: block; margin: 12px auto 4px; width: 220px; height: 220px; background: #fff; padding: 8px; border-radius: 12px; image-rendering: pixelated; }
 a.btn { display: flex; align-items: center; justify-content: center; text-decoration: none; }
+.break { overflow-wrap: anywhere; }

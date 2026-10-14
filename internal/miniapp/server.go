@@ -80,6 +80,7 @@ type Billing interface {
 	InvoiceLink(ctx context.Context, owner int64) (string, error)
 	Cancel(ctx context.Context, owner int64) error
 	Renew(ctx context.Context, owner int64) error
+	Referral(ctx context.Context, owner int64) (billing.ReferralInfo, error)
 }
 
 // Google — Google akkauntini ulash (google.Client). nil → integratsiya o'chiq.
@@ -145,6 +146,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/billing/invoice", s.auth(s.handleInvoice))
 	mux.HandleFunc("POST /api/billing/cancel", s.auth(s.handleBillingCancel))
 	mux.HandleFunc("POST /api/billing/renew", s.auth(s.handleBillingRenew))
+	mux.HandleFunc("GET /api/referral", s.auth(s.handleReferral))
 	mux.HandleFunc("POST /api/google/connect", s.auth(s.handleGoogleConnect))
 	mux.HandleFunc("POST /api/google/disconnect", s.auth(s.handleGoogleDisconnect))
 	mux.HandleFunc("GET /oauth/google/callback", s.handleGoogleCallback)
@@ -682,6 +684,27 @@ func (s *Server) handleBilling(w http.ResponseWriter, r *http.Request, owner int
 		return
 	}
 	writeJSON(w, 200, st)
+}
+
+// handleReferral — taklif havolasi va natijalar. To'lov o'chiq bo'lsa {enabled:false}.
+func (s *Server) handleReferral(w http.ResponseWriter, r *http.Request, owner int64) {
+	if s.Billing == nil {
+		writeJSON(w, 200, map[string]any{"enabled": false})
+		return
+	}
+	if !s.requireConsent(w, r, owner) {
+		return
+	}
+	info, err := s.Billing.Referral(r.Context(), owner)
+	if err != nil {
+		s.logger().Warn("referral", "owner", owner, "err", err)
+		httpErr(w, 500, "xatolik")
+		return
+	}
+	writeJSON(w, 200, struct {
+		billing.ReferralInfo
+		Link string `json:"link"`
+	}{info, billing.ReferralLink(s.BotUsername, info.Code)})
 }
 
 func (s *Server) handleInvoice(w http.ResponseWriter, r *http.Request, owner int64) {

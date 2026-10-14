@@ -25,6 +25,8 @@ type Memory struct {
 	actions  map[int64]Action
 	hooks    map[int64]string // owner → token xeshi
 	follow   map[[2]int64]Followup
+	refCodes map[int64]string // owner → kod
+	refs     map[int64]Referral
 }
 
 type usageKey struct {
@@ -51,6 +53,8 @@ func NewMemory() *Memory {
 		actions:  map[int64]Action{},
 		hooks:    map[int64]string{},
 		follow:   map[[2]int64]Followup{},
+		refCodes: map[int64]string{},
+		refs:     map[int64]Referral{},
 	}
 }
 
@@ -374,6 +378,102 @@ func (m *Memory) Stats(_ context.Context, now time.Time) (Stats, error) {
 	for _, p := range m.payments {
 		if !p.Refunded {
 			st.StarsTotal += int64(p.Amount)
+		}
+	}
+	for _, r := range m.refs {
+		st.Referrals++
+		if !r.PaidAt.IsZero() {
+			st.RefPaid++
+		}
+	}
+	return st, nil
+}
+
+func (m *Memory) EnsureReferralCode(_ context.Context, owner int64, candidate string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if c, ok := m.refCodes[owner]; ok {
+		return c, nil
+	}
+	for _, c := range m.refCodes {
+		if c == candidate {
+			return "", ErrNotFound
+		}
+	}
+	m.refCodes[owner] = candidate
+	return candidate, nil
+}
+
+func (m *Memory) ReferrerByCode(_ context.Context, code string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for owner, c := range m.refCodes {
+		if c == code {
+			return owner, nil
+		}
+	}
+	return 0, ErrNotFound
+}
+
+func (m *Memory) AddReferral(_ context.Context, invitee, referrer int64) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.refs[invitee]; ok || invitee == referrer {
+		return false, nil
+	}
+	m.refs[invitee] = Referral{InviteeID: invitee, ReferrerID: referrer, CreatedAt: time.Now()}
+	return true, nil
+}
+
+func (m *Memory) GetReferral(_ context.Context, invitee int64) (Referral, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.refs[invitee]
+	if !ok {
+		return Referral{}, ErrNotFound
+	}
+	return r, nil
+}
+
+func (m *Memory) MarkReferral(_ context.Context, invitee int64, stage ReferralStage, at time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.refs[invitee]
+	if !ok {
+		return false, nil
+	}
+	switch stage {
+	case ReferralActivated:
+		if !r.ActivatedAt.IsZero() {
+			return false, nil
+		}
+		r.ActivatedAt = at
+	case ReferralPaid:
+		if !r.PaidAt.IsZero() {
+			return false, nil
+		}
+		r.PaidAt = at
+	default:
+		return false, nil
+	}
+	m.refs[invitee] = r
+	return true, nil
+}
+
+func (m *Memory) ReferralStats(_ context.Context, referrer int64) (ReferralStats, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var st ReferralStats
+	for _, r := range m.refs {
+		if r.ReferrerID != referrer {
+			continue
+		}
+		st.Invited++
+		if !r.ActivatedAt.IsZero() {
+			st.Activated++
+		}
+		if !r.PaidAt.IsZero() {
+			st.Paid++
 		}
 	}
 	return st, nil

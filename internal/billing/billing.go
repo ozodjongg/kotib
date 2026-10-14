@@ -64,8 +64,10 @@ type Service struct {
 	// TrialDailyLimit — sinovdagi mijozga kuniga ko'pi bilan shuncha javob tayyorlanadi
 	// (bepul sinov xarajatini cheklash). 0 → cheksiz.
 	TrialDailyLimit int
-	Log             *slog.Logger
-	Now             func() time.Time
+	// Notify — referal mukofoti haqida taklif qiluvchiga xabar; nil → xabarsiz.
+	Notify Notifier
+	Log    *slog.Logger
+	Now    func() time.Time
 }
 
 // quotaZone — kunlik limit Toshkent vaqti bilan yarim tunda yangilanadi (UTC+5, yozgi vaqt yo'q).
@@ -96,6 +98,8 @@ type Status struct {
 	Exempt     bool       `json:"exempt"`      // admin: to'lovdan ozod
 	OnTrial    bool       `json:"on_trial"`    // faqat sinov muddati hisobiga
 	Paid       bool       `json:"paid"`        // to'langan davr ichida
+	Bonus      bool       `json:"bonus"`       // referal bonusi hisobiga (to'lovsiz) to'liq xizmat
+	BonusUntil *time.Time `json:"bonus_until"` // nil — bonus yo'q
 	Canceled   bool       `json:"canceled"`    // avtomatik uzaytirish o'chirilgan
 	Renewable  bool       `json:"renewable"`   // bekor qilingan obunani qayta yoqish mumkin
 	TrialUntil *time.Time `json:"trial_until"` // nil — sinov boshlanmagan
@@ -130,9 +134,13 @@ func (s *Service) Status(ctx context.Context, owner int64) (Status, error) {
 	}
 	now := s.now()
 	st.TrialUntil, st.PaidUntil, st.Until = ptr(sub.TrialUntil), ptr(sub.PaidUntil), ptr(sub.Until())
+	if sub.BonusUntil.After(now) {
+		st.BonusUntil = ptr(sub.BonusUntil)
+	}
 	st.Paid = sub.PaidUntil.After(now)
 	st.Active = sub.Until().After(now)
-	st.OnTrial = st.Active && !st.Paid
+	st.Bonus = !st.Paid && sub.BonusUntil.After(now)
+	st.OnTrial = st.Active && !st.Paid && !st.Bonus
 	st.Canceled = sub.Canceled
 	st.Renewable = st.Paid && sub.Canceled && sub.ChargeID != ""
 	if st.Active {
@@ -164,14 +172,14 @@ const (
 	HistoryTrial = 8
 )
 
-// HistoryLimit egasi uchun kontekst uzunligi: to'langan obuna, admin yoki to'lov o'chiq — HistoryPaid,
+// HistoryLimit egasi uchun kontekst uzunligi: to'langan obuna (yoki bonus), admin yoki to'lov o'chiq — HistoryPaid,
 // sinov (yoki holat noma'lum) — HistoryTrial.
 func (s *Service) HistoryLimit(ctx context.Context, owner int64) int {
 	if !s.Enabled() || s.Exempt[owner] {
 		return HistoryPaid
 	}
 	sub, err := s.Store.GetSubscription(ctx, owner)
-	if err == nil && sub.PaidUntil.After(s.now()) {
+	if err == nil && sub.Premium(s.now()) {
 		return HistoryPaid
 	}
 	return HistoryTrial
@@ -193,7 +201,7 @@ func (s *Service) UseQuota(ctx context.Context, owner int64) bool {
 		return false
 	}
 	now := s.now()
-	if sub.PaidUntil.After(now) {
+	if sub.Premium(now) {
 		return true
 	}
 	ok, err := s.Store.UseDaily(ctx, owner, now.In(quotaZone).Format(time.DateOnly), s.TrialDailyLimit)
@@ -233,14 +241,18 @@ func (s *Service) StartTrial(ctx context.Context, owner int64) error {
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
+	days := s.TrialDays
+	if _, err := s.Store.GetReferral(ctx, owner); err == nil && days > 0 {
+		days += ReferralTrialBonus // do'st taklifi bilan kelgan — uzunroq sinov
+	}
 	sub := store.Subscription{OwnerID: owner}
-	if s.TrialDays > 0 {
-		sub.TrialUntil = s.now().Add(time.Duration(s.TrialDays) * 24 * time.Hour)
+	if days > 0 {
+		sub.TrialUntil = s.now().Add(time.Duration(days) * 24 * time.Hour)
 	}
 	if err := s.Store.SaveSubscription(ctx, sub); err != nil {
 		return err
 	}
-	s.Store.Audit(ctx, owner, "trial_started", strconv.Itoa(s.TrialDays))
+	s.Store.Audit(ctx, owner, "trial_started", strconv.Itoa(days))
 	return nil
 }
 
@@ -344,6 +356,7 @@ func (s *Service) PaymentReceived(ctx context.Context, from int64, p PaymentInfo
 	}
 	sub.OwnerID = from
 	now := s.now()
+	oldPaid := sub.PaidUntil
 	if !p.ExpiresAt.IsZero() {
 		sub.PaidUntil = p.ExpiresAt
 	} else {
@@ -353,11 +366,15 @@ func (s *Service) PaymentReceived(ctx context.Context, from int64, p PaymentInfo
 		}
 		sub.PaidUntil = base.Add(Period)
 	}
+	// Bonus kunlar to'langan davr bilan ustma-ust kelmasin: qolgan qismi yangi davrdan keyinga suriladi
+	// (Telegram har 30 kunda pul yechadi — aks holda bonus bekorga "yonib" ketardi).
+	sub.BonusUntil = shiftBonus(sub.BonusUntil, laterOf(now, oldPaid), sub.PaidUntil)
 	sub.ChargeID, sub.Canceled = p.ChargeID, false
 	if err := s.Store.SaveSubscription(ctx, sub); err != nil {
 		return err
 	}
 	s.Store.Audit(ctx, from, "payment", fmt.Sprintf("%d %s", p.Amount, p.Currency))
+	s.referralPaid(ctx, from)
 	return nil
 }
 
@@ -419,7 +436,10 @@ func (s *Service) Refunded(ctx context.Context, owner int64, chargeID string) er
 	}
 	sub, err := s.Store.GetSubscription(ctx, owner)
 	if err == nil && sub.ChargeID == chargeID {
-		sub.PaidUntil, sub.Canceled = s.now(), true // qaytarilgan davr uchun xizmat yo'q
+		now := s.now()
+		// Qaytarilgan davr uchun xizmat yo'q; undan keyin turgan bonus kunlar esa saqlanadi.
+		sub.BonusUntil = shiftBonus(sub.BonusUntil, laterOf(now, sub.PaidUntil), now)
+		sub.PaidUntil, sub.Canceled = now, true
 		if err := s.Store.SaveSubscription(ctx, sub); err != nil {
 			return err
 		}
@@ -447,8 +467,11 @@ func (s *Service) RemindExpiring(ctx context.Context, notify Notifier) {
 			continue
 		}
 		text := "Kotib obunangiz 24 soat ichida tugaydi. Davom ettirish uchun ilovada «Obuna» bo'limini oching."
-		if sub.PaidUntil.Before(sub.TrialUntil) || sub.PaidUntil.IsZero() {
-			text = "Bepul sinov muddati 24 soat ichida tugaydi. Kotib ishlashda davom etishi uchun ilovada obunani yoqing."
+		switch {
+		case sub.BonusUntil.Equal(until):
+			text = "Bonus kunlaringiz 24 soat ichida tugaydi. Kotib ishlashda davom etishi uchun ilovada obunani yoqing." + referralHint
+		case sub.PaidUntil.Before(sub.TrialUntil) || sub.PaidUntil.IsZero():
+			text = "Bepul sinov muddati 24 soat ichida tugaydi. Kotib ishlashda davom etishi uchun ilovada obunani yoqing." + referralHint
 		}
 		notify(ctx, sub.OwnerID, text, true)
 		sub.RemindedFor = until

@@ -35,7 +35,7 @@ func TestStoreContract(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if _, err := db.Exec(`TRUNCATE accounts, subscriptions, payments, usage_daily, google_links, actions, hooks, followups CASCADE`); err != nil {
+		if _, err := db.Exec(`TRUNCATE accounts, subscriptions, payments, usage_daily, google_links, actions, hooks, followups, referral_codes, referrals CASCADE`); err != nil {
 			t.Fatal(err)
 		}
 		contract(t, store.NewPostgres(db))
@@ -289,5 +289,83 @@ func contract(t *testing.T, s store.Store) {
 	}
 	if _, err := s.GetDraft(ctx, 1, id); !errors.Is(err, store.ErrNotFound) {
 		t.Fatal("draft o'chirilishi kerak")
+	}
+	referralContract(t, s)
+}
+
+func referralContract(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	// bonus_until saqlanadi va Until/ListSubscriptionsEnding'da hisobga olinadi
+	bonus := time.Now().Add(30 * time.Minute).Truncate(time.Second)
+	if err := s.SaveSubscription(ctx, store.Subscription{OwnerID: 100, BonusUntil: bonus}); err != nil {
+		t.Fatal(err)
+	}
+	if sub, err := s.GetSubscription(ctx, 100); err != nil || !sub.BonusUntil.Equal(bonus) || !sub.Until().Equal(bonus) {
+		t.Fatalf("bonus: %+v %v", sub, err)
+	}
+	found := false
+	ls, _ := s.ListSubscriptionsEnding(ctx, time.Now(), time.Now().Add(time.Hour))
+	for _, x := range ls {
+		found = found || x.OwnerID == 100
+	}
+	if !found {
+		t.Fatalf("bonus tugashi ham ending'da bo'lishi kerak: %v", ls)
+	}
+
+	// kod: bir marta yaratiladi, boshqa egada band kod qabul qilinmaydi
+	c, err := s.EnsureReferralCode(ctx, 100, "aaaabbbb")
+	if err != nil || c != "aaaabbbb" {
+		t.Fatal(c, err)
+	}
+	if c, _ := s.EnsureReferralCode(ctx, 100, "ccccdddd"); c != "aaaabbbb" {
+		t.Fatalf("kod o'zgarmasligi kerak: %s", c)
+	}
+	if _, err := s.EnsureReferralCode(ctx, 101, "aaaabbbb"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("band kod: %v", err)
+	}
+	if o, err := s.ReferrerByCode(ctx, "aaaabbbb"); err != nil || o != 100 {
+		t.Fatal(o, err)
+	}
+	if _, err := s.ReferrerByCode(ctx, "zzzzzzzz"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal(err)
+	}
+
+	// taklif: har odam bir marta, o'zini emas
+	if ok, err := s.AddReferral(ctx, 101, 100); !ok || err != nil {
+		t.Fatal(ok, err)
+	}
+	if ok, _ := s.AddReferral(ctx, 101, 102); ok {
+		t.Fatal("ikkinchi marta taklif qilinmasligi kerak")
+	}
+	if ok, _ := s.AddReferral(ctx, 100, 100); ok {
+		t.Fatal("o'zini taklif qilib bo'lmaydi")
+	}
+	if _, err := s.AddReferral(ctx, 102, 100); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := s.GetReferral(ctx, 101); err != nil || r.ReferrerID != 100 || !r.ActivatedAt.IsZero() {
+		t.Fatalf("%+v %v", r, err)
+	}
+	if _, err := s.GetReferral(ctx, 555); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if ok, _ := s.MarkReferral(ctx, 101, store.ReferralActivated, now); !ok {
+		t.Fatal("birinchi belgilash")
+	}
+	if ok, _ := s.MarkReferral(ctx, 101, store.ReferralActivated, now); ok {
+		t.Fatal("bosqich bir marta belgilanadi")
+	}
+	if ok, _ := s.MarkReferral(ctx, 555, store.ReferralPaid, now); ok {
+		t.Fatal("taklif yo'q — belgilanmaydi")
+	}
+	if ok, _ := s.MarkReferral(ctx, 101, store.ReferralPaid, now); !ok {
+		t.Fatal("to'lov bosqichi")
+	}
+	if st, err := s.ReferralStats(ctx, 100); err != nil || st != (store.ReferralStats{Invited: 2, Activated: 1, Paid: 1}) {
+		t.Fatalf("stats: %+v %v", st, err)
+	}
+	if st, _ := s.Stats(ctx, now); st.Referrals != 2 || st.RefPaid != 1 {
+		t.Fatalf("admin stats: %+v", st)
 	}
 }

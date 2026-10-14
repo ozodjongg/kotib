@@ -147,6 +147,32 @@ To'lov xavfsizligi:
 - Faol obunada ikkinchi to'lov havolasi berilmaydi (ikki marta yechilmasin).
 - `payments`/`subscriptions` akkaunt o'chirilganda ham saqlanadi (faqat ID, sana, summa — xabar matni yo'q).
 
+## Do'stni taklif qilish (referal)
+
+To'lov yoqilganda (`PRICE_STARS`) har mijozning doimiy taklif havolasi bor: `https://t.me/<bot>?start=ref_<kod>`
+(Mini App → **Hisob → Do'stni taklif qilish** yoki bot buyrug'i `/taklif`). Mukofot ikki tomonlama:
+
+| Kim | Qachon | Nima oladi |
+|---|---|---|
+| Taklif qilingan do'st | havola orqali `/start` bosib, ro'yxatdan o'tsa | sinov **+7 kun** (`TRIAL_DAYS` + 7) |
+| Taklif qiluvchi | do'st Telegram akkauntini **ulasa** | **+7 bonus kun** (ko'pi bilan 10 marta) |
+| Taklif qiluvchi | do'st **birinchi marta to'lasa** | **+30 bonus kun** (cheklovsiz) |
+
+- **Bonus kunlar** — to'langan obuna kabi to'liq xizmat (sinovdagi kunlik limit va qisqa kontekstsiz), Telegram pul yechmaydi.
+  Bonus joriy sinov yoki to'langan muddat tugagach davom etadi. Avtomatik yangilanadigan obunada Telegram har 30 kunda
+  pul yechadi, shuning uchun bonus har to'lovda keyingi davrdan keyinga suriladi — yo'qolmaydi, obuna bekor qilinsa ishlatiladi.
+  To'lov qaytarilsa (refund), bonus darhol boshlanadi.
+- **Firibgarlikdan himoya**: o'zini taklif qilib bo'lmaydi; faqat hali sinovi (obuna yozuvi) yo'q yangi odam taklif qilingan
+  bo'la oladi; har odam bir marta; har bosqich mukofoti bir marta (atomar). Taklif yozuvlari akkaunt o'chirilganda ham
+  saqlanadi — o'chirib qayta ochib mukofotni qayta olib bo'lmaydi. Ulanish mukofoti 10 ta bilan cheklangan (soxta
+  akkauntlar bilan cheksiz bonus yig'ilmasin); to'lov mukofoti cheklanmagan — u haqiqiy daromad.
+- **Eslatmalar**: sinov/bonus tugashidan 24 soat oldingi xabarda va Mini App bosh sahifasida (sinov ≤3 kun qolganda)
+  do'st taklif qilish taklif etiladi. Mukofot berilganda taklif qiluvchiga bot xabar yuboradi.
+- Admin `/stats` — taklif orqali kelganlar va ulardan to'laganlar soni.
+
+**Blogerlar/kanallar uchun** kod shart emas: @BotFather → bot → **Affiliate Program** — Telegram'ning o'z hamkorlik
+dasturi (Stars to'lovlaridan ulush foizi va muddatini belgilaysiz, hisob-kitobni Telegram yuritadi).
+
 ## Google integratsiyasi (Calendar, Contacts, Tasks)
 
 Mijoz Mini App → **Hisob → Google'ni ulash** orqali o'z Google akkauntini ulaydi (tashqi brauzerda ochiladi:
@@ -222,10 +248,11 @@ Masalan: `https://<domen>/hook/<token>?mode=auto&away=Hozir%20rulda`. GET ham, P
 
 | Buyruq | Kim | Vazifa |
 |---|---|---|
-| `/start`, `/help` | hamma | Mini App'ni ochish, yordam (`/start pause`, `/start resume` — deep link) |
+| `/start`, `/help` | hamma | Mini App'ni ochish, yordam (`/start pause`, `/start resume`, `/start ref_<kod>` — deep link) |
 | `/status` | hamma | holat, kutilayotgan qoralamalar, obuna |
 | `/pause`, `/resume` | hamma | kotibni darhol to'xtatish / davom ettirish |
 | `/obuna` | hamma | Stars bilan obuna bo'lish |
+| `/taklif` | hamma | do'stni taklif qilish havolasi va natijalar (bonus kunlar) |
 | `/stats` | `ADMIN_IDS` | akkauntlar, faol obunalar, tushum |
 | `/refund <charge_id>` | `ADMIN_IDS` | to'lovni qaytarish |
 

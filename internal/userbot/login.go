@@ -161,6 +161,9 @@ func (m *Manager) beginLogin(ctx context.Context, owner int64, run func(context.
 		m.Store.Audit(context.Background(), owner, "login_ok", "")
 		ls.set("done", "")
 		m.startWorker(owner)
+		if m.OnConnected != nil {
+			m.OnConnected(context.Background(), owner)
+		}
 	}()
 	return nil
 }

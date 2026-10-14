@@ -155,6 +155,19 @@ type Store interface {
 	// limit'dan kichik bo'lsa; limitga yetgan bo'lsa hech narsa o'zgarmaydi va false.
 	UseDaily(ctx context.Context, owner int64, day string, limit int) (bool, error)
 
+	// Referal (DeleteAccount bularni o'chirmaydi — mukofotni qayta olib bo'lmasin)
+	// EnsureReferralCode egasining kodini qaytaradi; kodi bo'lmasa candidate'ni saqlaydi.
+	// candidate boshqa egada band bo'lsa ErrNotFound (chaqiruvchi yangi kod bilan qayta urinadi).
+	EnsureReferralCode(ctx context.Context, owner int64, candidate string) (string, error)
+	// ReferrerByCode kod egasini topadi (topilmasa ErrNotFound).
+	ReferrerByCode(ctx context.Context, code string) (int64, error)
+	// AddReferral taklifni yozadi; invitee avval taklif qilingan bo'lsa false.
+	AddReferral(ctx context.Context, invitee, referrer int64) (bool, error)
+	GetReferral(ctx context.Context, invitee int64) (Referral, error)
+	// MarkReferral bosqichni bir marta belgilaydi: avval belgilangan bo'lsa (yoki taklif yo'q) false.
+	MarkReferral(ctx context.Context, invitee int64, stage ReferralStage, at time.Time) (bool, error)
+	ReferralStats(ctx context.Context, referrer int64) (ReferralStats, error)
+
 	// Google (DeleteAccount bularni ham o'chiradi)
 	SaveGoogleLink(ctx context.Context, l GoogleLink) error
 	GetGoogleLink(ctx context.Context, owner int64) (GoogleLink, error)

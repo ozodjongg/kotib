@@ -210,6 +210,8 @@ func TestQRLoginFlow(t *testing.T) {
 		}
 	}}
 	m, st := newManager(conn)
+	connected := make(chan int64, 1)
+	m.OnConnected = func(_ context.Context, owner int64) { connected <- owner }
 	ctx := context.Background()
 	now := time.Now()
 	_ = st.UpsertAccount(ctx, store.Account{OwnerID: 7, Status: store.StatusRevoked, ConsentAt: &now})
@@ -224,6 +226,14 @@ func TestQRLoginFlow(t *testing.T) {
 	waitLogin(t, m, 7, "done")
 	if acc, _ := st.GetAccount(ctx, 7); acc.Status != store.StatusActive {
 		t.Fatalf("akkaunt faol bo'lishi kerak: %s", acc.Status)
+	}
+	select {
+	case o := <-connected:
+		if o != 7 {
+			t.Fatalf("OnConnected egasi: %d", o)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("OnConnected chaqirilmadi (referal mukofoti)")
 	}
 	m.Shutdown()
 }
