@@ -461,3 +461,64 @@ func (p *Postgres) OwnerByHook(ctx context.Context, tokenHash []byte) (int64, er
 	}
 	return owner, err
 }
+
+func (p *Postgres) CountAudit(ctx context.Context, owner int64, events []string, since time.Time) (int, error) {
+	var n int
+	err := p.DB.QueryRowContext(ctx,
+		`SELECT count(*) FROM audit WHERE owner_id = $1 AND event = ANY($2) AND at >= $3`,
+		owner, events, since).Scan(&n)
+	return n, err
+}
+
+func (p *Postgres) SaveFollowup(ctx context.Context, f Followup) error {
+	_, err := p.DB.ExecContext(ctx, `
+		INSERT INTO followups (owner_id, chat_id, hash, due_at, status, created_at) VALUES ($1, $2, $3, $4, 'pending', now())
+		ON CONFLICT (owner_id, chat_id) DO UPDATE SET hash = EXCLUDED.hash, due_at = EXCLUDED.due_at,
+			status = 'pending', created_at = now()`,
+		f.OwnerID, f.ChatID, f.Hash, f.DueAt)
+	return err
+}
+
+func (p *Postgres) scanFollowups(rows *sql.Rows, err error) ([]Followup, error) {
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Followup
+	for rows.Next() {
+		var f Followup
+		var st string
+		if err := rows.Scan(&f.OwnerID, &f.ChatID, &f.Hash, &f.DueAt, &st, &f.CreatedAt); err != nil {
+			return nil, err
+		}
+		f.Status = FollowupStatus(st)
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+const followupCols = `owner_id, chat_id, hash, due_at, status, created_at`
+
+func (p *Postgres) ListDueFollowups(ctx context.Context, before time.Time, limit int) ([]Followup, error) {
+	return p.scanFollowups(p.DB.QueryContext(ctx,
+		`SELECT `+followupCols+` FROM followups WHERE status = 'pending' AND due_at <= $1 ORDER BY due_at LIMIT $2`, before, limit))
+}
+
+func (p *Postgres) ListOpenFollowups(ctx context.Context, owner int64) ([]Followup, error) {
+	return p.scanFollowups(p.DB.QueryContext(ctx,
+		`SELECT `+followupCols+` FROM followups WHERE owner_id = $1 AND status IN ('pending','reminded') ORDER BY created_at`, owner))
+}
+
+func (p *Postgres) SetFollowupStatus(ctx context.Context, owner, chatID int64, st FollowupStatus) error {
+	res, err := p.DB.ExecContext(ctx,
+		`UPDATE followups SET status = $3 WHERE owner_id = $1 AND chat_id = $2`, owner, chatID, string(st))
+	return affected(res, err)
+}
+
+func (p *Postgres) PruneFollowups(ctx context.Context, before time.Time) (int64, error) {
+	res, err := p.DB.ExecContext(ctx, `DELETE FROM followups WHERE created_at < $1`, before)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}

@@ -65,7 +65,11 @@ type Settings struct {
 	NoSuggest bool `json:"no_suggest,omitempty"`
 	// ReplyVoice — kontaktning ovozli xabarlariga ham javob tayyorlash (default o'chiq).
 	// Ovoz matn filtridan o'tolmaydi, shuning uchun javob har doim faqat qoralama.
-	ReplyVoice     bool       `json:"reply_voice,omitempty"`
+	ReplyVoice bool `json:"reply_voice,omitempty"`
+	// NoDigest — kechki xulosani o'chirish (default yoqiq).
+	NoDigest bool `json:"no_digest,omitempty"`
+	// NoFollowups — "keyinroq yozaman" va'dalari eslatmasini o'chirish (default yoqiq).
+	NoFollowups    bool       `json:"no_followups,omitempty"`
 	DefaultPersona string     `json:"default_persona"` // preset kaliti
 	DefaultCustom  string     `json:"default_custom,omitempty"`
 	OwnerName      string     `json:"owner_name"` // mijoz ismi — "men X man" kontekst uchun

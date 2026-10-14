@@ -316,6 +316,14 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request, owner int64) {
 	out["google"] = g
 	hasHook, _ := s.Store.HasHook(r.Context(), owner)
 	out["hook"] = hasHook
+	// Tejalgan vaqt: bu oy kotib orqali yuborilgan javoblar.
+	loc := time.UTC
+	if st, err := s.Store.GetSettings(r.Context(), owner); err == nil {
+		loc = st.Location()
+	}
+	if n, saved, err := store.ReplyStats(r.Context(), s.Store, owner, store.MonthStart(time.Now(), loc)); err == nil {
+		out["stats"] = map[string]any{"month_sent": n, "month_saved_min": int(saved / time.Minute), "month_saved": store.FormatSaved(saved)}
+	}
 	out["bot_username"] = s.BotUsername
 	writeJSON(w, 200, out)
 }

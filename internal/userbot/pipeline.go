@@ -418,6 +418,7 @@ func (p *Pipeline) sendAuto(ctx context.Context, tg Telegram, in Incoming, reply
 		return
 	}
 	p.Store.Audit(ctx, p.Owner, "auto_sent", fmt.Sprintf("chat=%d", in.ChatID))
+	p.trackPromise(ctx, in.ChatID, reply)
 }
 
 // SendDraft mijoz tasdiqlagan draftni yuboradi. Limit mijoz harakatida ham amal qiladi.
@@ -438,6 +439,7 @@ func (p *Pipeline) SendDraft(ctx context.Context, d store.Draft) error {
 		p.handleTGErr(ctx, err)
 		return err
 	}
+	p.trackPromise(ctx, d.ChatID, d.Reply)
 	return nil
 }
 

@@ -86,6 +86,25 @@ type Action struct {
 	CreatedAt time.Time
 }
 
+type FollowupStatus string
+
+const (
+	FollowupPending  FollowupStatus = "pending"  // muddat kelmagan
+	FollowupReminded FollowupStatus = "reminded" // egasi yozmagan, eslatildi
+	FollowupDone     FollowupStatus = "done"     // egasi o'zi yozdi
+)
+
+// Followup — kotib "keyinroq yozaman" degan chat (va'da). Hash — kotib javobining xeshi:
+// muddat kelganda chatdagi egasining oxirgi xabari shu bo'lsa, egasi hali yozmagan.
+type Followup struct {
+	OwnerID   int64
+	ChatID    int64
+	Hash      string
+	DueAt     time.Time
+	Status    FollowupStatus
+	CreatedAt time.Time
+}
+
 type Store interface {
 	// Account
 	UpsertAccount(ctx context.Context, a Account) error
@@ -147,6 +166,18 @@ type Store interface {
 	SetActionStatus(ctx context.Context, owner, id int64, from, to ActionStatus) error
 	// PruneActions "before"dan eski amallarni o'chiradi.
 	PruneActions(ctx context.Context, before time.Time) (int64, error)
+
+	// CountAudit egasining since'dan keyingi berilgan hodisalari soni (statistika uchun).
+	CountAudit(ctx context.Context, owner int64, events []string, since time.Time) (int, error)
+
+	// Va'dalar (har chatda bittadan; yangisi eskisini almashtiradi)
+	SaveFollowup(ctx context.Context, f Followup) error
+	// ListDueFollowups — muddati before'dan oldin kelgan pending va'dalar (barcha egalar).
+	ListDueFollowups(ctx context.Context, before time.Time, limit int) ([]Followup, error)
+	// ListOpenFollowups — egasining hali yopilmagan (pending/reminded) va'dalari.
+	ListOpenFollowups(ctx context.Context, owner int64) ([]Followup, error)
+	SetFollowupStatus(ctx context.Context, owner, chatID int64, st FollowupStatus) error
+	PruneFollowups(ctx context.Context, before time.Time) (int64, error)
 
 	// Avtomatlashtirish havolasi: faqat token xeshi saqlanadi.
 	SetHook(ctx context.Context, owner int64, tokenHash []byte) error
