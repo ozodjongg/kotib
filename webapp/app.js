@@ -745,7 +745,8 @@ function homeScreenManual() {
     : [
       h('li', {}, 'Telegram\'da bot bilan chatni oching.'),
       h('li', {}, 'Yuqoridagi ⋮ menyu → «Bosh ekranga qo\'shish» (Add to Home Screen / Ярлык).'),
-      h('li', {}, "Yoki Telegram'ni yangilang — shunda pastdagi tugma ishlaydi.")];
+      h('li', {}, "Yoki Telegram'ni yangilang — shunda pastdagi tugma ishlaydi."),
+      h('li', {}, "Baribir qo'shilmasa: telefon Sozlamalari → Ilovalar → Telegram → Ruxsatlar → «Bosh ekranga yorliqlar» ni yoqing (Xiaomi, Huawei, Oppo, Vivo'da ko'pincha o'chiq).")];
   const kids = [h('ol', { class: 'small muted' }, steps)];
   if (link) kids.push(h('button', { class: 'btn ghost block', onclick: () => copyText(link) }, 'Havolani nusxalash'));
   return kids;
@@ -764,7 +765,8 @@ function homeScreenBlock() {
     const onAdded = () => { done = true; toast("Bosh ekranga qo'shildi ✅"); haptic('success'); swap(box, intro, h('p', { class: 'small' }, "✅ Bosh ekranga qo'shilgan.")); };
     try { tg.onEvent('homeScreenAdded', onAdded); } catch (_) { /* */ }
     try { tg.addToHomeScreen(); } catch (_) { manual("Bu qurilmada avtomatik qo'shib bo'lmadi. Qo'lda qo'shish:"); return; }
-    // Ba'zi qurilmalar natijani xabar qilmaydi: oyna chiqmagan bo'lsa, qo'lda yo'l ko'rsatamiz.
+    // Ba'zi qurilmalar natijani xabar qilmaydi yoki Telegram'ga yorliq ruxsati berilmagan:
+    // oyna chiqmagan bo'lsa, qo'lda yo'l (ruxsatni tekshirish bilan) ko'rsatamiz.
     setTimeout(() => { if (!done && !document.hidden) manual("Oyna chiqmadimi? Qo'lda qo'shish:"); }, 4000);
   } }, "Bosh ekranga qo'shish");
   swap(box, intro, btn);
