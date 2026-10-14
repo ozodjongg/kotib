@@ -30,7 +30,7 @@ const EVENTS = {
   google_connected: 'Google ulandi', google_disconnected: 'Google uzildi', google_revoked: "Google ruxsati bekor qilindi",
   action_proposed: 'Taklif yuborildi (taqvim/vazifa)', action_done: "Google'ga qo'shildi",
   action_rejected: 'Taklif rad etildi', action_failed: "Google'ga qo'shib bo'lmadi",
-  referral_bonus: "Do'st taklifi uchun bonus kunlar",
+  referral_bonus: "Do'st taklifi uchun bonus kunlar", away_set: "Holat o'zgartirildi",
 };
 
 const state = {
@@ -513,6 +513,7 @@ function viewHome(view) {
       h('div', { class: 'actions' }, running
         ? h('button', { class: 'btn ghost', onclick: busy(async () => { await api('POST', '/pause'); await refreshMe(); toast("To'xtatildi"); renderMain(); }) }, "To'xtatish")
         : h('button', { class: 'btn', onclick: busy(async () => { await api('POST', '/resume'); await refreshMe(); toast('Davom ettirildi'); renderMain(); }) }, 'Davom ettirish'))),
+    awayCard(),
     h('div', { class: 'stats' },
       h('button', { class: 'stat', onclick: () => go('drafts') }, h('div', { class: 'num' }, String(me.pending_drafts || 0)), h('div', { class: 'lbl' }, 'Kutilayotgan qoralama')),
       h('button', { class: 'stat', onclick: () => go('rules') }, h('div', { class: 'num' }, String(state.settings.rules.length)), h('div', { class: 'lbl' }, 'Faol qoidalar'))),
@@ -644,9 +645,15 @@ function viewSettings(view) {
       field('Ish rejimi', modeControl(s), 'Qoralama — siz tasdiqlaysiz (tavsiya). Avto — darhol yuboriladi.'),
       field('Ismingiz', h('input', { type: 'text', value: s.owner_name || '', maxlength: 64, placeholder: 'Masalan: Aziz',
         oninput: (e) => { s.owner_name = e.target.value; markDirty(); } }), 'AI javoblarni sizning nomingizdan yozadi.'),
-      field('Hozirgi holatingiz', h('input', { type: 'text', value: s.away || '', maxlength: 100, placeholder: "Masalan: Hozir rulda / Yig'ilishdaman",
-        oninput: (e) => { s.away = e.target.value.replace(/\s+/g, ' '); markDirty(); } }),
-        "Kotib javobda hisobga oladi. Bo'sh — yo'q. Telefon avtomatikasi (Hisob → Avtomatlashtirish) o'zi o'zgartirishi mumkin."),
+      (() => {
+        const input = h('input', { type: 'text', value: currentAway(s), maxlength: 100, placeholder: "Masalan: Hozir rulda / Dars qilyapman",
+          oninput: (e) => { s.away = e.target.value.replace(/\s+/g, ' '); s.away_until = null; markDirty(); } });
+        const pick = (text) => { input.value = text; s.away = text; s.away_until = null; markDirty(); haptic('tap'); };
+        return field('Hozirgi holatingiz', [input,
+          h('div', { class: 'chips' }, STATUS_PRESETS.map(([icon, label, away]) => h('button', { class: 'chip-btn', onclick: () => pick(away) }, `${icon} ${label}`)),
+            h('button', { class: 'chip-btn', onclick: () => pick('') }, '✖️ Yo\'q'))],
+        "Kotib javobda hisobga oladi. Bu yerda — muddatsiz; vaqtli holat uchun bosh sahifadagi «Hozir nima qilyapsiz?». Telefon avtomatikasi ham o'zgartira oladi.");
+      })(),
       field('Javob tili', select([['auto', 'Suhbatdosh tilida'], ['uz', "O'zbekcha"], ['ru', 'Ruscha'], ['en', 'Inglizcha']], s.language, (v) => { s.language = v; })),
       field('Uslub', personaSelect(s.default_persona, (v) => { s.default_persona = v; })),
       field("O'z ko'rsatmangiz", custom, "Uslub «O'z ko'rsatmam» bo'lsa ishlatiladi.")),
@@ -736,14 +743,97 @@ function ruleCard(r, i, redraw) {
 
 // ---------- Hisob: obuna, faollik, xavfsizlik ----------
 // ---------- Avtomatlashtirish (iPhone Shortcuts / Android MacroDroid) ----------
+// Tayyor holatlar: [belgi, nom, kotib javobda hisobga oladigan matn, standart muddat (daqiqa; 0 — muddatsiz),
+// avtomatika havolasida qo'shimcha rejim (bo'lmasa rejim o'zgarmaydi)].
+const STATUS_PRESETS = [
+  ['🚗', 'Rulda', 'Hozir rulda', 60, 'auto'],
+  ['📅', "Yig'ilishda", "Yig'ilishdaman", 60, 'auto'],
+  ['🌙', 'Uxlayapti', 'Uxlayapman', 480, 'draft'],
+  ['🛋', 'Dam olmoqda', 'Dam olyapman', 120],
+  ['🚶', 'Sayrda', 'Sayr qilyapman', 60],
+  ['🎧', 'Musiqa tinglamoqda', 'Musiqa tinglayapman, telefonga kam qarayapman', 60],
+  ['📚', 'Dars qilmoqda', 'Dars qilyapman', 90],
+  ['💻', 'Dastur tuzmoqda', 'Dastur yozyapman, diqqatim ishda', 120],
+  ['💼', 'Ishda band', 'Ishda bandman', 120],
+  ['🏋️', 'Sportda', 'Sport bilan shug\'ullanyapman', 90],
+  ['🕌', 'Namozda', 'Namozdaman', 20],
+  ['🍽', 'Ovqatlanmoqda', 'Ovqatlanyapman', 30],
+  ['👨‍👩‍👧', 'Oila bilan', 'Oilam bilanman', 120],
+  ['✈️', 'Safarda', 'Safardaman, aloqa yomon bo\'lishi mumkin', 0],
+  ['🤒', 'Betob', 'Biroz betobman', 0],
+];
+
 const HOOK_PRESETS = [
-  ['🚗 Haydash', { mode: 'auto', away: 'Hozir rulda' }],
-  ["📅 Yig'ilish", { mode: 'auto', away: "Yig'ilishdaman" }],
-  ['🌙 Uyqu', { mode: 'draft', away: 'Uxlayapman' }],
+  ...STATUS_PRESETS.map(([icon, label, away, , mode]) => [`${icon} ${label}`, mode ? { mode, away } : { away }]),
   ['↩️ Odatiy holat', { mode: 'draft', away: '' }],
   ["⏸ To'xtatish", { action: 'pause' }],
   ['▶️ Davom ettirish', { action: 'resume' }],
 ];
+
+// Amaldagi holat (muddati o'tgan bo'lsa — yo'q).
+function currentAway(s) {
+  if (!s || !s.away) return '';
+  if (s.away_until && new Date(s.away_until) <= new Date()) return '';
+  return s.away;
+}
+
+function fmtTime(iso) {
+  const d = new Date(iso);
+  const sameDay = d.toDateString() === new Date().toDateString();
+  const hm = d.toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit', hour12: false });
+  return sameDay ? hm : `${fmtDate(iso)} ${hm}`;
+}
+
+function fmtMinutes(m) {
+  if (!m) return 'muddatsiz';
+  if (m < 60) return `${m} daqiqa`;
+  return m % 60 ? `${Math.floor(m / 60)} soat ${m % 60} daqiqa` : `${m / 60} soat`;
+}
+
+async function setAway(text, minutes) {
+  const r = await api('POST', '/away', { away: text, minutes });
+  state.settings.away = r.away || '';
+  state.settings.away_until = r.away_until || null;
+  haptic('success');
+}
+
+// Bosh sahifa: "Hozir nima qilyapsiz?" — bir bosishda holat (muddati bilan).
+function awayCard() {
+  const card = h('div', { class: 'card' });
+  let picked = null;
+  const draw = () => {
+    const now = currentAway(state.settings);
+    const head = h('div', { class: 'card-head' }, h('h3', {}, 'Hozir nima qilyapsiz?'),
+      now ? h('span', { class: 'badge accent' }, 'Holat bor') : null);
+    const kids = [head];
+    if (now) {
+      kids.push(h('p', { class: 'small' }, h('b', {}, now),
+        state.settings.away_until ? h('span', { class: 'muted' }, ` · ${fmtTime(state.settings.away_until)} gacha`) : null));
+    } else {
+      kids.push(h('p', { class: 'muted small' }, 'Tanlang — kotib javoblarda hisobga oladi (masalan: «hozir rulda, keyinroq yozadi»). Vaqti tugagach o\'zi o\'chadi.'));
+    }
+    kids.push(h('div', { class: 'status-grid' }, STATUS_PRESETS.map((p) => {
+      const [icon, label, away] = p;
+      const on = now === away;
+      return h('button', { class: 'status-btn' + (on ? ' on' : '') + (picked === p ? ' picked' : ''), onclick: () => { picked = picked === p ? null : p; haptic('tap'); draw(); } },
+        h('span', { class: 'ico' }, icon), h('span', {}, label));
+    })));
+    if (picked) {
+      const [icon, label, away, def] = picked;
+      const opts = [...new Set([def, 30, 60, 120, 240, 0])];
+      kids.push(h('p', { class: 'small' }, `${icon} ${label} — qancha vaqt?`),
+        h('div', { class: 'chips' }, opts.map((m) => h('button', { class: 'chip-btn' + (m === def ? ' on' : ''), onclick: busy(async () => {
+          await setAway(away, m); picked = null; toast(`Holat: ${label}`); draw();
+        }) }, fmtMinutes(m)))));
+    }
+    if (now) {
+      kids.push(h('button', { class: 'btn ghost block', onclick: busy(async () => { await setAway('', 0); picked = null; toast('Holat tozalandi'); draw(); }) }, 'Holatni tozalash'));
+    }
+    swap(card, kids);
+  };
+  draw();
+  return card;
+}
 
 function hookURL(base, params) {
   return base + '?' + Object.entries(params).map(([k, v]) => k + '=' + encodeURIComponent(v)).join('&');
@@ -778,8 +868,12 @@ function hookCard() {
     ];
     if (state.hookURL) {
       kids.push(h('p', { class: 'small' }, 'Kerakli havolani nusxalab, telefon avtomatikasiga qo\'ying:'),
-        h('div', { class: 'hook-list' }, HOOK_PRESETS.map(([label, params]) =>
-          h('button', { class: 'btn ghost block', onclick: () => copyText(hookURL(state.hookURL, params)) }, label + ' — nusxa olish'))),
+        (() => {
+          const sel = h('select', {}, HOOK_PRESETS.map(([label], i) => h('option', { value: String(i) }, label)));
+          return h('div', { class: 'hook-list' }, sel,
+            h('button', { class: 'btn ghost block', onclick: () => copyText(hookURL(state.hookURL, HOOK_PRESETS[+sel.value][1])) }, 'Tanlangan havoladan nusxa olish'));
+        })(),
+        h('p', { class: 'muted small' }, "Holat o'zi tugashi uchun havola oxiriga &for=60 qo'shing (daqiqa)."),
         h('p', { class: 'muted small' }, "Havolani hech kimga bermang: u orqali kotib rejimini o'zgartirish mumkin."));
     } else if (state.me.hook) {
       kids.push(h('p', { class: 'muted small' }, "Havola xavfsizlik uchun faqat yaratilganda ko'rsatiladi. Qayta ko'rish uchun yangisini yarating."));

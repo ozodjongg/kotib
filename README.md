@@ -234,14 +234,14 @@ Ikkala yo'lda ham tasdiqlangan akkaunt **Mini App'ni ochgan foydalanuvchining o'
 | **Taqvimga taklif** | Sozlamalar → "Uchrashuvlarni taqvimga taklif qilish" (default yoqiq) | Google ulangan bo'lsa — Google Calendar/Tasks. Ulanmagan bo'lsa — ✅ bosilganda imzolangan `.ics` havola: iPhone'da Apple Taqvim, Android'da taqvim ilovasi o'zi "qo'shish"ni taklif qiladi (15 daqiqa oldin eslatma bilan, havola 7 kun amal qiladi) |
 | **Ovozli xabarlar** | Sozlamalar → "Ovozli xabarlarga ham" (default o'chiq) | 2 daqiqagacha ovoz Gemini'ga audio sifatida yuboriladi. Audio matn filtridan o'tolmagani uchun javob **har doim faqat qoralama** |
 | **Avtomatlashtirish** | Hisob → Avtomatlashtirish | Shaxsiy maxfiy havola: iPhone Shortcuts (Focus: Haydash, Uyqu), Android MacroDroid/Tasker (Bezovta qilmang, mashina Bluetooth'i) kotib rejimini va "hozirgi holat"ini o'zgartiradi. Token faqat xeshi bilan saqlanadi |
-| **Hozirgi holat** | Sozlamalar → "Hozirgi holatingiz" | "Hozir rulda" — kotib javobda hisobga oladi (aniq vaqt va'da qilmaydi) |
+| **Hozirgi holat** | Bosh sahifa → "Hozir nima qilyapsiz?" (yoki Sozlamalar) | 15 ta tayyor holat: rulda, yig'ilishda, uxlayapti, dam olmoqda, sayrda, musiqa tinglamoqda, dars qilmoqda, dastur tuzmoqda, ishda band, sportda, namozda, ovqatlanmoqda, oila bilan, safarda, betob — yoki o'z matningiz. Bosh sahifada muddat bilan (30 daqiqa – 4 soat yoki muddatsiz): vaqt tugagach holat o'zi o'chadi. Kotib javobda hisobga oladi (aniq vaqt va'da qilmaydi) |
 | **Siri / Google Assistant** | — | `t.me/<bot>?start=pause` va `?start=resume` deep link'lari |
 | **Face ID / barmoq izi** | Hisob → Telefon | Mini App'dan yuborish, avto rejimni yoqish, Google'ni uzish, akkauntni o'chirishdan oldin (shu qurilmada) |
 | **Bosh ekranga qo'shish** | Hisob → Telefon | Telegram `addToHomeScreen` (Telegram 8.0+). Eski ilovada yoki qo'llamaydigan qurilmada qo'lda qo'shish yo'riqnomasi ko'rsatiladi: iPhone — Safari'da `t.me/<bot>?startapp` → «Bosh ekranga»; Android — bot chati ⋮ menyusi. `?startapp` ishlashi uchun @BotFather → Bot Settings → **Configure Mini App** (Main Mini App) yoqilgan bo'lishi kerak |
 | **Orqaga tugmasi** | — | Telegram BackButton (Android tizim tugmasi ham): bo'limdan Asosiy'ga |
 | **Pastga surib yopilmaslik** | — | `disableVerticalSwipes`: matn yozayotganda ilova tasodifan yopilmaydi |
 
-Avtomatlashtirish havolasi parametrlari: `mode=draft|auto|off`, `away=<matn>` (bo'sh — tozalash), `action=pause|resume`.
+Avtomatlashtirish havolasi parametrlari: `mode=draft|auto|off`, `away=<matn>` (bo'sh — tozalash), `for=<daqiqa>` (holat shuncha vaqtdan keyin o'zi tugaydi, 1440 gacha), `action=pause|resume`.
 Masalan: `https://<domen>/hook/<token>?mode=auto&away=Hozir%20rulda`. GET ham, POST ham ishlaydi.
 
 ## Bot buyruqlari

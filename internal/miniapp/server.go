@@ -147,6 +147,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/billing/cancel", s.auth(s.handleBillingCancel))
 	mux.HandleFunc("POST /api/billing/renew", s.auth(s.handleBillingRenew))
 	mux.HandleFunc("GET /api/referral", s.auth(s.handleReferral))
+	mux.HandleFunc("POST /api/away", s.auth(s.handleAway))
 	mux.HandleFunc("POST /api/google/connect", s.auth(s.handleGoogleConnect))
 	mux.HandleFunc("POST /api/google/disconnect", s.auth(s.handleGoogleDisconnect))
 	mux.HandleFunc("GET /oauth/google/callback", s.handleGoogleCallback)
@@ -686,6 +687,41 @@ func (s *Server) handleBilling(w http.ResponseWriter, r *http.Request, owner int
 	writeJSON(w, 200, st)
 }
 
+// handleAway — "hozirgi holat"ni tez almashtirish (bosh sahifa): boshqa sozlamalarga tegmaydi.
+// minutes > 0 — holat shuncha vaqtdan keyin o'zi tugaydi; away bo'sh — tozalash.
+func (s *Server) handleAway(w http.ResponseWriter, r *http.Request, owner int64) {
+	var in struct {
+		Away    string `json:"away"`
+		Minutes int    `json:"minutes"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if in.Minutes < 0 || in.Minutes > config.MaxAwayMinutes {
+		httpErr(w, 400, "muddat 0–1440 daqiqa")
+		return
+	}
+	if !s.requireConsent(w, r, owner) {
+		return
+	}
+	st, err := s.Store.GetSettings(r.Context(), owner)
+	if err != nil {
+		httpErr(w, 500, "xatolik")
+		return
+	}
+	st.SetAway(in.Away, in.Minutes, time.Now())
+	if err := st.Validate(); err != nil {
+		httpErr(w, 400, err.Error())
+		return
+	}
+	if err := s.Store.SaveSettings(r.Context(), owner, st); err != nil {
+		httpErr(w, 500, "xatolik")
+		return
+	}
+	s.Store.Audit(r.Context(), owner, "away_set", "")
+	writeJSON(w, 200, map[string]any{"ok": true, "away": st.Away, "away_until": st.AwayUntil})
+}
+
 // handleReferral — taklif havolasi va natijalar. To'lov o'chiq bo'lsa {enabled:false}.
 func (s *Server) handleReferral(w http.ResponseWriter, r *http.Request, owner int64) {
 	if s.Billing == nil {
@@ -925,7 +961,8 @@ func (s *Server) handleHookDelete(w http.ResponseWriter, r *http.Request, owner 
 }
 
 // handleHook — telefon avtomatikasi chaqiradi (initData yo'q, egani maxfiy token belgilaydi).
-// Parametrlar: mode=draft|auto|off, away=<holat matni> (bo'sh — tozalash), action=pause|resume.
+// Parametrlar: mode=draft|auto|off, away=<holat matni> (bo'sh — tozalash), for=<daqiqa> (holat muddati),
+// action=pause|resume.
 func (s *Server) handleHook(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
 	if len(token) < 20 || len(token) > 64 {
@@ -954,7 +991,10 @@ func (s *Server) handleHook(w http.ResponseWriter, r *http.Request) {
 		st.Mode, changed = config.Mode(v), true
 	}
 	if _, ok := q["away"]; ok {
-		st.Away, changed = strings.Join(strings.Fields(q.Get("away")), " "), true
+		// for=<daqiqa> — holat shuncha vaqtdan keyin o'zi tugaydi (ixtiyoriy).
+		mins, _ := strconv.Atoi(q.Get("for"))
+		st.SetAway(q.Get("away"), mins, time.Now())
+		changed = true
 	}
 	if changed {
 		if err := st.Validate(); err != nil {

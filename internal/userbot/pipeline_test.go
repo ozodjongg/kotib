@@ -533,3 +533,18 @@ func TestSameChatHandledSequentially(t *testing.T) {
 		t.Fatal("chat navbatlari tozalanishi kerak")
 	}
 }
+
+func TestAwayPassedUntilExpiry(t *testing.T) {
+	loc, _ := time.LoadLocation("Asia/Tashkent")
+	noon := time.Date(2026, 10, 13, 12, 0, 0, 0, loc)
+	e := newEnv(t, func(s *config.Settings) { s.SetAway("Dars qilyapman", 60, noon.Add(-30*time.Minute)) })
+	e.p.Handle(context.Background(), in("qalaysan?", true))
+	if e.llm.last.Away != "Dars qilyapman" {
+		t.Fatalf("amaldagi holat AI'ga berilishi kerak: %q", e.llm.last.Away)
+	}
+	e2 := newEnv(t, func(s *config.Settings) { s.SetAway("Dars qilyapman", 60, noon.Add(-2*time.Hour)) })
+	e2.p.Handle(context.Background(), in("qalaysan?", true))
+	if e2.llm.calls != 1 || e2.llm.last.Away != "" {
+		t.Fatalf("muddati o'tgan holat berilmasligi kerak: %q", e2.llm.last.Away)
+	}
+}

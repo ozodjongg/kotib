@@ -233,3 +233,13 @@ details ol { margin: 6px 0 0; padding-left: 20px; line-height: 1.55; }
 img.qr { display: block; margin: 12px auto 4px; width: 220px; height: 220px; background: #fff; padding: 8px; border-radius: 12px; image-rendering: pixelated; }
 a.btn { display: flex; align-items: center; justify-content: center; text-decoration: none; }
 .break { overflow-wrap: anywhere; }
+
+/* hozirgi holat: tez tanlash */
+.status-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 10px 0; }
+.status-btn { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 4px; border-radius: 12px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; font-size: 12.5px; line-height: 1.2; text-align: center; cursor: pointer; }
+.status-btn .ico { font-size: 22px; line-height: 1; }
+.status-btn.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.status-btn.picked { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.chip-btn { font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+.chip-btn.on { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
