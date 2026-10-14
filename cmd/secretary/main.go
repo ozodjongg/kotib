@@ -19,6 +19,7 @@ import (
 	"github.com/ozodjongg/secretar_ai_agent/internal/bot"
 	"github.com/ozodjongg/secretar_ai_agent/internal/botcmd"
 	"github.com/ozodjongg/secretar_ai_agent/internal/crypto"
+	"github.com/ozodjongg/secretar_ai_agent/internal/google"
 	"github.com/ozodjongg/secretar_ai_agent/internal/llm"
 	"github.com/ozodjongg/secretar_ai_agent/internal/miniapp"
 	"github.com/ozodjongg/secretar_ai_agent/internal/store"
@@ -146,6 +147,22 @@ func run(log *slog.Logger) error {
 		Entitled: bill.Entitled,
 		Quota:    bill.UseQuota,
 	}
+	// ---- Google (ixtiyoriy) ----
+	gcli := google.New(env("GOOGLE_CLIENT_ID"), env("GOOGLE_CLIENT_SECRET"), googleRedirect(env("GOOGLE_REDIRECT_URL"), env("MINIAPP_URL")), st, vault, log)
+	if gcli != nil {
+		if env("GOOGLE_CLIENT_SECRET") == "" {
+			return errors.New("GOOGLE_CLIENT_ID berilgan, GOOGLE_CLIENT_SECRET ham kerak")
+		}
+		// Interfeys maydonlariga faqat yoqilganda qo'yamiz (typed nil != nil).
+		mgr.Google = gcli
+		mgr.Propose = func(ctx context.Context, owner, id int64, text string) {
+			if err := ctrlBot.Ask(ctx, owner, text, botcmd.ActionButtons(id)); err != nil {
+				log.Warn("amal taklifi yuborilmadi", "owner", owner, "err", err)
+			}
+		}
+		log.Info("Google integratsiyasi yoqilgan", "redirect", gcli.RedirectURL)
+	}
+
 	ctrlBot.Handler = &botcmd.Handler{
 		Store: st, Billing: bill, Ctl: mgr, Admins: admins, Log: log,
 		Notify: func(ctx context.Context, owner int64, text string, openApp bool) { notify(ctx, owner, text, openApp) },
@@ -156,6 +173,17 @@ func run(log *slog.Logger) error {
 		staticDir = "./webapp"
 	}
 	api := &miniapp.Server{BotToken: env("BOT_TOKEN"), Store: st, Ctl: mgr, Log: log, StaticDir: staticDir}
+	if gcli != nil {
+		ctrlBot.Handler.(*botcmd.Handler).Google = gcli
+		api.Google = gcli
+		api.OnGoogle = func(ctx context.Context, owner int64, err error) {
+			text := "Google akkauntingiz ulandi ✅ Endi kotib taqvimingizdagi band vaqtlarni hisobga oladi, uchrashuv va vazifalarni tasdiqlashingiz uchun shu yerga yuboradi."
+			if err != nil {
+				text = "Google ulanmadi. Ilovada qayta urinib ko'ring va taqvim ruxsatini belgilang."
+			}
+			notify(ctx, owner, text, err != nil)
+		}
+	}
 	if bill.Enabled() {
 		api.Billing = bill
 	}
@@ -232,6 +260,18 @@ func parseIDs(v string) (map[int64]bool, error) {
 	return out, nil
 }
 
+// googleRedirect — OAuth qaytish manzili: aniq GOOGLE_REDIRECT_URL yoki MINIAPP_URL domeni.
+func googleRedirect(explicit, miniApp string) string {
+	if explicit != "" {
+		return explicit
+	}
+	u, err := url.Parse(miniApp)
+	if err != nil {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host + "/oauth/google/callback"
+}
+
 // listenAddr tinglash manzilini tanlaydi: aniq LISTEN > PORT (Railway/Heroku kabi
 // platformalar beradi, barcha interfeyslarda) > 127.0.0.1:8080 (TLS'ni reverse proxy tugatadi).
 func listenAddr(listen, port string) (string, error) {
@@ -261,6 +301,9 @@ func janitor(ctx context.Context, st store.Store, bill *billing.Service, notify 
 		}
 		if _, err := st.PruneAudit(ctx, now.Add(-auditTTL)); err != nil {
 			log.Warn("janitor audit", "err", err)
+		}
+		if _, err := st.PruneActions(ctx, now.Add(-draftTTL)); err != nil {
+			log.Warn("janitor actions", "err", err)
 		}
 		bill.RemindExpiring(ctx, notify)
 		select {

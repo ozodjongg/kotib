@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/ozodjongg/secretar_ai_agent/internal/billing"
 	"github.com/ozodjongg/secretar_ai_agent/internal/bot"
+	"github.com/ozodjongg/secretar_ai_agent/internal/google"
 	"github.com/ozodjongg/secretar_ai_agent/internal/store"
 )
 
@@ -28,6 +30,13 @@ type Handler struct {
 	Admins  map[int64]bool // ADMIN_IDS: /stats, /refund
 	Log     *slog.Logger
 	Loc     *time.Location // sanalarni ko'rsatish uchun (default Asia/Tashkent)
+	// Google — tasdiqlangan amallarni bajarish (google.Client); nil → o'chiq.
+	Google Executor
+}
+
+// Executor — egasi tasdiqlagan amalni Google'da bajaradi.
+type Executor interface {
+	Execute(ctx context.Context, a store.Action) (string, error)
 }
 
 var _ bot.Handler = (*Handler)(nil)
@@ -243,4 +252,51 @@ func (h *Handler) Refunded(ctx context.Context, from int64, chargeID string) {
 	if err := h.Billing.Refunded(ctx, from, chargeID); err != nil {
 		h.log().Error("refund record", "owner", from, "err", err)
 	}
+}
+
+// ActionButtons — taklif qilingan amal uchun tasdiq tugmalari.
+func ActionButtons(id int64) []bot.Button {
+	sid := strconv.FormatInt(id, 10)
+	return []bot.Button{{Text: "✅ Qo'shish", Data: "act:" + sid + ":y"}, {Text: "✖️ Kerak emas", Data: "act:" + sid + ":n"}}
+}
+
+// Callback — amalni tasdiqlash/rad etish tugmalari. Amal faqat egasiga tegishli bo'lsa
+// topiladi; holat atomar o'zgaradi — ikki marta bosish ikki tadbir yaratmaydi.
+func (h *Handler) Callback(ctx context.Context, from int64, data string) (string, string) {
+	rest, ok := strings.CutPrefix(data, "act:")
+	if !ok {
+		return "", ""
+	}
+	sid, ans, _ := strings.Cut(rest, ":")
+	id, err := strconv.ParseInt(sid, 10, 64)
+	if err != nil || (ans != "y" && ans != "n") {
+		return "", ""
+	}
+	a, err := h.Store.GetAction(ctx, from, id)
+	if err != nil {
+		return "Topilmadi yoki eskirgan", ""
+	}
+	summary, _, _ := strings.Cut(google.Describe(a), "\n\n")
+	if ans == "n" {
+		if err := h.Store.SetActionStatus(ctx, from, id, store.ActionPending, store.ActionRejected); err != nil {
+			return "Allaqachon hal qilingan", ""
+		}
+		h.Store.Audit(ctx, from, "action_rejected", string(a.Kind))
+		return "Bekor qilindi", summary + "\n\n✖️ Qo'shilmadi"
+	}
+	if h.Google == nil {
+		return "Google integratsiyasi o'chiq", ""
+	}
+	if err := h.Store.SetActionStatus(ctx, from, id, store.ActionPending, store.ActionDone); err != nil {
+		return "Allaqachon hal qilingan", ""
+	}
+	res, err := h.Google.Execute(context.WithoutCancel(ctx), a)
+	if err != nil {
+		_ = h.Store.SetActionStatus(ctx, from, id, store.ActionDone, store.ActionFailed)
+		h.Store.Audit(ctx, from, "action_failed", string(a.Kind))
+		h.log().Warn("google execute", "owner", from, "err", err)
+		return "Xatolik", summary + "\n\n⚠️ " + google.UserMessage(err)
+	}
+	h.Store.Audit(ctx, from, "action_done", string(a.Kind))
+	return res, summary + "\n\n" + res
 }

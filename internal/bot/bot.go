@@ -88,6 +88,7 @@ type inlineBtn struct {
 	Text   string      `json:"text"`
 	WebApp *webAppInfo `json:"web_app,omitempty"`
 	URL    string      `json:"url,omitempty"`
+	Data   string      `json:"callback_data,omitempty"`
 }
 type webAppInfo struct {
 	URL string `json:"url"`
@@ -120,6 +121,21 @@ func (b *Bot) send(ctx context.Context, chatID int64, r Reply) error {
 		p["reply_markup"] = map[string]any{"inline_keyboard": [][]inlineBtn{row}}
 	}
 	return b.call(ctx, "sendMessage", p, nil)
+}
+
+// Button — callback tugmasi (Data ≤ 64 bayt).
+type Button struct{ Text, Data string }
+
+// Ask mijozga tugmali xabar yuboradi (masalan, "Taqvimga qo'shaymi?").
+func (b *Bot) Ask(ctx context.Context, chatID int64, text string, buttons []Button) error {
+	row := make([]inlineBtn, 0, len(buttons))
+	for _, btn := range buttons {
+		row = append(row, inlineBtn{Text: btn.Text, Data: btn.Data})
+	}
+	return b.call(ctx, "sendMessage", map[string]any{
+		"chat_id": chatID, "text": text,
+		"reply_markup": map[string]any{"inline_keyboard": [][]inlineBtn{row}},
+	}, nil)
 }
 
 // ---- Telegram Stars (billing.API) ----
@@ -176,6 +192,9 @@ type Handler interface {
 	PreCheckout(ctx context.Context, from int64, currency string, amount int, payload string) error
 	Paid(ctx context.Context, from int64, p billing.PaymentInfo)
 	Refunded(ctx context.Context, from int64, chargeID string)
+	// Callback tugma bosilganda: toast — qisqa javob, edit — xabarning yangi matni
+	// (bo'sh bo'lsa xabar o'zgarmaydi).
+	Callback(ctx context.Context, from int64, data string) (toast, edit string)
 }
 
 type user struct {
@@ -208,6 +227,19 @@ type update struct {
 		SuccessfulPayment *successfulPayment `json:"successful_payment"`
 		RefundedPayment   *refundedPayment   `json:"refunded_payment"`
 	} `json:"message"`
+	CallbackQuery *struct {
+		ID      string `json:"id"`
+		From    user   `json:"from"`
+		Data    string `json:"data"`
+		Message *struct {
+			MessageID int    `json:"message_id"`
+			Text      string `json:"text"`
+			Chat      struct {
+				ID   int64  `json:"id"`
+				Type string `json:"type"`
+			} `json:"chat"`
+		} `json:"message"`
+	} `json:"callback_query"`
 	PreCheckoutQuery *struct {
 		ID             string `json:"id"`
 		From           user   `json:"from"`
@@ -224,7 +256,7 @@ func (b *Bot) Run(ctx context.Context) {
 	for ctx.Err() == nil {
 		var ups []update
 		err := b.call(ctx, "getUpdates", map[string]any{
-			"offset": offset, "timeout": 30, "allowed_updates": []string{"message", "pre_checkout_query"},
+			"offset": offset, "timeout": 30, "allowed_updates": []string{"message", "pre_checkout_query", "callback_query"},
 		}, &ups)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -250,6 +282,10 @@ func (b *Bot) Run(ctx context.Context) {
 }
 
 func (b *Bot) dispatch(ctx context.Context, u update) {
+	if q := u.CallbackQuery; q != nil {
+		b.callback(ctx, u)
+		return
+	}
 	if q := u.PreCheckoutQuery; q != nil {
 		// Telegram 10 soniya ichida javob kutadi — sinxron javob beramiz.
 		ans := map[string]any{"pre_checkout_query_id": q.ID, "ok": true}
@@ -298,6 +334,26 @@ func (b *Bot) dispatch(ctx context.Context, u update) {
 	}
 	if err := b.send(ctx, m.Chat.ID, r); err != nil {
 		b.Log.Warn("bot reply", "cmd", cmd, "err", err)
+	}
+}
+
+func (b *Bot) callback(ctx context.Context, u update) {
+	q := u.CallbackQuery
+	var toast, edit string
+	// Faqat shaxsiy chatdagi o'z xabarimiz: from — Telegram tasdiqlagan foydalanuvchi.
+	if b.Handler != nil && len(q.Data) <= 64 && (q.Message == nil || q.Message.Chat.Type == "private") {
+		toast, edit = b.Handler.Callback(ctx, q.From.ID, q.Data)
+	}
+	if err := b.call(ctx, "answerCallbackQuery", map[string]any{"callback_query_id": q.ID, "text": toast}, nil); err != nil {
+		b.Log.Warn("answerCallbackQuery", "err", err)
+	}
+	if edit != "" && q.Message != nil {
+		// Tugmalar olib tashlanadi — qayta bosib bo'lmasin.
+		if err := b.call(ctx, "editMessageText", map[string]any{
+			"chat_id": q.Message.Chat.ID, "message_id": q.Message.MessageID, "text": edit,
+		}, nil); err != nil {
+			b.Log.Warn("editMessageText", "err", err)
+		}
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -16,12 +17,45 @@ import (
 	"github.com/ozodjongg/secretar_ai_agent/internal/billing"
 )
 
+func TestCallbackAnsweredAndEdited(t *testing.T) {
+	updates := `[
+	 {"update_id":1,"callback_query":{"id":"cb1","from":{"id":5},"data":"act:1:y","message":{"message_id":9,"text":"x","chat":{"id":5,"type":"private"}}}},
+	 {"update_id":2,"callback_query":{"id":"cb2","from":{"id":6},"data":"act:1:y","message":{"message_id":3,"text":"x","chat":{"id":-100,"type":"group"}}}}
+	]`
+	srv, calls, mu := fakeAPI(t, updates)
+	h := &recHandler{}
+	b := New("TOKEN", "https://app.example/", slog.Default())
+	b.BaseURL, b.Handler = srv.URL, h
+	runBriefly(b)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(h.callbacks) != 1 || h.callbacks[0] != "5|act:1:y" {
+		t.Fatalf("faqat shaxsiy chatdagi tugma: %v", h.callbacks)
+	}
+	var answers, edits int
+	for _, c := range *calls {
+		switch c["_method"] {
+		case "answerCallbackQuery":
+			answers++
+		case "editMessageText":
+			edits++
+			if c["message_id"] != float64(9) || c["text"] != "yangi matn" {
+				t.Fatalf("edit: %v", c)
+			}
+		}
+	}
+	if answers != 2 || edits != 1 {
+		t.Fatalf("answers=%d edits=%d", answers, edits)
+	}
+}
+
 type recHandler struct {
 	mu        sync.Mutex
 	cmds      []string
 	paid      []billing.PaymentInfo
 	refunded  []string
 	rejectPre bool
+	callbacks []string
 }
 
 func (h *recHandler) Command(_ context.Context, _ int64, cmd, args string) Reply {
@@ -41,6 +75,13 @@ func (h *recHandler) Paid(_ context.Context, _ int64, p billing.PaymentInfo) {
 	defer h.mu.Unlock()
 	h.paid = append(h.paid, p)
 }
+func (h *recHandler) Callback(_ context.Context, from int64, data string) (string, string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.callbacks = append(h.callbacks, fmt.Sprintf("%d|%s", from, data))
+	return "OK", "yangi matn"
+}
+
 func (h *recHandler) Refunded(_ context.Context, _ int64, id string) {
 	h.refunded = append(h.refunded, id)
 }

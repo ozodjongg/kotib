@@ -175,6 +175,7 @@ func (c *GotdConnector) Run(ctx context.Context, owner int64, onReady func(Teleg
 		if known {
 			contact.IsContact = info.contact
 			contact.IsBot = info.bot
+			contact.Name, contact.Phone = info.name, info.phone
 		} else {
 			// Kimligi aniqlanmadi — xavfsiz tomon: bot deb hisoblaymiz (javob yozilmaydi).
 			contact.IsBot = true
@@ -216,6 +217,8 @@ type userInfo struct {
 	accessHash int64
 	contact    bool
 	bot        bool
+	name       string
+	phone      string
 }
 
 type gotdTG struct {
@@ -242,7 +245,10 @@ func (g *gotdTG) remember(u *tg.User) {
 	if _, ok := g.users[u.ID]; !ok && len(g.users) >= maxCachedUsers {
 		return
 	}
-	g.users[u.ID] = userInfo{accessHash: u.AccessHash, contact: u.Contact, bot: u.Bot}
+	g.users[u.ID] = userInfo{
+		accessHash: u.AccessHash, contact: u.Contact, bot: u.Bot,
+		name: strings.TrimSpace(u.FirstName + " " + u.LastName), phone: u.Phone,
+	}
 }
 
 func (g *gotdTG) user(id int64) (userInfo, bool) {

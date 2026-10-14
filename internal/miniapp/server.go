@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"html/template"
 	"io"
 	"log/slog"
 	"net/http"
@@ -20,6 +21,10 @@ import (
 	"github.com/ozodjongg/secretar_ai_agent/internal/ratelimit"
 	"github.com/ozodjongg/secretar_ai_agent/internal/store"
 )
+
+var googleTmpl = template.Must(template.New("g").Parse(`<!doctype html><html lang="uz"><head><meta charset="utf-8">` +
+	`<meta name="viewport" content="width=device-width, initial-scale=1"><title>Kotib · Google</title></head>` +
+	`<body><h2>Kotib</h2><p>{{.}}</p></body></html>`))
 
 // ErrTooManyAttempts — Controller login urinishlari chegarasidan oshganda qaytaradi.
 var ErrTooManyAttempts = errors.New("juda ko'p urinish: birozdan keyin qayta urinib ko'ring")
@@ -61,11 +66,22 @@ type Billing interface {
 	Renew(ctx context.Context, owner int64) error
 }
 
+// Google — Google akkauntini ulash (google.Client). nil → integratsiya o'chiq.
+type Google interface {
+	AuthURL(owner int64) (string, error)
+	Callback(ctx context.Context, state, code string) (int64, error)
+	Status(ctx context.Context, owner int64) (bool, string)
+	Disconnect(ctx context.Context, owner int64) error
+}
+
 type Server struct {
 	BotToken string
 	Store    store.Store
 	Ctl      Controller
 	Billing  Billing
+	Google   Google
+	// OnGoogle — ulanish natijasi haqida egasiga bot xabari (ixtiyoriy).
+	OnGoogle func(ctx context.Context, owner int64, err error)
 	Log      *slog.Logger
 	// Static — Mini App fayllari (index.html...) joylashgan papka.
 	StaticDir string
@@ -105,6 +121,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/billing/invoice", s.auth(s.handleInvoice))
 	mux.HandleFunc("POST /api/billing/cancel", s.auth(s.handleBillingCancel))
 	mux.HandleFunc("POST /api/billing/renew", s.auth(s.handleBillingRenew))
+	mux.HandleFunc("POST /api/google/connect", s.auth(s.handleGoogleConnect))
+	mux.HandleFunc("POST /api/google/disconnect", s.auth(s.handleGoogleDisconnect))
+	mux.HandleFunc("GET /oauth/google/callback", s.handleGoogleCallback)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
 	if s.StaticDir != "" {
 		mux.Handle("GET /", staticFiles(s.StaticDir))
@@ -261,6 +280,11 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request, owner int64) {
 			out["billing"] = bs
 		}
 	}
+	g := map[string]any{"enabled": s.Google != nil, "connected": false, "email": ""}
+	if s.Google != nil {
+		g["connected"], g["email"] = s.Google.Status(r.Context(), owner)
+	}
+	out["google"] = g
 	writeJSON(w, 200, out)
 }
 
@@ -559,6 +583,12 @@ func (s *Server) handleDeleteAccount(w http.ResponseWriter, r *http.Request, own
 		// Telegram tomonda uzib bo'lmasa ham lokal ma'lumot o'chiriladi; mijozga ogohlantiramiz.
 		s.logger().Warn("revoke", "owner", owner, "err", err)
 	}
+	if s.Google != nil {
+		// Google'dagi ruxsat ham bekor qilinsin (bazadagi token CASCADE bilan o'chadi).
+		if err := s.Google.Disconnect(context.WithoutCancel(r.Context()), owner); err != nil {
+			s.logger().Warn("google disconnect on delete", "owner", owner, "err", err)
+		}
+	}
 	if err := s.Store.DeleteAccount(r.Context(), owner); err != nil {
 		httpErr(w, 500, "o'chirishda xatolik")
 		return
@@ -681,4 +711,73 @@ func readJSONOptional(r *http.Request, v any) error {
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()
 	return dec.Decode(v)
+}
+
+func (s *Server) handleGoogleConnect(w http.ResponseWriter, r *http.Request, owner int64) {
+	if s.Google == nil {
+		httpErr(w, 404, "Google integratsiyasi yoqilmagan")
+		return
+	}
+	acc, err := s.Store.GetAccount(r.Context(), owner)
+	if err != nil || acc.ConsentAt == nil {
+		httpErr(w, 400, "avval rozilik bering")
+		return
+	}
+	u, err := s.Google.AuthURL(owner)
+	if err != nil {
+		httpErr(w, 503, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]string{"url": u})
+}
+
+func (s *Server) handleGoogleDisconnect(w http.ResponseWriter, r *http.Request, owner int64) {
+	if s.Google == nil {
+		httpErr(w, 404, "Google integratsiyasi yoqilmagan")
+		return
+	}
+	if err := s.Google.Disconnect(r.Context(), owner); err != nil {
+		httpErr(w, 500, "uzishda xatolik")
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+// handleGoogleCallback — Google rozilik sahifasidan qaytish (tashqi brauzerda ochiladi,
+// initData yo'q). Egasini faqat server bergan bir martalik state aniqlaydi.
+func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
+	if s.Google == nil {
+		http.NotFound(w, r)
+		return
+	}
+	q := r.URL.Query()
+	state, code := q.Get("state"), q.Get("code")
+	if len(state) > 128 || len(code) > 2048 {
+		googlePage(w, 400, "Havola yaroqsiz.")
+		return
+	}
+	owner, err := s.Google.Callback(r.Context(), state, code)
+	if owner == 0 {
+		if !s.allowAuthFailure() {
+			googlePage(w, 429, "Juda ko'p urinish. Birozdan keyin qayta urinib ko'ring.")
+			return
+		}
+		googlePage(w, 400, "Havola eskirgan yoki yaroqsiz. Ilovada \"Google'ni ulash\" tugmasini qayta bosing.")
+		return
+	}
+	if s.OnGoogle != nil {
+		s.OnGoogle(context.WithoutCancel(r.Context()), owner, err)
+	}
+	if err != nil {
+		s.logger().Warn("google callback", "owner", owner, "err", err)
+		googlePage(w, 400, "Google ulanmadi. Telegram'ga qaytib, qayta urinib ko'ring (taqvim ruxsatini belgilang).")
+		return
+	}
+	googlePage(w, 200, "Google ulandi ✅ Endi Telegram'ga qaytishingiz mumkin.")
+}
+
+func googlePage(w http.ResponseWriter, code int, msg string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(code)
+	_ = googleTmpl.Execute(w, msg) // html/template — matn ekranlanadi
 }

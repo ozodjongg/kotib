@@ -207,7 +207,9 @@ func parseHM(v string) (int, error) {
 // Contact — kiruvchi xabar jo'natuvchisi haqida runtime ma'lumot.
 type Contact struct {
 	UserID    int64
-	IsContact bool // mijozning Telegram kontaktlarida bormi
+	Name      string // Telegram'dagi ism (Google Contacts'da qidirish, tadbir nomi uchun)
+	Phone     string // faqat raqamlar; Telegram faqat kontaktlar uchun beradi
+	IsContact bool   // mijozning Telegram kontaktlarida bormi
 	IsBot     bool
 	IsGroup   bool // xabar guruhdan keldimi
 	IsChannel bool
@@ -328,6 +330,17 @@ func containsID(ids []int64, id int64) bool {
 		}
 	}
 	return false
+}
+
+// Location — mijozning vaqt zonasi (tinch soatlar sozlamasidan), default Asia/Tashkent.
+func (s *Settings) Location() *time.Location {
+	if loc, err := time.LoadLocation(s.Quiet.TZ); err == nil && s.Quiet.TZ != "" {
+		return loc
+	}
+	if loc, err := time.LoadLocation("Asia/Tashkent"); err == nil {
+		return loc
+	}
+	return time.FixedZone("Asia/Tashkent", 5*60*60)
 }
 
 func (s *Settings) inQuiet(now time.Time) bool {

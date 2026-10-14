@@ -17,6 +17,7 @@ internal/miniapp/     initData HMAC auth + HTTP API
 internal/store/       Store interfeysi, Postgres, Memory (dev)
 internal/bot/         boshqaruv boti (/start, bildirishnoma)
 internal/billing/     Telegram Stars obunasi: sinov, to'lov tasdig'i, bekor qilish, refund, eslatmalar
+internal/google/      Google: OAuth (PKCE), Calendar (band vaqt, tadbir), Contacts (eslatma), Tasks
 internal/botcmd/      bot buyruqlari (/status, /pause, /obuna, admin /stats, /refund) va to'lov hodisalari
 webapp/               Mini App (vanilla JS, innerHTML ishlatilmaydi; iliq fil suyagi/terrakota dizayn, yorug'/qorong'i)
 migrations/           Postgres sxema (binary ichiga joylangan, ishga tushganda avtomatik qo'llanadi)
@@ -91,6 +92,8 @@ Wordmark shrifti — Source Serif 4 (SIL Open Font License), matn vektor konturg
 | `TRIAL_DAYS` | bepul sinov kunlari (default 7) |
 | `TRIAL_DAILY_LIMIT` | sinovda kuniga ko'pi bilan nechta javob tayyorlanadi (default 50; 0 — cheksiz). To'langan obunada cheklov yo'q |
 | `ADMIN_IDS` | admin Telegram ID'lari, vergul bilan: `/stats`, `/refund`; adminlar uchun kotib bepul |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | ixtiyoriy: Google integratsiyasi (pastda). Bo'sh — o'chiq |
+| `GOOGLE_REDIRECT_URL` | ixtiyoriy; default `<MINIAPP_URL domeni>/oauth/google/callback` |
 | `LISTEN` | aniq manzil (masalan `127.0.0.1:8080`); berilmasa `PORT` ishlatiladi |
 | `PORT` | platforma beradi (Railway); `0.0.0.0:$PORT` da tinglanadi. Ikkalasi ham bo'lmasa — `127.0.0.1:8080` |
 | `STATIC_DIR` | Mini App fayllari, default `./webapp` |
@@ -118,6 +121,45 @@ To'lov xavfsizligi:
 - Payload tasodifiy nonce bilan; har `telegram_payment_charge_id` bir marta hisoblanadi (takroriy update'dan himoya).
 - Faol obunada ikkinchi to'lov havolasi berilmaydi (ikki marta yechilmasin).
 - `payments`/`subscriptions` akkaunt o'chirilganda ham saqlanadi (faqat ID, sana, summa — xabar matni yo'q).
+
+## Google integratsiyasi (Calendar, Contacts, Tasks)
+
+Mijoz Mini App → **Hisob → Google'ni ulash** orqali o'z Google akkauntini ulaydi (tashqi brauzerda ochiladi:
+Google Telegram ichidagi WebView'da kirishni bloklaydi). Shundan keyin kotib:
+
+- **Taqvimni biladi**: keyingi 7 kundagi band vaqtlar (`freeBusy`, faqat vaqt — tadbir nomlari emas) modelga beriladi.
+  Kontakt band vaqtga uchrashuv taklif qilsa, kotib muloyim boshqa vaqt so'raydi.
+- **Kontaktni taniydi**: Google Contacts'dan telefon (bo'lmasa ism) bo'yicha ism va egasining eslatmasi ("Izoh") olinadi.
+- **Uchrashuv/vazifani taklif qiladi**: suhbatda aniq vaqtli uchrashuv yoki egasiga topshiriq chiqsa, bot egasiga
+  "📅 Aziz bilan uchrashuv, 15.10.2026 15:00–16:00. Google Calendar'ga qo'shaymi?" deb **tugmali xabar** yuboradi.
+  Google'ga faqat **✅ Qo'shish** bosilganda yoziladi; avtomatik hech narsa qo'shilmaydi.
+
+Xavfsizlik:
+- OAuth: authorization code + PKCE, `state` bir martalik va 15 daqiqa amal qiladi, egasiga bog'langan.
+- Refresh token AES-256-GCM bilan shifrlanadi (`aad = google:<owner>`), access token faqat xotirada.
+- Tugma faqat egasida ishlaydi va amal holati atomar o'zgaradi — ikki marta bosish ikki tadbir yaratmaydi.
+- Kontakt xabari asosida taklif qilingan nomda havola/raqam bo'lsa, taklif tashlanadi; egasiga takliflar
+  5 ta, keyin ~10 daqiqada bittadan ko'p yuborilmaydi.
+- "Uzish" va akkauntni o'chirish Google'da ham tokenni bekor qiladi (`revoke`). Mijoz ruxsatni Google'da olib tashlasa,
+  ulanish avtomatik o'chiriladi va bot bir marta xabar beradi. Takliflar 7 kundan keyin o'chiriladi.
+
+### Sozlash (Google Cloud Console)
+
+1. Yangi loyiha → **APIs & Services → Library**: *Google Calendar API*, *People API*, *Google Tasks API* ni yoqing.
+2. **OAuth consent screen** (Google Auth Platform): User type — *External*; ilova nomi, logo (`branding/logo-512.png`),
+   **maxfiylik siyosati** va **foydalanish shartlari** havolalari, domen.
+   Scopes: `calendar.events`, `calendar.freebusy`, `contacts.readonly`, `tasks` (hammasi *sensitive*, Gmail kabi *restricted* emas).
+3. **Credentials → Create OAuth client ID → Web application**.
+   Authorized redirect URI: `https://<domeningiz>/oauth/google/callback` (aynan `MINIAPP_URL` domeni).
+4. `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` ni env'ga qo'ying va qayta ishga tushiring.
+
+**Muhim — Google tekshiruvi (verification):**
+- Ilova *Testing* holatida faqat qo'lda qo'shilgan **100 tagacha test foydalanuvchi** ulay oladi va ularning
+  ulanishi **7 kunda tugaydi** (Google refresh tokenni bekor qiladi). Sinov uchun yetarli, sotuv uchun emas.
+- *In production* uchun sensitive scope'lar bo'yicha Google tekshiruvidan o'tish kerak: tasdiqlangan domen,
+  maxfiylik siyosati (Google ma'lumotlari qanday ishlatilishi, Gemini'ga yuborilishi), demo video. Odatda bir necha kundan
+  bir necha haftagacha. Pullik xavfsizlik auditi (CASA) faqat restricted scope'lar (Gmail, Drive) uchun — bu yerda shart emas.
+- Maxfiylik siyosatida ko'rsating: band vaqtlar va kontakt eslatmasi javob tayyorlash uchun Gemini'ga yuboriladi.
 
 ## Bot buyruqlari
 

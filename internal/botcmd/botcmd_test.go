@@ -2,6 +2,7 @@ package botcmd
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -89,5 +90,55 @@ func TestSubscribeAndPaid(t *testing.T) {
 	}
 	if r := h.Command(ctx, 1, "status", ""); !strings.Contains(r.Text, "keyingi to'lov") {
 		t.Fatalf("status: %q", r.Text)
+	}
+}
+
+type fakeExec struct {
+	n   int
+	err error
+}
+
+func (f *fakeExec) Execute(context.Context, store.Action) (string, error) {
+	f.n++
+	return "Google Calendar'ga qo'shildi ✅", f.err
+}
+
+func TestActionCallback(t *testing.T) {
+	h, st, _, _ := setup(t)
+	ctx := context.Background()
+	ex := &fakeExec{}
+	h.Google = ex
+	payload := []byte(`{"title":"Aziz bilan uchrashuv","start":"2026-10-15T15:00:00+05:00","tz":"Asia/Tashkent","duration_min":60}`)
+	id, _ := st.CreateAction(ctx, store.Action{OwnerID: 1, Kind: store.ActionEvent, Payload: payload})
+	data := ActionButtons(id)[0].Data
+
+	if toast, _ := h.Callback(ctx, 2, data); !strings.Contains(toast, "Topilmadi") || ex.n != 0 {
+		t.Fatal("boshqa foydalanuvchi bosa olmasligi kerak")
+	}
+	_, edit := h.Callback(ctx, 1, data)
+	if ex.n != 1 || !strings.Contains(edit, "Aziz bilan uchrashuv") || !strings.Contains(edit, "qo'shildi") || strings.Contains(edit, "qo'shaymi") {
+		t.Fatalf("n=%d edit=%q", ex.n, edit)
+	}
+	if toast, _ := h.Callback(ctx, 1, data); !strings.Contains(toast, "Allaqachon") || ex.n != 1 {
+		t.Fatal("ikki marta bajarilmasligi kerak")
+	}
+
+	id2, _ := st.CreateAction(ctx, store.Action{OwnerID: 1, Kind: store.ActionEvent, Payload: payload})
+	if _, edit := h.Callback(ctx, 1, ActionButtons(id2)[1].Data); !strings.Contains(edit, "Qo'shilmadi") || ex.n != 1 {
+		t.Fatalf("rad etish: %q", edit)
+	}
+
+	ex.err = errors.New("x")
+	id3, _ := st.CreateAction(ctx, store.Action{OwnerID: 1, Kind: store.ActionEvent, Payload: payload})
+	if _, edit := h.Callback(ctx, 1, ActionButtons(id3)[0].Data); !strings.Contains(edit, "⚠️") {
+		t.Fatalf("xato: %q", edit)
+	}
+	if a, _ := st.GetAction(ctx, 1, id3); a.Status != store.ActionFailed {
+		t.Fatalf("holat: %s", a.Status)
+	}
+	for _, bad := range []string{"act:x:y", "act:1:z", "boshqa"} {
+		if toast, edit := h.Callback(ctx, 1, bad); toast != "" || edit != "" {
+			t.Fatalf("%q qabul qilinmasligi kerak", bad)
+		}
 	}
 }

@@ -26,6 +26,9 @@ const EVENTS = {
   flood_wait: "Telegram kutishni so'radi", fatal: 'Telegram xatosi', circuit_breaker: "Xavfsizlik uchun to'xtatildi",
   trial_started: 'Bepul sinov boshlandi', payment: "To'lov qabul qilindi", subscription_canceled: 'Obuna bekor qilindi',
   subscription_renewed: 'Obuna qayta yoqildi', refunded: "To'lov qaytarildi",
+  google_connected: 'Google ulandi', google_disconnected: 'Google uzildi', google_revoked: "Google ruxsati bekor qilindi",
+  action_proposed: 'Taklif yuborildi (taqvim/vazifa)', action_done: "Google'ga qo'shildi",
+  action_rejected: 'Taklif rad etildi', action_failed: "Google'ga qo'shib bo'lmadi",
 };
 
 const state = {
@@ -589,10 +592,38 @@ function ruleCard(r, i, redraw) {
 }
 
 // ---------- Hisob: obuna, faollik, xavfsizlik ----------
+function googleCard(g) {
+  const status = h('span', { class: 'badge ' + (g.connected ? 'ok' : '') }, g.connected ? 'Ulangan' : 'Ulanmagan');
+  const body = g.connected
+    ? [
+      h('p', { class: 'muted small' }, g.email ? `Akkaunt: ${g.email}` : 'Google akkaunt ulangan.'),
+      h('ul', { class: 'perks' },
+        h('li', {}, "Kotib taqvimdagi band vaqtlaringizni biladi"),
+        h('li', {}, "Uchrashuv va vazifalarni botda tasdiqlasangiz — Calendar/Tasks'ga qo'shiladi"),
+        h('li', {}, "Kontakt haqidagi eslatmalaringiz (Google Contacts) hisobga olinadi")),
+      h('button', { class: 'btn ghost block', onclick: busy(async () => {
+        if (!(await confirmBox("Google uziladi va ruxsat bekor qilinadi. Davom etasizmi?"))) return;
+        await api('POST', '/google/disconnect'); await refreshMe(); toast('Google uzildi'); renderMain();
+      }) }, 'Google\'ni uzish'),
+    ]
+    : [
+      h('p', { class: 'muted small' }, "Calendar, Contacts va Tasks. Kotib hech narsani o'zi qo'shmaydi — har bir uchrashuv va vazifa uchun botda sizdan so'raydi."),
+      h('button', { class: 'btn block', onclick: busy(async () => {
+        const { url } = await api('POST', '/google/connect');
+        // Google ichki brauzerda (WebView) kirishni bloklaydi — tashqi brauzerda ochamiz.
+        if (tg && tg.openLink) tg.openLink(url); else window.open(url, '_blank', 'noopener');
+        toast("Brauzerda ruxsat bering, so'ng shu yerga qayting");
+      }) }, "Google'ni ulash"),
+    ];
+  return h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Google'), status), body);
+}
+
 async function viewAccount(view) {
   put(view, h('h1', {}, 'Hisob'));
   const b = state.me.billing || {};
   if (b.enabled) put(view, subscriptionCard(b));
+  const g = state.me.google || {};
+  if (g.enabled) put(view, googleCard(g));
 
   put(view, h('h2', {}, 'Oxirgi faollik'));
   const act = h('div', { class: 'card' }, h('div', { class: 'skeleton' }));

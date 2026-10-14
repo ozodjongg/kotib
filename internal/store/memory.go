@@ -21,6 +21,8 @@ type Memory struct {
 	subs     map[int64]Subscription
 	payments map[string]Payment
 	usage    map[usageKey]int
+	google   map[int64]GoogleLink
+	actions  map[int64]Action
 }
 
 type usageKey struct {
@@ -43,6 +45,8 @@ func NewMemory() *Memory {
 		subs:     map[int64]Subscription{},
 		payments: map[string]Payment{},
 		usage:    map[usageKey]int{},
+		google:   map[int64]GoogleLink{},
+		actions:  map[int64]Action{},
 	}
 }
 
@@ -105,6 +109,12 @@ func (m *Memory) DeleteAccount(_ context.Context, owner int64) error {
 	delete(m.accounts, owner)
 	delete(m.sessions, owner)
 	delete(m.settings, owner)
+	delete(m.google, owner)
+	for id, a := range m.actions {
+		if a.OwnerID == owner {
+			delete(m.actions, id)
+		}
+	}
 	for id, d := range m.drafts {
 		if d.OwnerID == owner {
 			delete(m.drafts, id)
@@ -371,4 +381,81 @@ func (m *Memory) UseDaily(_ context.Context, owner int64, day string, limit int)
 	}
 	m.usage[k]++
 	return true, nil
+}
+
+func (m *Memory) SaveGoogleLink(_ context.Context, l GoogleLink) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.accounts[l.OwnerID]; !ok {
+		return ErrNotFound // Postgres'dagi FK bilan bir xil
+	}
+	l.CreatedAt = time.Now()
+	l.Token = append([]byte(nil), l.Token...)
+	m.google[l.OwnerID] = l
+	return nil
+}
+
+func (m *Memory) GetGoogleLink(_ context.Context, owner int64) (GoogleLink, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	l, ok := m.google[owner]
+	if !ok {
+		return GoogleLink{}, ErrNotFound
+	}
+	return l, nil
+}
+
+func (m *Memory) DeleteGoogleLink(_ context.Context, owner int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.google, owner)
+	return nil
+}
+
+func (m *Memory) CreateAction(_ context.Context, a Action) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.accounts[a.OwnerID]; !ok {
+		return 0, ErrNotFound
+	}
+	m.nextID++
+	a.ID, a.Status, a.CreatedAt = m.nextID, ActionPending, time.Now()
+	a.Payload = append([]byte(nil), a.Payload...)
+	m.actions[a.ID] = a
+	return a.ID, nil
+}
+
+func (m *Memory) GetAction(_ context.Context, owner, id int64) (Action, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.actions[id]
+	if !ok || a.OwnerID != owner {
+		return Action{}, ErrNotFound
+	}
+	return a, nil
+}
+
+func (m *Memory) SetActionStatus(_ context.Context, owner, id int64, from, to ActionStatus) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.actions[id]
+	if !ok || a.OwnerID != owner || a.Status != from {
+		return ErrNotFound
+	}
+	a.Status = to
+	m.actions[id] = a
+	return nil
+}
+
+func (m *Memory) PruneActions(_ context.Context, before time.Time) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var n int64
+	for id, a := range m.actions {
+		if a.CreatedAt.Before(before) {
+			delete(m.actions, id)
+			n++
+		}
+	}
+	return n, nil
 }
