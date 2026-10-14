@@ -140,7 +140,8 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
-	bill := &billing.Service{Store: st, API: ctrlBot, Price: price, TrialDays: trialDays, TrialDailyLimit: trialDaily, Exempt: admins, Log: log}
+	bill := &billing.Service{Store: st, API: ctrlBot, Price: price, TrialDays: trialDays, TrialDailyLimit: trialDaily, Exempt: admins, Log: log,
+		Notify: notify}
 	if bill.Enabled() {
 		log.Info("to'lov yoqilgan (Telegram Stars)", "price", price, "trial_days", trialDays, "trial_daily_limit", trialDaily)
 	}
@@ -152,6 +153,8 @@ func run(log *slog.Logger) error {
 		Quota:    bill.UseQuota,
 		// Kontekst: obunada oxirgi 20 ta, sinovda 8 ta xabar.
 		HistoryLimit: bill.HistoryLimit,
+		// Taklif qilingan do'st akkauntini ulasa — taklif qiluvchiga bonus kunlar.
+		OnConnected: bill.ReferralActivated,
 	}
 	// Tasdiq tugmali takliflar (uchrashuv/vazifa) — Google bo'lsa ham, bo'lmasa ham (.ics).
 	mgr.Propose = func(ctx context.Context, owner, id int64, text string) {
@@ -219,6 +222,7 @@ func run(log *slog.Logger) error {
 		cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		if name, err := ctrlBot.Username(cctx); err == nil {
 			api.BotUsername = name
+			ctrlBot.Handler.(*botcmd.Handler).BotUsername = name
 		} else {
 			log.Warn("bot username olinmadi", "err", err)
 		}

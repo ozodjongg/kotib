@@ -247,3 +247,36 @@ func TestActionICSWithoutGoogle(t *testing.T) {
 		t.Fatal("vazifa Google'siz bajarilmaydi")
 	}
 }
+
+func TestReferralStartAndInvite(t *testing.T) {
+	h, st, _, _ := setup(t)
+	ctx := context.Background()
+	h.BotUsername = "kotib_bot"
+	r := h.Command(ctx, 1, "taklif", "")
+	i := strings.Index(r.Text, "https://t.me/kotib_bot?start=ref_")
+	if i < 0 {
+		t.Fatalf("taklif havolasi yo'q: %s", r.Text)
+	}
+	code := strings.Fields(r.Text[i+len("https://t.me/kotib_bot?start=ref_"):])[0]
+
+	// Yangi do'st havola orqali keldi: uzunroq sinov va'da qilinadi va bog'lanadi.
+	r = h.Command(ctx, 2, "start", "ref_"+code)
+	if !strings.Contains(r.Text, "Do'stingiz taklifi") || !strings.Contains(r.Text, "10 kun") || !r.OpenApp {
+		t.Fatalf("start ref: %s", r.Text)
+	}
+	if ref, err := st.GetReferral(ctx, 2); err != nil || ref.ReferrerID != 1 {
+		t.Fatalf("bog'lanmadi: %+v %v", ref, err)
+	}
+	// Yaroqsiz kod — oddiy salomlashuv.
+	if r = h.Command(ctx, 3, "start", "ref_nope"); strings.Contains(r.Text, "taklifi") {
+		t.Fatalf("yaroqsiz kod: %s", r.Text)
+	}
+	// Ro'yxatdan o'tmagan foydalanuvchi /taklif — avval ilova.
+	if r = h.Command(ctx, 4, "taklif", ""); !strings.Contains(r.Text, "ro'yxatdan") {
+		t.Fatal(r.Text)
+	}
+	// Admin statistikasi taklifni ko'rsatadi.
+	if r = h.Command(ctx, 99, "stats", ""); !strings.Contains(r.Text, "Taklif orqali kelgan: 1") {
+		t.Fatal(r.Text)
+	}
+}

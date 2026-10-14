@@ -30,6 +30,7 @@ const EVENTS = {
   google_connected: 'Google ulandi', google_disconnected: 'Google uzildi', google_revoked: "Google ruxsati bekor qilindi",
   action_proposed: 'Taklif yuborildi (taqvim/vazifa)', action_done: "Google'ga qo'shildi",
   action_rejected: 'Taklif rad etildi', action_failed: "Google'ga qo'shib bo'lmadi",
+  referral_bonus: "Do'st taklifi uchun bonus kunlar",
 };
 
 const state = {
@@ -470,6 +471,7 @@ function statusBadge() {
 function billingLine(b) {
   if (!b || !b.enabled || b.exempt) return null;
   if (b.paid) return b.canceled ? `Obuna ${fmtDate(b.paid_until)} gacha (yangilanmaydi)` : `Obuna faol · keyingi to'lov ${fmtDate(b.paid_until)}`;
+  if (b.bonus) return `🎁 Bonus · ${b.days_left} kun qoldi`;
   if (b.on_trial) return `Bepul sinov · ${b.days_left} kun qoldi`;
   return 'Obuna faol emas';
 }
@@ -489,7 +491,12 @@ function viewHome(view) {
     b.enabled && !b.active ? h('div', { class: 'card accent' },
       h('h3', {}, 'Obuna faol emas'),
       h('p', { class: 'small' }, 'Kotib yangi xabarlarga javob tayyorlamayapti.'),
-      h('button', { class: 'btn', onclick: () => go('account') }, `Obunani yoqish · ${b.price} ⭐`)) : null,
+      h('button', { class: 'btn', onclick: () => go('account') }, `Obunani yoqish · ${b.price} ⭐`),
+      h('p', { class: 'muted small' }, "Yoki do'stingizni taklif qiling — u ulansa, sizga bepul kunlar qo'shiladi.")) : null,
+    b.enabled && b.on_trial && b.days_left <= 3 ? h('div', { class: 'card soft' },
+      h('h3', {}, `🎁 Sinov ${b.days_left} kunda tugaydi`),
+      h('p', { class: 'small muted' }, "Do'stingizni taklif qiling: u Telegram akkauntini ulasa — sizga +7 kun, obuna bo'lsa — +30 kun bepul."),
+      h('button', { class: 'btn ghost sm', onclick: () => go('account') }, "Do'stni taklif qilish")) : null,
     (() => {
       const q = state.settings.quiet_hours, info = q && quietInfo(q);
       return info && info.active ? h('div', { class: 'card accent' },
@@ -905,6 +912,7 @@ async function viewAccount(view) {
   put(view, h('h1', {}, 'Hisob'));
   const b = state.me.billing || {};
   if (b.enabled) put(view, subscriptionCard(b));
+  if (b.enabled && !b.exempt) put(view, referralCard());
   const g = state.me.google || {};
   if (g.enabled) put(view, googleCard(g));
   const dev = deviceCard();
@@ -955,6 +963,7 @@ function subscriptionCard(b) {
     body = [
       h('p', { class: 'muted small' }, b.canceled ? `${fmtDate(b.paid_until)} gacha amal qiladi, keyin to'xtaydi.` : `Keyingi to'lov: ${fmtDate(b.paid_until)} · ${b.price} ⭐`),
       h('div', { class: 'progress' }, h('i', { style: null, 'data-w': pct })),
+      b.bonus_until ? h('p', { class: 'muted small' }, `🎁 Bonus kunlaringiz to'langan muddatdan keyin ishlatiladi (${fmtDate(b.bonus_until)} gacha). Obuna yangilansa, ular keyinga suriladi — yo'qolmaydi.`) : null,
       b.renewable
         ? h('button', { class: 'btn block', onclick: busy(async () => { await api('POST', '/billing/renew'); await refreshMe(); toast('Obuna qayta yoqildi'); renderMain(); }) }, 'Obunani qayta yoqish')
         : h('button', { class: 'btn ghost block', onclick: busy(async () => {
@@ -963,8 +972,11 @@ function subscriptionCard(b) {
         }) }, 'Obunani bekor qilish'),
     ];
   } else {
-    status = h('span', { class: 'badge ' + (b.on_trial ? 'accent' : 'bad') }, b.on_trial ? `Sinov · ${b.days_left} kun` : 'Faol emas');
+    status = b.bonus
+      ? h('span', { class: 'badge ok' }, `Bonus · ${b.days_left} kun`)
+      : h('span', { class: 'badge ' + (b.on_trial ? 'accent' : 'bad') }, b.on_trial ? `Sinov · ${b.days_left} kun` : 'Faol emas');
     body = [
+      b.bonus ? h('p', { class: 'small' }, `🎁 Do'st taklifi uchun bonus: ${fmtDate(b.bonus_until)} gacha cheklovsiz ishlaydi. Keyin davom ettirish uchun obuna bo'ling.`) : null,
       h('div', { class: 'price' }, String(b.price) + ' ⭐ ', h('small', {}, '/ 30 kun')),
       h('ul', { class: 'perks' },
         h('li', {}, 'Cheksiz javob qoralamalari'),
@@ -982,6 +994,38 @@ function subscriptionCard(b) {
   const card = h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Obuna'), status), body);
   // progress kengligi: inline style CSP'da taqiqlangan, shuning uchun CSSOM orqali.
   card.querySelectorAll('[data-w]').forEach((el) => { el.style.width = el.getAttribute('data-w') + '%'; });
+  return card;
+}
+
+// ---------- Do'stni taklif qilish ----------
+function shareReferral(info) {
+  const text = `Telegram'dagi xabarlarimga AI kotib javob tayyorlab beradi — ${info.trial_days} kun bepul sinab ko'ring:`;
+  const url = 'https://t.me/share/url?url=' + encodeURIComponent(info.link) + '&text=' + encodeURIComponent(text);
+  haptic('tap');
+  if (tg && tg.openTelegramLink) tg.openTelegramLink(url); else window.open(url, '_blank', 'noopener');
+}
+
+function referralCard() {
+  const card = h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, "🎁 Do'stni taklif qilish")), h('div', { class: 'skeleton' }));
+  api('GET', '/referral').then((r) => {
+    if (!r.enabled) { card.remove(); return; }
+    const stat = (n, label) => h('div', { class: 'stat' }, h('div', { class: 'num' }, String(n)), h('div', { class: 'lbl' }, label));
+    swap(card,
+      h('div', { class: 'card-head' }, h('h3', {}, "🎁 Do'stni taklif qilish"),
+        r.earned_days ? h('span', { class: 'badge ok' }, `+${r.earned_days} kun olindi`) : null),
+      h('ul', { class: 'perks' },
+        h('li', {}, `Do'stingiz ${r.trial_days} kun bepul sinaydi (odatdagidan ${r.trial_bonus} kun ko'p)`),
+        h('li', {}, `U Telegram akkauntini ulasa — sizga +${r.activated_days} kun`),
+        h('li', {}, `U obuna bo'lsa — sizga +${r.paid_days} kun (bir oy bepul)`)),
+      h('div', { class: 'stats' }, stat(r.invited, 'Taklif qilingan'), stat(r.paid, "Obuna bo'lgan")),
+      r.link ? [
+        h('div', { class: 'hook-list' },
+          h('button', { class: 'btn block', onclick: () => shareReferral(r) }, "Do'stga yuborish"),
+          h('button', { class: 'btn ghost block', onclick: () => copyText(r.link) }, 'Havoladan nusxa olish')),
+        h('p', { class: 'muted small center break' }, r.link),
+      ] : h('p', { class: 'muted small' }, "Havola hozircha mavjud emas — botda /taklif buyrug'ini yuboring."),
+      h('p', { class: 'muted small' }, `Bonus kunlarda kotib cheklovsiz ishlaydi. Ulangan do'stlar uchun bonus ko'pi bilan ${r.activated_cap} marta, obuna bo'lganlar uchun — cheksiz.`));
+  }).catch(() => card.remove());
   return card;
 }
 

@@ -250,13 +250,13 @@ func (p *Postgres) ListAudit(ctx context.Context, owner int64, limit int) ([]Aud
 
 func nullTime(t time.Time) sql.NullTime { return sql.NullTime{Time: t, Valid: !t.IsZero()} }
 
-const subCols = `owner_id, trial_until, paid_until, charge_id, canceled, reminded_for`
+const subCols = `owner_id, trial_until, paid_until, charge_id, canceled, reminded_for, bonus_until`
 
 func scanSub(sc interface{ Scan(...any) error }) (Subscription, error) {
 	var s Subscription
-	var trial, paid, reminded sql.NullTime
-	err := sc.Scan(&s.OwnerID, &trial, &paid, &s.ChargeID, &s.Canceled, &reminded)
-	s.TrialUntil, s.PaidUntil, s.RemindedFor = trial.Time, paid.Time, reminded.Time
+	var trial, paid, reminded, bonus sql.NullTime
+	err := sc.Scan(&s.OwnerID, &trial, &paid, &s.ChargeID, &s.Canceled, &reminded, &bonus)
+	s.TrialUntil, s.PaidUntil, s.RemindedFor, s.BonusUntil = trial.Time, paid.Time, reminded.Time, bonus.Time
 	return s, err
 }
 
@@ -270,12 +270,13 @@ func (p *Postgres) GetSubscription(ctx context.Context, owner int64) (Subscripti
 
 func (p *Postgres) SaveSubscription(ctx context.Context, s Subscription) error {
 	_, err := p.DB.ExecContext(ctx, `
-		INSERT INTO subscriptions (`+subCols+`, updated_at) VALUES ($1, $2, $3, $4, $5, $6, now())
+		INSERT INTO subscriptions (`+subCols+`, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, now())
 		ON CONFLICT (owner_id) DO UPDATE SET
 			trial_until = EXCLUDED.trial_until, paid_until = EXCLUDED.paid_until,
 			charge_id = EXCLUDED.charge_id, canceled = EXCLUDED.canceled,
-			reminded_for = EXCLUDED.reminded_for, updated_at = now()`,
-		s.OwnerID, nullTime(s.TrialUntil), nullTime(s.PaidUntil), s.ChargeID, s.Canceled, nullTime(s.RemindedFor))
+			reminded_for = EXCLUDED.reminded_for, bonus_until = EXCLUDED.bonus_until, updated_at = now()`,
+		s.OwnerID, nullTime(s.TrialUntil), nullTime(s.PaidUntil), s.ChargeID, s.Canceled, nullTime(s.RemindedFor),
+		nullTime(s.BonusUntil))
 	return err
 }
 
@@ -312,8 +313,8 @@ func (p *Postgres) MarkRefunded(ctx context.Context, chargeID string) error {
 func (p *Postgres) ListSubscriptionsEnding(ctx context.Context, from, to time.Time) ([]Subscription, error) {
 	rows, err := p.DB.QueryContext(ctx, `
 		SELECT `+subCols+` FROM subscriptions
-		WHERE GREATEST(COALESCE(trial_until, '-infinity'), COALESCE(paid_until, '-infinity')) >= $1
-		  AND GREATEST(COALESCE(trial_until, '-infinity'), COALESCE(paid_until, '-infinity')) < $2
+		WHERE GREATEST(COALESCE(trial_until, '-infinity'), COALESCE(paid_until, '-infinity'), COALESCE(bonus_until, '-infinity')) >= $1
+		  AND GREATEST(COALESCE(trial_until, '-infinity'), COALESCE(paid_until, '-infinity'), COALESCE(bonus_until, '-infinity')) < $2
 		ORDER BY owner_id`, from, to)
 	if err != nil {
 		return nil, err
@@ -337,8 +338,88 @@ func (p *Postgres) Stats(ctx context.Context, now time.Time) (Stats, error) {
 			(SELECT count(*) FROM accounts),
 			(SELECT count(*) FROM accounts WHERE status = 'active'),
 			(SELECT count(*) FROM subscriptions WHERE paid_until > $1),
-			(SELECT COALESCE(sum(amount), 0) FROM payments WHERE NOT refunded)`, now).
-		Scan(&st.Accounts, &st.Active, &st.PaidActive, &st.StarsTotal)
+			(SELECT COALESCE(sum(amount), 0) FROM payments WHERE NOT refunded),
+			(SELECT count(*) FROM referrals),
+			(SELECT count(*) FROM referrals WHERE paid_at IS NOT NULL)`, now).
+		Scan(&st.Accounts, &st.Active, &st.PaidActive, &st.StarsTotal, &st.Referrals, &st.RefPaid)
+	return st, err
+}
+
+// ---- Referal ----
+
+func (p *Postgres) EnsureReferralCode(ctx context.Context, owner int64, candidate string) (string, error) {
+	// ON CONFLICT maqsadsiz: owner_id ham, code ham band bo'lsa — hech narsa qilinmaydi.
+	if _, err := p.DB.ExecContext(ctx,
+		`INSERT INTO referral_codes (owner_id, code) VALUES ($1, $2) ON CONFLICT DO NOTHING`, owner, candidate); err != nil {
+		return "", err
+	}
+	var code string
+	err := p.DB.QueryRowContext(ctx, `SELECT code FROM referral_codes WHERE owner_id = $1`, owner).Scan(&code)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound // kod boshqa egada band edi
+	}
+	return code, err
+}
+
+func (p *Postgres) ReferrerByCode(ctx context.Context, code string) (int64, error) {
+	var owner int64
+	err := p.DB.QueryRowContext(ctx, `SELECT owner_id FROM referral_codes WHERE code = $1`, code).Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	return owner, err
+}
+
+func (p *Postgres) AddReferral(ctx context.Context, invitee, referrer int64) (bool, error) {
+	if invitee == referrer {
+		return false, nil
+	}
+	res, err := p.DB.ExecContext(ctx,
+		`INSERT INTO referrals (invitee_id, referrer_id) VALUES ($1, $2) ON CONFLICT (invitee_id) DO NOTHING`,
+		invitee, referrer)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+func (p *Postgres) GetReferral(ctx context.Context, invitee int64) (Referral, error) {
+	var r Referral
+	var act, paid sql.NullTime
+	err := p.DB.QueryRowContext(ctx, `
+		SELECT invitee_id, referrer_id, created_at, activated_at, paid_at FROM referrals WHERE invitee_id = $1`, invitee).
+		Scan(&r.InviteeID, &r.ReferrerID, &r.CreatedAt, &act, &paid)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Referral{}, ErrNotFound
+	}
+	r.ActivatedAt, r.PaidAt = act.Time, paid.Time
+	return r, err
+}
+
+func (p *Postgres) MarkReferral(ctx context.Context, invitee int64, stage ReferralStage, at time.Time) (bool, error) {
+	var q string
+	switch stage {
+	case ReferralActivated:
+		q = `UPDATE referrals SET activated_at = $2 WHERE invitee_id = $1 AND activated_at IS NULL`
+	case ReferralPaid:
+		q = `UPDATE referrals SET paid_at = $2 WHERE invitee_id = $1 AND paid_at IS NULL`
+	default:
+		return false, nil
+	}
+	res, err := p.DB.ExecContext(ctx, q, invitee, at)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+func (p *Postgres) ReferralStats(ctx context.Context, referrer int64) (ReferralStats, error) {
+	var st ReferralStats
+	err := p.DB.QueryRowContext(ctx, `
+		SELECT count(*), count(activated_at), count(paid_at) FROM referrals WHERE referrer_id = $1`, referrer).
+		Scan(&st.Invited, &st.Activated, &st.Paid)
 	return st, err
 }
 

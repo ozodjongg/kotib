@@ -65,6 +65,9 @@ type Manager struct {
 	// eski va yangi nusxa bitta sessiyaga bir vaqtda ulansa, Telegram AUTH_KEY_DUPLICATED bilan
 	// sessiyani butunlay bekor qiladi — yangi nusxa eskisi to'xtashini shu orqali kutadi.
 	Gate <-chan struct{}
+	// OnConnected — Telegram akkaunti muvaffaqiyatli ulanganda (login) chaqiriladi; nil → hech narsa.
+	// Masalan, referal mukofoti (billing.Service.ReferralActivated).
+	OnConnected func(ctx context.Context, owner int64)
 
 	mu         sync.Mutex
 	workers    map[int64]*worker

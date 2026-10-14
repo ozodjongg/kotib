@@ -95,3 +95,34 @@ func TestAuthFailureLimiter(t *testing.T) {
 		t.Fatal("ko'p yaroqsiz so'rovdan keyin 429 bo'lishi kerak")
 	}
 }
+
+func TestReferralEndpoint(t *testing.T) {
+	st := store.NewMemory()
+	bill := &billing.Service{Store: st, API: &fakeStarsAPI{}, Price: 100, TrialDays: 7}
+	srv := newTestServer(t, &Server{BotToken: tok, Store: st, Ctl: &fakeCtl{}, Billing: bill, BotUsername: "kotib_bot"})
+	a := userAuth("30")
+	if r, _ := do(t, "GET", srv.URL+"/api/referral", a, ""); r.StatusCode != 403 {
+		t.Fatalf("rozilikdan oldin: %d", r.StatusCode)
+	}
+	do(t, "POST", srv.URL+"/api/consent", a, `{"accepted":true}`)
+	r, m := do(t, "GET", srv.URL+"/api/referral", a, "")
+	link, _ := m["link"].(string)
+	code, _ := m["code"].(string)
+	if r.StatusCode != 200 || m["enabled"] != true || code == "" || link != "https://t.me/kotib_bot?start=ref_"+code ||
+		m["trial_days"] != float64(14) || m["invited"] != float64(0) {
+		t.Fatalf("referral: %d %v", r.StatusCode, m)
+	}
+	// Do'st bog'langach soni ko'rinadi.
+	if !bill.AttachReferral(context.Background(), 31, code) {
+		t.Fatal("bog'lanmadi")
+	}
+	if _, m = do(t, "GET", srv.URL+"/api/referral", a, ""); m["invited"] != float64(1) {
+		t.Fatalf("invited: %v", m)
+	}
+
+	// To'lov o'chiq — enabled:false.
+	off := newTestServer(t, &Server{BotToken: tok, Store: st, Ctl: &fakeCtl{}})
+	if _, m := do(t, "GET", off.URL+"/api/referral", a, ""); m["enabled"] != false {
+		t.Fatalf("o'chiq: %v", m)
+	}
+}

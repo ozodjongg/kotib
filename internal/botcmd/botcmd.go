@@ -38,6 +38,8 @@ type Handler struct {
 	Google Executor
 	// ICS — Google ulanmagan mijozlar uchun .ics havolalari; nil → o'chiq.
 	ICS *ics.Signer
+	// BotUsername — taklif havolasi uchun (t.me/<bot>?start=ref_...); bo'sh → /taklif havolasiz.
+	BotUsername string
 }
 
 // Executor — egasi tasdiqlagan amalni Google'da bajaradi.
@@ -55,6 +57,7 @@ var Commands = []bot.Command{
 	{Name: "pause", Description: "Kotibni to'xtatish"},
 	{Name: "resume", Description: "Kotibni davom ettirish"},
 	{Name: "obuna", Description: "Obuna (Telegram Stars)"},
+	{Name: "taklif", Description: "Do'stni taklif qilish — bonus kunlar"},
 	{Name: "help", Description: "Yordam"},
 }
 
@@ -83,6 +86,7 @@ const helpText = `Kotib — Telegram'dagi shaxsiy xabarlaringizga AI yordamida j
 /pause — kotibni darhol to'xtatish
 /resume — davom ettirish
 /obuna — obunani yoqish (Telegram Stars)
+/taklif — do'stni taklif qilish (bonus kunlar)
 
 Sozlamalar, qoidalar va qoralamalar — "Ochish" tugmasi orqali ilovada.`
 
@@ -96,9 +100,19 @@ func (h *Handler) Command(ctx context.Context, from int64, cmd, args string) bot
 		case "resume":
 			return h.resume(ctx, from)
 		}
+		trial := h.Billing.TrialDays
+		referred := false
+		if code, ok := strings.CutPrefix(args, billing.ReferralStartPrefix); ok && h.Billing.AttachReferral(ctx, from, code) {
+			referred = true
+			trial += billing.ReferralTrialBonus
+		}
 		text := "Salom! Men kotibingizman: shaxsiy xabarlaringizga javob qoralamasini tayyorlayman, siz tasdiqlaganingizdan keyingina yuboriladi.\n\nBoshlash uchun pastdagi tugmani bosing."
 		if h.Billing.Enabled() && h.Billing.TrialDays > 0 {
-			text += fmt.Sprintf("\n\nBirinchi %d kun — bepul.", h.Billing.TrialDays)
+			if referred {
+				text += fmt.Sprintf("\n\n🎁 Do'stingiz taklifi bilan: birinchi %d kun — bepul (odatda %d kun).", trial, h.Billing.TrialDays)
+			} else {
+				text += fmt.Sprintf("\n\nBirinchi %d kun — bepul.", trial)
+			}
 		}
 		return bot.Reply{Text: text, OpenApp: true}
 	case "help":
@@ -111,6 +125,8 @@ func (h *Handler) Command(ctx context.Context, from int64, cmd, args string) bot
 		return h.resume(ctx, from)
 	case "obuna", "subscribe":
 		return h.subscribe(ctx, from)
+	case "taklif", "invite", "referral":
+		return h.invite(ctx, from)
 	case "stats":
 		if h.Admins[from] {
 			return h.stats(ctx)
@@ -168,6 +184,8 @@ func (h *Handler) subscriptionLine(ctx context.Context, owner int64) string {
 		return fmt.Sprintf("Obuna: %s gacha (yangilanmaydi)\n", h.date(*st.PaidUntil))
 	case st.Paid:
 		return fmt.Sprintf("Obuna: faol, keyingi to'lov %s\n", h.date(*st.PaidUntil))
+	case st.Bonus:
+		return fmt.Sprintf("🎁 Bonus kunlar: %s gacha (%d kun qoldi)\n", h.date(*st.BonusUntil), st.DaysLeft)
 	case st.OnTrial:
 		return fmt.Sprintf("Bepul sinov: %s gacha (%d kun qoldi)\n", h.date(*st.TrialUntil), st.DaysLeft)
 	default:
@@ -228,8 +246,39 @@ func (h *Handler) stats(ctx context.Context) bot.Reply {
 	if err != nil {
 		return bot.Reply{Text: "Xatolik: statistika olinmadi."}
 	}
-	return bot.Reply{Text: fmt.Sprintf("Akkauntlar: %d\nFaol: %d\nTo'lagan (faol): %d\nJami tushum: %d ⭐",
-		st.Accounts, st.Active, st.PaidActive, st.StarsTotal)}
+	return bot.Reply{Text: fmt.Sprintf("Akkauntlar: %d\nFaol: %d\nTo'lagan (faol): %d\nJami tushum: %d ⭐\nTaklif orqali kelgan: %d (to'lagan: %d)",
+		st.Accounts, st.Active, st.PaidActive, st.StarsTotal, st.Referrals, st.RefPaid)}
+}
+
+func (h *Handler) invite(ctx context.Context, owner int64) bot.Reply {
+	if !h.Billing.ReferralsEnabled() {
+		return bot.Reply{Text: "Hozircha kotib bepul — taklif bonuslari yo'q. Lekin do'stlaringizga bemalol ulashing!"}
+	}
+	if _, err := h.Store.GetAccount(ctx, owner); err != nil {
+		return bot.Reply{Text: "Avval ilovada ro'yxatdan o'ting.", OpenApp: true}
+	}
+	info, err := h.Billing.Referral(ctx, owner)
+	link := billing.ReferralLink(h.BotUsername, info.Code)
+	if err != nil || link == "" {
+		if err != nil {
+			h.log().Warn("referral", "owner", owner, "err", err)
+		}
+		return bot.Reply{Text: "Taklif havolasini yaratib bo'lmadi, keyinroq urinib ko'ring."}
+	}
+	text := fmt.Sprintf(`🎁 Do'stlaringizni taklif qiling
+
+• Do'stingiz %d kun bepul sinaydi (odatdagidan %d kun ko'p)
+• U Telegram akkauntini ulasa — sizga +%d kun
+• U obuna bo'lsa — sizga +%d kun (bir oy bepul)
+
+Sizning havolangiz:
+%s
+
+Taklif qilganlar: %d · ulanganlar: %d · obuna bo'lganlar: %d
+Jami olgan bonusingiz: %d kun`,
+		info.TrialDays, info.TrialBonus, info.ActivatedDays, info.PaidDays, link,
+		info.Invited, info.Activated, info.Paid, info.EarnedDays)
+	return bot.Reply{Text: text, OpenApp: true}
 }
 
 func (h *Handler) refund(ctx context.Context, chargeID string) bot.Reply {
