@@ -53,6 +53,10 @@ type Manager struct {
 	CalendarFallback bool
 	// DraftCard — qoralamani bot chatiga tugmalar bilan yuborish (bot).
 	DraftCard func(ctx context.Context, d store.Draft, contactName string) error
+	// Gate yopiq turguncha hech bir sessiya Telegram'ga ulanmaydi (nil → darhol). Deploy paytida
+	// eski va yangi nusxa bitta sessiyaga bir vaqtda ulansa, Telegram AUTH_KEY_DUPLICATED bilan
+	// sessiyani butunlay bekor qiladi — yangi nusxa eskisi to'xtashini shu orqali kutadi.
+	Gate <-chan struct{}
 
 	mu         sync.Mutex
 	workers    map[int64]*worker
@@ -152,6 +156,13 @@ func (m *Manager) startWorker(owner int64) {
 			}
 			m.mu.Unlock()
 		}()
+		if m.Gate != nil {
+			select {
+			case <-m.Gate:
+			case <-ctx.Done():
+				return
+			}
+		}
 		m.runLoop(ctx, owner, w)
 	}()
 }
@@ -181,7 +192,7 @@ func (m *Manager) runLoop(ctx context.Context, owner int64, w *worker) {
 		if errors.As(err, &fatal) {
 			// Worker goroutine ichidamiz: stopWorker (o'z done kanalini kutadi) deadlock beradi.
 			// Shuning uchun faqat holatni belgilaymiz — runLoop'dan chiqish worker'ni o'zi to'xtatadi.
-			m.markBroken(owner, fatal.Reason)
+			m.markFatal(owner, fatal.Reason)
 			return
 		}
 		m.Log.Warn("sessiya uzildi, qayta ulanadi", "owner", owner, "in", backoff)
@@ -201,10 +212,35 @@ func (m *Manager) runLoop(ctx context.Context, owner int64, w *worker) {
 
 // breaker — circuit breaker: akkauntni "broken"ga o'tkazadi, sessiyani to'xtatadi, mijozga xabar beradi.
 // Avtomatik qayta ishga tushirilmaydi: mijoz sababni ko'rib, qo'lda "Davom ettirish" bosadi.
-// Worker goroutine'ining o'zidan chaqirmang (u yerda markBroken ishlating).
+// Worker goroutine'ining o'zidan chaqirmang (u yerda markFatal ishlating).
 func (m *Manager) breaker(owner int64, reason string) {
 	m.stopWorker(owner)
+	m.markFatal(owner, reason)
+}
+
+// markFatal holatni sababga qarab belgilaydi (worker'ni to'xtatmaydi).
+func (m *Manager) markFatal(owner int64, reason string) {
+	if sessionDead[reason] {
+		m.markSessionDead(owner, reason)
+		return
+	}
 	m.markBroken(owner, reason)
+}
+
+// sessionDead — Telegram sessiyani butunlay bekor qilgan: kutish foydasiz, qayta ulash kerak.
+var sessionDead = map[string]bool{
+	"AUTH_KEY_UNREGISTERED": true, "AUTH_KEY_DUPLICATED": true, "SESSION_REVOKED": true, "SESSION_EXPIRED": true,
+}
+
+// markSessionDead akkauntni "revoked"ga o'tkazadi — Mini App qayta ulash oynasini ko'rsatadi.
+func (m *Manager) markSessionDead(owner int64, reason string) {
+	ctx := context.WithoutCancel(m.BaseCtx)
+	_ = m.Store.SetStatus(ctx, owner, store.StatusRevoked, "Telegram sessiyani bekor qildi ("+reason+")")
+	m.Store.Audit(ctx, owner, "circuit_breaker", reason)
+	if m.Notify != nil {
+		m.Notify(ctx, owner, "Telegram kotib sessiyasini bekor qildi ("+reason+"). Kutish yordam bermaydi — "+
+			"ilovada Telegram akkauntingizni qayta ulang (telefon raqam va kod).", true)
+	}
 }
 
 // markBroken akkauntni "broken" holatiga o'tkazadi va mijozga xabar beradi (worker'ni to'xtatmaydi).

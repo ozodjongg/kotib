@@ -1,6 +1,13 @@
 package main
 
-import "testing"
+import (
+	"database/sql"
+	"io"
+	"log/slog"
+	"os"
+	"testing"
+	"time"
+)
 
 func TestListenAddr(t *testing.T) {
 	cases := []struct {
@@ -42,5 +49,41 @@ func TestIntEnv(t *testing.T) {
 	t.Setenv("X_TEST", "11")
 	if _, err := intEnv("X_TEST", 7, 0, 10); err == nil {
 		t.Fatal("oraliqdan tashqari")
+	}
+}
+
+func TestInstanceLockOneAtATime(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL yo'q")
+	}
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	lost := func() { t.Error("qulf yo'qolmasligi kerak") }
+
+	gateA := make(chan struct{})
+	releaseA := holdInstanceLock(db, gateA, log, lost)
+	select {
+	case <-gateA:
+	case <-time.After(5 * time.Second):
+		t.Fatal("birinchi nusxa qulfni olishi kerak")
+	}
+	gateB := make(chan struct{})
+	releaseB := holdInstanceLock(db, gateB, log, lost)
+	defer releaseB()
+	select {
+	case <-gateB:
+		t.Fatal("ikkinchi nusxa birinchisi ishlayotganda ulanmasligi kerak")
+	case <-time.After(3 * time.Second):
+	}
+	releaseA() // eski nusxa to'xtadi
+	select {
+	case <-gateB:
+	case <-time.After(5 * time.Second):
+		t.Fatal("eski nusxa to'xtagach yangisi qulfni olishi kerak")
 	}
 }
