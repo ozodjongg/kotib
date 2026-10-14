@@ -125,8 +125,39 @@ func (a loginAuth) Phone(context.Context) (string, error) { return a.phone, nil 
 func (a loginAuth) Password(ctx context.Context) (string, error) {
 	return a.io.Password(ctx)
 }
-func (a loginAuth) Code(ctx context.Context, _ *tg.AuthSentCode) (string, error) {
-	return a.io.Code(ctx)
+
+// ErrEmailSetupRequired — Telegram kirish uchun avval login email sozlashni talab qilmoqda.
+var ErrEmailSetupRequired = errors.New("Telegram kirish uchun login email talab qilmoqda: Telegram ilovasida " +
+	"Sozlamalar → Maxfiylik va xavfsizlik → Login email'ni sozlang, keyin qayta urining")
+
+func (a loginAuth) Code(ctx context.Context, sc *tg.AuthSentCode) (string, error) {
+	via, hint := sentCodeVia(sc)
+	if via == "setup_email" {
+		return "", ErrEmailSetupRequired
+	}
+	return a.io.Code(ctx, via, hint)
+}
+
+// sentCodeVia — Telegram kodni qayerga yuborganini aniqlaydi (mijozga aytish uchun).
+func sentCodeVia(sc *tg.AuthSentCode) (via, hint string) {
+	if sc == nil {
+		return "", ""
+	}
+	switch t := sc.Type.(type) {
+	case *tg.AuthSentCodeTypeApp:
+		return "app", ""
+	case *tg.AuthSentCodeTypeSMS, *tg.AuthSentCodeTypeFirebaseSMS, *tg.AuthSentCodeTypeSMSWord, *tg.AuthSentCodeTypeSMSPhrase:
+		return "sms", ""
+	case *tg.AuthSentCodeTypeCall, *tg.AuthSentCodeTypeFlashCall, *tg.AuthSentCodeTypeMissedCall:
+		return "call", ""
+	case *tg.AuthSentCodeTypeEmailCode:
+		return "email", t.EmailPattern
+	case *tg.AuthSentCodeTypeFragmentSMS:
+		return "fragment", t.URL
+	case *tg.AuthSentCodeTypeSetUpEmailRequired:
+		return "setup_email", ""
+	}
+	return "", ""
 }
 
 func (c *GotdConnector) Login(ctx context.Context, owner int64, phone string, io LoginIO) error {

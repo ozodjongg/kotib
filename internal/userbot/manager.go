@@ -19,7 +19,8 @@ import (
 
 // LoginIO — login paytida mijozdan kod/parol olish kanali (Mini App orqali).
 type LoginIO interface {
-	Code(ctx context.Context) (string, error)
+	// Code — via: kod qayerga yuborilgani (app, sms, call, email, fragment), hint: email shabloni va h.k.
+	Code(ctx context.Context, via, hint string) (string, error)
 	Password(ctx context.Context) (string, error)
 }
 
