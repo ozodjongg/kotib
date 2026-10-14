@@ -18,6 +18,7 @@ internal/store/       Store interfeysi, Postgres, Memory (dev)
 internal/bot/         boshqaruv boti (/start, bildirishnoma)
 internal/billing/     Telegram Stars obunasi: sinov, to'lov tasdig'i, bekor qilish, refund, eslatmalar
 internal/google/      Google: OAuth (PKCE), Calendar (band vaqt, tadbir), Contacts (eslatma), Tasks
+internal/ics/         Google'siz taqvim: .ics fayl va imzolangan havola
 internal/botcmd/      bot buyruqlari (/status, /pause, /obuna, admin /stats, /refund) va to'lov hodisalari
 webapp/               Mini App (vanilla JS, innerHTML ishlatilmaydi; iliq fil suyagi/terrakota dizayn, yorug'/qorong'i)
 migrations/           Postgres sxema (binary ichiga joylangan, ishga tushganda avtomatik qo'llanadi)
@@ -161,11 +162,29 @@ Xavfsizlik:
   bir necha haftagacha. Pullik xavfsizlik auditi (CASA) faqat restricted scope'lar (Gmail, Drive) uchun — bu yerda shart emas.
 - Maxfiylik siyosatida ko'rsating: band vaqtlar va kontakt eslatmasi javob tayyorlash uchun Gemini'ga yuboriladi.
 
+## Telefon qulayliklari (iPhone va Android)
+
+| Qulaylik | Qayerda yoqiladi | Izoh |
+|---|---|---|
+| **Qoralama bot chatida** | Sozlamalar → "Qoralamalar bot chatida" | Bot qoralamani **[📤 Yuborish] [✖️ Rad etish]** bilan yuboradi. Kartaga javob qilib matn yozsangiz — shu matn ketadi, "ok" — asl qoralama. Android'da bildirishnomadan javob berish mumkin. Default o'chiq: matnlar bot chati tarixida qoladi |
+| **Taqvimga taklif** | Sozlamalar → "Uchrashuvlarni taqvimga taklif qilish" (default yoqiq) | Google ulangan bo'lsa — Google Calendar/Tasks. Ulanmagan bo'lsa — ✅ bosilganda imzolangan `.ics` havola: iPhone'da Apple Taqvim, Android'da taqvim ilovasi o'zi "qo'shish"ni taklif qiladi (15 daqiqa oldin eslatma bilan, havola 7 kun amal qiladi) |
+| **Ovozli xabarlar** | Sozlamalar → "Ovozli xabarlarga ham" (default o'chiq) | 2 daqiqagacha ovoz Gemini'ga audio sifatida yuboriladi. Audio matn filtridan o'tolmagani uchun javob **har doim faqat qoralama** |
+| **Avtomatlashtirish** | Hisob → Avtomatlashtirish | Shaxsiy maxfiy havola: iPhone Shortcuts (Focus: Haydash, Uyqu), Android MacroDroid/Tasker (Bezovta qilmang, mashina Bluetooth'i) kotib rejimini va "hozirgi holat"ini o'zgartiradi. Token faqat xeshi bilan saqlanadi |
+| **Hozirgi holat** | Sozlamalar → "Hozirgi holatingiz" | "Hozir rulda" — kotib javobda hisobga oladi (aniq vaqt va'da qilmaydi) |
+| **Siri / Google Assistant** | — | `t.me/<bot>?start=pause` va `?start=resume` deep link'lari |
+| **Face ID / barmoq izi** | Hisob → Telefon | Mini App'dan yuborish, avto rejimni yoqish, Google'ni uzish, akkauntni o'chirishdan oldin (shu qurilmada) |
+| **Bosh ekranga qo'shish** | Hisob → Telefon | Telegram `addToHomeScreen` |
+| **Orqaga tugmasi** | — | Telegram BackButton (Android tizim tugmasi ham): bo'limdan Asosiy'ga |
+| **Pastga surib yopilmaslik** | — | `disableVerticalSwipes`: matn yozayotganda ilova tasodifan yopilmaydi |
+
+Avtomatlashtirish havolasi parametrlari: `mode=draft|auto|off`, `away=<matn>` (bo'sh — tozalash), `action=pause|resume`.
+Masalan: `https://<domen>/hook/<token>?mode=auto&away=Hozir%20rulda`. GET ham, POST ham ishlaydi.
+
 ## Bot buyruqlari
 
 | Buyruq | Kim | Vazifa |
 |---|---|---|
-| `/start`, `/help` | hamma | Mini App'ni ochish, yordam |
+| `/start`, `/help` | hamma | Mini App'ni ochish, yordam (`/start pause`, `/start resume` — deep link) |
 | `/status` | hamma | holat, kutilayotgan qoralamalar, obuna |
 | `/pause`, `/resume` | hamma | kotibni darhol to'xtatish / davom ettirish |
 | `/obuna` | hamma | Stars bilan obuna bo'lish |
@@ -195,7 +214,7 @@ Xavfsizlik:
 3. Login kodini Telegram boshqa qurilmaga kiritilganini sezib, kirishni bloklashi mumkin ("login attempt blocked"). Mijozga kodni chatda yozmaslikni ayting.
 4. Mijoz nomidan javob berish — mijozning suhbatdoshlari uchun shaffoflik masalasi. Model "inson ekanini" tasdiqlamaydi, lekin ishlatish qoidalarida (ToS) mijoz javobgarligini aniq yozing; ro'yxatdan o'tish paytidagi rozilik (`consent_at`) saqlanadi.
 5. Qonuniy tomon: mijozning suhbatdoshlari xabarlari Gemini'ga (Google) yuboriladi — maxfiylik siyosatida ko'rsating; O'zbekiston "Shaxsga doir ma'lumotlar to'g'risida"gi qonuni talablarini yurist bilan tekshiring.
-6. Faqat **shaxsiy matnli xabarlar**: guruh, ovoz, rasm hozircha qo'llab-quvvatlanmaydi. `updates.Manager` qisqa uzilishlarni tiklaydi, lekin holat xotirada saqlanadi: ilova qayta ishga tushganda o'chiq paytdagi xabarlar javobsiz qoladi.
+6. Faqat **shaxsiy matnli va ovozli xabarlar** (ovoz — faqat qoralama): guruh, rasm, video hozircha qo'llab-quvvatlanmaydi. `updates.Manager` qisqa uzilishlarni tiklaydi, lekin holat xotirada saqlanadi: ilova qayta ishga tushganda o'chiq paytdagi xabarlar javobsiz qoladi.
 
 ## Keyingi qadamlar
 

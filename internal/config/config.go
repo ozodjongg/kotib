@@ -62,7 +62,10 @@ type Settings struct {
 	// Odatda avtomatlashtirish havolasi (Focus / MacroDroid) o'rnatadi; bo'sh — yo'q.
 	Away string `json:"away,omitempty"`
 	// NoSuggest — uchrashuv/vazifa takliflarini o'chirish (default: takliflar yoqiq).
-	NoSuggest      bool       `json:"no_suggest,omitempty"`
+	NoSuggest bool `json:"no_suggest,omitempty"`
+	// ReplyVoice — kontaktning ovozli xabarlariga ham javob tayyorlash (default o'chiq).
+	// Ovoz matn filtridan o'tolmaydi, shuning uchun javob har doim faqat qoralama.
+	ReplyVoice     bool       `json:"reply_voice,omitempty"`
 	DefaultPersona string     `json:"default_persona"` // preset kaliti
 	DefaultCustom  string     `json:"default_custom,omitempty"`
 	OwnerName      string     `json:"owner_name"` // mijoz ismi — "men X man" kontekst uchun

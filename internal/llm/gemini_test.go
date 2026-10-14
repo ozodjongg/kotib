@@ -130,3 +130,22 @@ func TestGeminiRetriesOnTimeout(t *testing.T) {
 		t.Fatalf("out=%q err=%v calls=%d", out, err, calls.Load())
 	}
 }
+
+func TestGeminiSendsAudio(t *testing.T) {
+	var raw string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		raw = string(b)
+		w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"Eshitdim"}]}}]}`))
+	}))
+	defer srv.Close()
+	g := NewGemini("k", "m")
+	g.BaseURL = srv.URL
+	out, err := g.Reply(context.Background(), Request{Incoming: "🎤 Ovozli xabar", Audio: &Audio{MIME: "audio/ogg", Data: []byte("OGG")}})
+	if err != nil || out != "Eshitdim" {
+		t.Fatal(out, err)
+	}
+	if !strings.Contains(raw, `"inlineData":{"data":"T0dH","mimeType":"audio/ogg"}`) || !strings.Contains(raw, "ovozli xabar") {
+		t.Fatalf("audio yuborilmadi: %s", raw)
+	}
+}

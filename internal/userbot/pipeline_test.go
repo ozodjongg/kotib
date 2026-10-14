@@ -414,3 +414,52 @@ func TestDraftCardInBot(t *testing.T) {
 		t.Fatal("bildirishnoma kerak")
 	}
 }
+
+func voiceIn(text string, loaded *int) Incoming {
+	i := in(text, true)
+	i.Voice = &Voice{Duration: 5, Load: func(context.Context) ([]byte, error) { *loaded++; return []byte("OGG"), nil }}
+	return i
+}
+
+func TestVoiceMessages(t *testing.T) {
+	// O'chiq: faqat ovoz — o'tkazib yuboriladi, fayl yuklanmaydi.
+	e := newEnv(t, auto)
+	loaded := 0
+	e.p.Handle(context.Background(), voiceIn(VoiceText, &loaded))
+	if e.llm.calls != 0 || loaded != 0 {
+		t.Fatal("ovozga javob o'chiq bo'lsa model chaqirilmasligi kerak")
+	}
+	// O'chiq, lekin matn ham bor — matnga javob, audio yo'q.
+	e.p.Handle(context.Background(), voiceIn(VoiceText+"\nsalom", &loaded))
+	if e.llm.calls != 1 || e.llm.last.Audio != nil || e.llm.last.Incoming != "salom" || loaded != 0 {
+		t.Fatalf("matn qismi: calls=%d %+v", e.llm.calls, e.llm.last)
+	}
+
+	// Yoqilgan: audio modelga boradi, avto rejimda ham faqat qoralama.
+	e = newEnv(t, func(s *config.Settings) { s.Mode = config.ModeAuto; s.ReplyVoice = true })
+	e.p.Handle(context.Background(), voiceIn(VoiceText, &loaded))
+	if loaded != 1 || e.llm.last.Audio == nil || string(e.llm.last.Audio.Data) != "OGG" {
+		t.Fatalf("audio: %+v", e.llm.last.Audio)
+	}
+	if e.tg.sentCount() != 0 || len(e.drafts()) != 1 || !strings.Contains(e.drafts()[0].Reason, "ovozli") {
+		t.Fatalf("ovozga javob faqat qoralama: sent=%d drafts=%+v", e.tg.sentCount(), e.drafts())
+	}
+	// Juda uzun ovoz yuborilmaydi.
+	long := voiceIn(VoiceText, &loaded)
+	long.Voice.Duration = 600
+	e.p.Handle(context.Background(), long)
+	if loaded != 1 {
+		t.Fatal("uzun ovoz yuklanmasligi kerak")
+	}
+}
+
+func TestVoiceMergedByDebounce(t *testing.T) {
+	e := newEnv(t, func(s *config.Settings) { s.ReplyVoice = true })
+	loaded := 0
+	e.p.Submit(context.Background(), in("salom", true))
+	e.p.Submit(context.Background(), voiceIn(VoiceText, &loaded))
+	e.p.Wait()
+	if e.llm.calls != 1 || e.llm.last.Audio == nil || !strings.Contains(e.llm.last.Incoming, "salom") {
+		t.Fatalf("birlashtirish: calls=%d %+v", e.llm.calls, e.llm.last)
+	}
+}

@@ -54,7 +54,20 @@ type Incoming struct {
 	MsgID   int
 	Text    string
 	Contact config.Contact
+	Voice   *Voice // ovozli xabar (Text — "🎤 Ovozli xabar"); nil — oddiy matn
 }
+
+// Voice — ovozli xabar: fayl faqat kerak bo'lganda (sozlama yoqilgan bo'lsa) yuklanadi.
+type Voice struct {
+	Duration int // soniya
+	Load     func(ctx context.Context) ([]byte, error)
+}
+
+// VoiceText — ovozli xabar o'rnida ko'rsatiladigan matn (qoralama, bot kartasi).
+const VoiceText = "🎤 Ovozli xabar"
+
+// maxVoiceSeconds — bundan uzun ovozli xabarlar modelga yuborilmaydi (xarajat).
+const maxVoiceSeconds = 120
 
 // FatalError — qayta urinish ma'nosiz (sessiya o'chgan, PEER_FLOOD, akkaunt bloklangan).
 type FatalError struct{ Reason string }
@@ -115,6 +128,7 @@ type Pipeline struct {
 type pendingChat struct {
 	texts   []string
 	lastID  int
+	voice   *Voice // birlashtirilgan xabarlardagi oxirgi ovozli xabar
 	contact config.Contact
 	timer   *time.Timer
 }
@@ -187,6 +201,9 @@ func (p *Pipeline) Submit(ctx context.Context, in Incoming) {
 		pc.texts = append(pc.texts, in.Text)
 	}
 	pc.lastID, pc.contact = in.MsgID, in.Contact
+	if in.Voice != nil {
+		pc.voice = in.Voice
+	}
 	if pc.timer != nil && pc.timer.Stop() {
 		p.wg.Done() // bekor qilingan eski taymerning hisobi
 	}
@@ -201,7 +218,7 @@ func (p *Pipeline) Submit(ctx context.Context, in Incoming) {
 		if cur == nil {
 			return
 		}
-		p.Handle(ctx, Incoming{ChatID: chatID, MsgID: cur.lastID, Text: strings.Join(cur.texts, "\n"), Contact: cur.contact})
+		p.Handle(ctx, Incoming{ChatID: chatID, MsgID: cur.lastID, Text: strings.Join(cur.texts, "\n"), Contact: cur.contact, Voice: cur.voice})
 	})
 }
 
@@ -241,6 +258,16 @@ func (p *Pipeline) Handle(ctx context.Context, in Incoming) {
 		return
 	}
 
+	if in.Voice != nil && (!st.ReplyVoice || in.Voice.Duration > maxVoiceSeconds) {
+		// Ovozga javob o'chiq (yoki juda uzun): faqat matnli qismi bilan davom etamiz.
+		in.Voice = nil
+		in.Text = strings.TrimSpace(strings.ReplaceAll(in.Text, VoiceText, ""))
+		if in.Text == "" {
+			p.Store.Audit(ctx, p.Owner, "skip", "ovozli xabar")
+			return
+		}
+	}
+
 	forced := "" // bo'sh bo'lmasa: avtomatik yuborish taqiqlangan, sabab shu
 	verdict := guard.ClassifyIncoming(in.Text)
 	switch verdict.Verdict {
@@ -251,6 +278,9 @@ func (p *Pipeline) Handle(ctx context.Context, in Incoming) {
 		return
 	case guard.Confirm:
 		forced = "sezgir mavzu: " + verdict.Reason // hech qachon avtomatik emas
+	}
+	if forced == "" && in.Voice != nil {
+		forced = "ovozli xabar — faqat qoralama" // audio matn filtridan o'tmaydi
 	}
 	if forced == "" && in.Contact.IsBot {
 		forced = "bot — faqat qoralama" // ikkinchi himoya qatlami (config.Resolve ham draft qiladi)
@@ -266,6 +296,19 @@ func (p *Pipeline) Handle(ctx context.Context, in Incoming) {
 		return
 	}
 
+	var audio *llm.Audio
+	if in.Voice != nil {
+		vctx, vcancel := context.WithTimeout(ctx, 30*time.Second)
+		data, err := in.Voice.Load(vctx)
+		vcancel()
+		if err != nil || len(data) == 0 {
+			p.Store.Audit(ctx, p.Owner, "voice_error", "")
+			p.Log.Warn("voice", "owner", p.Owner, "err", err)
+			return
+		}
+		audio = &llm.Audio{MIME: "audio/ogg", Data: data}
+	}
+
 	hist, err := tg.History(ctx, in.ChatID, 8)
 	if err != nil {
 		p.handleTGErr(ctx, err)
@@ -279,7 +322,7 @@ func (p *Pipeline) Handle(ctx context.Context, in Incoming) {
 	defer cancel()
 	req := llm.Request{
 		OwnerName: st.OwnerName, Persona: dec.Persona, Language: st.Language,
-		History: hist, Incoming: in.Text, Away: st.Away,
+		History: hist, Incoming: in.Text, Away: st.Away, Audio: audio,
 	}
 	var resp llm.Response
 	connected := p.Google != nil && p.Google.Connected(ctx, p.Owner)
