@@ -16,6 +16,7 @@ type loginSession struct {
 	codeCh chan string
 	pwCh   chan string
 	cancel context.CancelFunc
+	done   chan struct{} // login goroutine tugaganda yopiladi
 }
 
 func (l *loginSession) set(step, errMsg string) {
@@ -89,10 +90,25 @@ func (m *Manager) BeginQRLogin(ctx context.Context, owner int64) error {
 func (m *Manager) beginLogin(ctx context.Context, owner int64, run func(context.Context, LoginIO) error) error {
 	m.init(ctx)
 	m.mu.Lock()
-	if old := m.logins[owner]; old != nil {
+	if old := m.logins[owner]; old != nil && old.done != nil {
 		if st := old.get().Step; st != "done" && st != "error" {
+			// Tugallanmagan eski urinish (ekran yangilangan, tugma qayta bosilgan): uni bekor qilamiz.
+			// Eski Telegram ulanishi to'liq yopilishini kutamiz, toki bitta sessiyaga ikki ulanish
+			// bo'lmasin (AUTH_KEY_DUPLICATED).
 			m.mu.Unlock()
-			return errors.New("ulanish allaqachon jarayonda")
+			old.cancel()
+			select {
+			case <-old.done:
+			case <-time.After(15 * time.Second):
+				return errors.New("oldingi ulanish hali yopilmadi, birozdan keyin urinib ko'ring")
+			}
+			m.mu.Lock()
+			if cur := m.logins[owner]; cur != nil && cur != old {
+				if st := cur.get().Step; st != "done" && st != "error" {
+					m.mu.Unlock()
+					return errors.New("ulanish allaqachon jarayonda")
+				}
+			}
 		}
 	}
 	if _, running := m.workers[owner]; running {
@@ -113,12 +129,13 @@ func (m *Manager) beginLogin(ctx context.Context, owner int64, run func(context.
 	}
 	m.loginTimes[owner] = append(recent, now)
 	lctx, cancel := context.WithTimeout(context.WithoutCancel(m.BaseCtx), loginTimeout)
-	ls := &loginSession{codeCh: make(chan string, 1), pwCh: make(chan string, 1), cancel: cancel}
+	ls := &loginSession{codeCh: make(chan string, 1), pwCh: make(chan string, 1), cancel: cancel, done: make(chan struct{})}
 	ls.set("connecting", "")
 	m.logins[owner] = ls
 	m.mu.Unlock()
 
 	go func() {
+		defer close(ls.done)
 		defer cancel()
 		err := run(lctx, loginIO{ls})
 		if err == nil && lctx.Err() != nil {
