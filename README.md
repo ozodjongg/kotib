@@ -104,6 +104,13 @@ Wordmark shrifti — Source Serif 4 (SIL Open Font License), matn vektor konturg
 | `STATIC_DIR` | Mini App fayllari, default `./webapp` |
 | `DEV_MEMORY=1` | faqat dev: xotirada saqlash |
 
+## Suhbat konteksti
+
+Har javobdan oldin chatdagi oxirgi xabarlar (egasi va kontaktniki) modelga beriladi: **obunada 20 ta,
+sinovda 8 ta** (`billing.HistoryPaid` / `HistoryTrial`). Bitta chatdagi xabarlar qat'iy navbat bilan
+qayta ishlanadi: keyingi javob oldingisi yuborilgandan keyin tayyorlanadi va uni tarixda ko'radi
+(bir xil javob takrorlanmaydi, tartib buzilmaydi).
+
 ## To'lov: Telegram Stars obunasi
 
 `PRICE_STARS` berilsa, to'lov yoqiladi:

@@ -150,6 +150,8 @@ func run(log *slog.Logger) error {
 		LLM:      llm.NewGemini(env("GEMINI_API_KEY"), env("GEMINI_MODEL")),
 		Entitled: bill.Entitled,
 		Quota:    bill.UseQuota,
+		// Kontekst: obunada oxirgi 20 ta, sinovda 8 ta xabar.
+		HistoryLimit: bill.HistoryLimit,
 	}
 	// Tasdiq tugmali takliflar (uchrashuv/vazifa) — Google bo'lsa ham, bo'lmasa ham (.ics).
 	mgr.Propose = func(ctx context.Context, owner, id int64, text string) {

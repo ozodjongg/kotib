@@ -19,6 +19,7 @@ type fakeTG struct {
 	mu      sync.Mutex
 	sent    []string
 	sendErr error
+	histN   []int // History'ga so'ralgan xabarlar soni
 }
 
 func (f *fakeTG) SendReply(_ context.Context, _ int64, _ int, text string, _ time.Duration) error {
@@ -31,7 +32,10 @@ func (f *fakeTG) SendReply(_ context.Context, _ int64, _ int, text string, _ tim
 	return nil
 }
 func (f *fakeTG) MarkRead(context.Context, int64, int) error { return nil }
-func (f *fakeTG) History(context.Context, int64, int) ([]llm.Turn, error) {
+func (f *fakeTG) History(_ context.Context, _ int64, n int) ([]llm.Turn, error) {
+	f.mu.Lock()
+	f.histN = append(f.histN, n)
+	f.mu.Unlock()
 	return nil, nil
 }
 func (f *fakeTG) LogOut(context.Context) error { return nil }
@@ -461,5 +465,71 @@ func TestVoiceMergedByDebounce(t *testing.T) {
 	e.p.Wait()
 	if e.llm.calls != 1 || e.llm.last.Audio == nil || !strings.Contains(e.llm.last.Incoming, "salom") {
 		t.Fatalf("birlashtirish: calls=%d %+v", e.llm.calls, e.llm.last)
+	}
+}
+
+func TestHistoryLimitPerPlan(t *testing.T) {
+	e := newEnv(t, nil)
+	e.p.Handle(context.Background(), in("salom", true))
+	e.p.HistoryLimit = func(context.Context, int64) int { return 20 }
+	e.p.Handle(context.Background(), in("yana", true))
+	if len(e.tg.histN) != 2 || e.tg.histN[0] != defaultHistory || e.tg.histN[1] != 20 {
+		t.Fatalf("history: %v", e.tg.histN)
+	}
+}
+
+// slowLLM — birinchi chaqiruvni release yopilguncha ushlab turadi; parallel chaqiruvlarni sanaydi.
+type slowLLM struct {
+	mu      sync.Mutex
+	active  int
+	maxPar  int
+	calls   int
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s *slowLLM) Reply(ctx context.Context, _ llm.Request) (string, error) {
+	s.mu.Lock()
+	s.active++
+	s.calls++
+	if s.active > s.maxPar {
+		s.maxPar = s.active
+	}
+	first := s.calls == 1
+	s.mu.Unlock()
+	if first {
+		close(s.started)
+		<-s.release
+	}
+	s.mu.Lock()
+	s.active--
+	s.mu.Unlock()
+	return "ok", nil
+}
+
+func TestSameChatHandledSequentially(t *testing.T) {
+	e := newEnv(t, nil)
+	sl := &slowLLM{started: make(chan struct{}), release: make(chan struct{})}
+	e.p.LLM = sl
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() { defer wg.Done(); e.p.Handle(context.Background(), in("salom", true)) }()
+	<-sl.started
+	wg.Add(1)
+	go func() { defer wg.Done(); e.p.Handle(context.Background(), in("seryoz?", true)) }()
+	time.Sleep(50 * time.Millisecond) // ikkinchisi navbatda kutishi kerak
+	sl.mu.Lock()
+	calls := sl.calls
+	sl.mu.Unlock()
+	if calls != 1 {
+		t.Fatalf("ikkinchi xabar birinchisi tugamasdan qayta ishlanmasligi kerak: %d", calls)
+	}
+	close(sl.release)
+	wg.Wait()
+	if sl.calls != 2 || sl.maxPar != 1 {
+		t.Fatalf("calls=%d maxPar=%d", sl.calls, sl.maxPar)
+	}
+	if len(e.p.chatMu) != 0 {
+		t.Fatal("chat navbatlari tozalanishi kerak")
 	}
 }

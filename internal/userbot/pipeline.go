@@ -42,6 +42,35 @@ type Google interface {
 	Contact(ctx context.Context, owner, userID int64, name, phone string) (string, string)
 }
 
+// defaultHistory — modelga beriladigan oxirgi xabarlar soni (HistoryLimit berilmasa).
+const defaultHistory = 8
+
+// chatLock — bitta chat uchun navbat; refs 0 bo'lsa xaritadan o'chiriladi (xotira o'smasin).
+type chatLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+func (p *Pipeline) lockChat(chatID int64) func() {
+	p.mu.Lock()
+	l := p.chatMu[chatID]
+	if l == nil {
+		l = &chatLock{}
+		p.chatMu[chatID] = l
+	}
+	l.refs++
+	p.mu.Unlock()
+	l.mu.Lock()
+	return func() {
+		l.mu.Unlock()
+		p.mu.Lock()
+		if l.refs--; l.refs == 0 {
+			delete(p.chatMu, chatID)
+		}
+		p.mu.Unlock()
+	}
+}
+
 // googleTimeout — Google kontekstini yig'ish uchun vaqt (model vaqtini yeb qo'ymasin).
 const googleTimeout = 8 * time.Second
 
@@ -97,6 +126,8 @@ type Pipeline struct {
 	OnFatal func(reason string) // circuit breaker: manager akkauntni "broken"ga o'tkazadi
 	// Entitled — obuna/sinov faolmi (nil → doim ha). Faol bo'lmasa model chaqirilmaydi.
 	Entitled func(ctx context.Context, owner int64) bool
+	// HistoryLimit — modelga beriladigan oxirgi xabarlar soni (obuna/sinovga qarab); nil → defaultHistory.
+	HistoryLimit func(ctx context.Context, owner int64) int
 	// Quota — kunlik limit (sinovda); har model chaqiruvidan oldin, false → chaqirilmaydi.
 	// nil → cheklovsiz.
 	Quota func(ctx context.Context, owner int64) bool
@@ -115,8 +146,9 @@ type Pipeline struct {
 	Now   func() time.Time
 	Sleep func(ctx context.Context, d time.Duration) error
 
-	sem          chan struct{}     // bir vaqtda LLM chaqiruvlari cheklovi
-	proposals    *ratelimit.Bucket // egasiga yuboriladigan takliflar (bot xabarlari) cheklovi
+	sem          chan struct{}       // bir vaqtda LLM chaqiruvlari cheklovi
+	proposals    *ratelimit.Bucket   // egasiga yuboriladigan takliflar (bot xabarlari) cheklovi
+	chatMu       map[int64]*chatLock // bitta chat xabarlari qat'iy navbat bilan
 	tgMu         sync.RWMutex
 	mu           sync.Mutex
 	pending      map[int64]*pendingChat
@@ -154,6 +186,7 @@ func (p *Pipeline) init() {
 		}
 		// Kontakt ko'p xabar yozsa ham egasi takliflarga ko'milib ketmasin: 5 ta, keyin ~10 daqiqada bitta.
 		p.proposals = ratelimit.NewBucket(5, 1.0/600)
+		p.chatMu = map[int64]*chatLock{}
 	}
 }
 
@@ -228,6 +261,10 @@ func (p *Pipeline) Wait() { p.wg.Wait() }
 // Handle bitta (birlashtirilgan) kiruvchi xabarni to'liq qayta ishlaydi.
 func (p *Pipeline) Handle(ctx context.Context, in Incoming) {
 	p.init()
+	// Bitta chatdagi xabarlar navbat bilan: keyingi javob oldingisi yuborilgandan keyin tayyorlanadi
+	// va uni tarixda ko'radi (aks holda bir xil javob takrorlanadi, tartib buziladi).
+	unlock := p.lockChat(in.ChatID)
+	defer unlock()
 	select {
 	case p.sem <- struct{}{}:
 		defer func() { <-p.sem }()
@@ -309,7 +346,13 @@ func (p *Pipeline) Handle(ctx context.Context, in Incoming) {
 		audio = &llm.Audio{MIME: "audio/ogg", Data: data}
 	}
 
-	hist, err := tg.History(ctx, in.ChatID, 8)
+	limit := defaultHistory
+	if p.HistoryLimit != nil {
+		if n := p.HistoryLimit(ctx, p.Owner); n > 0 {
+			limit = n
+		}
+	}
+	hist, err := tg.History(ctx, in.ChatID, limit)
 	if err != nil {
 		p.handleTGErr(ctx, err)
 		hist = nil // tarixsiz ham javob yozish mumkin
