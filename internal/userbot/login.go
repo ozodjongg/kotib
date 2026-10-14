@@ -33,8 +33,10 @@ func (l *loginSession) get() miniapp.LoginState {
 // loginIO Connector.Login ga beriladi: kod/parol Mini App'dan kelguncha bloklanadi.
 type loginIO struct{ l *loginSession }
 
-func (io loginIO) Code(ctx context.Context) (string, error) {
-	io.l.set("wait_code", "")
+func (io loginIO) Code(ctx context.Context, via, hint string) (string, error) {
+	io.l.mu.Lock()
+	io.l.state = miniapp.LoginState{Step: "wait_code", Via: via, Hint: hint}
+	io.l.mu.Unlock()
 	return recv(ctx, io.l.codeCh)
 }
 

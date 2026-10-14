@@ -39,6 +39,10 @@ var ErrTooManyAttempts = errors.New("juda ko'p urinish: birozdan keyin qayta uri
 type LoginState struct {
 	Step  string `json:"step"` // idle | wait_code | wait_password | done | error
 	Error string `json:"error,omitempty"`
+	// Via — kod qayerga yuborilgani (wait_code'da): app | sms | call | email | fragment.
+	Via string `json:"via,omitempty"`
+	// Hint — qo'shimcha: email shabloni (a***@gmail.com) yoki fragment havolasi.
+	Hint string `json:"hint,omitempty"`
 }
 
 // ContactInfo — kontakt tanlash ro'yxati uchun (faqat egasiga ko'rsatiladi).

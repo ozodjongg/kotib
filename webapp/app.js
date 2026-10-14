@@ -300,6 +300,24 @@ function renderConsent() {
 }
 
 // ---------- akkauntni ulash ----------
+// codeWhere — Telegram kodni qayerga yuborganini tushuntiradi (eng ko'p savol: "kod kelmadi").
+function codeWhere(st) {
+  switch (st.via) {
+    case 'app':
+      return "Kod Telegram ilovangizga — «Telegram» nomli rasmiy chatga (ko'k belgili) keldi. Bildirishnoma chiqmasligi mumkin: chatlar ro'yxatidan «Telegram»ni oching. Boshqa qurilmangizdagi (kompyuter, planshet) Telegram'ni ham tekshiring.";
+    case 'sms':
+      return 'Kod SMS orqali telefon raqamingizga yuborildi.';
+    case 'call':
+      return "Telegram qo'ng'iroq qiladi — kodni qo'ng'iroqdan (yoki qo'ng'iroq qilgan raqamning oxirgi raqamlaridan) oling.";
+    case 'email':
+      return `Kod login email manzilingizga yuborildi${st.hint ? ' (' + st.hint + ')' : ''}. Pochtangizni, «Spam» papkasini ham tekshiring.`;
+    case 'fragment':
+      return "Raqamingiz Fragment orqali olingan — kod fragment.com'dagi hisobingizga keladi.";
+    default:
+      return "Telegram ilovangizdagi «Telegram» rasmiy chatiga kelgan kodni yozing.";
+  }
+}
+
 function renderConnect() {
   nav.hidden = true;
   const st = state.login;
@@ -307,7 +325,7 @@ function renderConnect() {
   if (st.step === 'wait_code') {
     const code = h('input', { type: 'tel', inputmode: 'numeric', autocomplete: 'one-time-code', placeholder: '12345', maxlength: 8 });
     body = [h('h3', {}, 'Kodni kiriting'),
-      h('p', { class: 'muted' }, "Telegram ilovangizga kelgan kodni yozing."), code,
+      h('p', { class: 'muted' }, codeWhere(st)), code,
       h('div', { class: 'card accent' }, h('p', { class: 'small' }, "Kodni hech kimga yubormang va chatga yozmang — Telegram kirishni bloklashi mumkin.")),
       h('button', { class: 'btn block', onclick: busy(() => submitLogin('/login/code', { code: code.value })) }, 'Tasdiqlash')];
     setTimeout(() => code.focus(), 50);
