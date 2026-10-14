@@ -241,6 +241,7 @@ async function boot() {
       h('button', { class: 'btn', onclick: () => location.reload() }, 'Qayta urinish')));
     return;
   }
+  if (state.me.consented && needsConnect()) await resumeLogin();
   render();
   setInterval(backgroundRefresh, 20000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) backgroundRefresh(); });
@@ -260,6 +261,14 @@ async function backgroundRefresh() {
 }
 
 function needsConnect() { return state.me.status === 'pending' || state.me.status === 'revoked'; }
+
+// resumeLogin — Mini App qayta ochilganda serverda davom etayotgan ulanishni (QR/kod) tiklaydi.
+async function resumeLogin() {
+  try {
+    const st = await api('GET', '/login/state');
+    if (st && ['wait_qr', 'wait_code', 'wait_password', 'connecting'].includes(st.step)) state.login = st;
+  } catch (_) { /* yo'q bo'lsa — oddiy shakl */ }
+}
 
 function render() {
   if (!state.me.consented) return renderConsent();

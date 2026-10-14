@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -241,4 +242,36 @@ func TestQRLoginWrongAccount(t *testing.T) {
 	if acc, _ := st.GetAccount(ctx, 7); acc.Status == store.StatusActive {
 		t.Fatal("boshqa akkaunt bilan faollashmasligi kerak")
 	}
+}
+
+func TestNewLoginReplacesStuckOne(t *testing.T) {
+	var mu sync.Mutex
+	started := 0
+	conn := &fakeConn{loginFn: func(ctx context.Context, io LoginIO) error {
+		mu.Lock()
+		started++
+		mu.Unlock()
+		io.QR("tg://login?token=x", "", time.Now().Add(30*time.Second))
+		<-ctx.Done()
+		return ctx.Err()
+	}}
+	m, st := newManager(conn)
+	ctx := context.Background()
+	_ = st.UpsertAccount(ctx, store.Account{OwnerID: 7, Status: store.StatusRevoked})
+	if err := m.BeginQRLogin(ctx, 7); err != nil {
+		t.Fatal(err)
+	}
+	waitLogin(t, m, 7, "wait_qr")
+	// Ekran yangilandi va tugma qayta bosildi: eski urinish bekor bo'lib, yangisi boshlanadi.
+	if err := m.BeginQRLogin(ctx, 7); err != nil {
+		t.Fatalf("qayta urinish rad etilmasligi kerak: %v", err)
+	}
+	waitLogin(t, m, 7, "wait_qr")
+	mu.Lock()
+	n := started
+	mu.Unlock()
+	if n != 2 {
+		t.Fatalf("ikkita urinish boshlanishi kerak: %d", n)
+	}
+	m.cancelLogin(7)
 }
