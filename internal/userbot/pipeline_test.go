@@ -364,3 +364,23 @@ func TestProposalsGuardedAndLimited(t *testing.T) {
 		t.Fatalf("takliflar cheklanishi kerak: %d", n)
 	}
 }
+
+func TestDraftCardInBot(t *testing.T) {
+	e := newEnv(t, func(s *config.Settings) { s.DraftsInBot = true })
+	var cards []store.Draft
+	notified := 0
+	e.p.Notify = func(context.Context, int64, string, bool) { notified++ }
+	e.p.DraftCard = func(_ context.Context, d store.Draft, _ string) error { cards = append(cards, d); return nil }
+	e.p.Handle(context.Background(), in("qalaysan?", true))
+	if len(cards) != 1 || cards[0].ID == 0 || cards[0].Reply != "Yaxshi, rahmat!" || notified != 0 {
+		t.Fatalf("karta: %+v notified=%d", cards, notified)
+	}
+	// Sozlama o'chiq bo'lsa — oddiy bildirishnoma.
+	e2 := newEnv(t, nil)
+	e2.p.Notify = func(context.Context, int64, string, bool) { notified++ }
+	e2.p.DraftCard = func(context.Context, store.Draft, string) error { t.Fatal("karta yuborilmasligi kerak"); return nil }
+	e2.p.Handle(context.Background(), in("qalaysan?", true))
+	if notified != 1 {
+		t.Fatal("bildirishnoma kerak")
+	}
+}

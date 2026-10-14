@@ -90,8 +90,10 @@ type Pipeline struct {
 	// Google — taqvim/kontakt konteksti (nil → integratsiya o'chiq).
 	Google Google
 	// Propose — kotib taklif qilgan amalni egasiga tasdiqlash uchun yuboradi (bot tugmalari).
-	Propose  func(ctx context.Context, owner, actionID int64, text string)
-	Debounce time.Duration // ketma-ket xabarlarni birlashtirish oynasi (default 4s)
+	Propose func(ctx context.Context, owner, actionID int64, text string)
+	// DraftCard — qoralamani bot chatiga tugmalar bilan yuboradi (Settings.DraftsInBot).
+	DraftCard func(ctx context.Context, d store.Draft, contactName string) error
+	Debounce  time.Duration // ketma-ket xabarlarni birlashtirish oynasi (default 4s)
 
 	// testda almashtiriladi
 	Now   func() time.Time
@@ -362,6 +364,16 @@ func (p *Pipeline) makeDraft(ctx context.Context, in Incoming, reply, reason str
 		return
 	}
 	p.Store.Audit(ctx, p.Owner, "draft_created", fmt.Sprintf("id=%d", id))
+	if p.DraftCard != nil {
+		if st, err := p.Store.GetSettings(ctx, p.Owner); err == nil && st.DraftsInBot {
+			d := store.Draft{ID: id, OwnerID: p.Owner, ChatID: in.ChatID, Incoming: in.Text, Reply: reply, Reason: reason}
+			if err := p.DraftCard(ctx, d, in.Contact.Name); err == nil {
+				return
+			} else {
+				p.Log.Warn("draft card", "owner", p.Owner, "err", err)
+			}
+		}
+	}
 	text := "Yangi javob qoralamasi tayyor. Ko'rib chiqing."
 	if ds, err := p.Store.ListDrafts(ctx, p.Owner, store.DraftPending, 100); err == nil && len(ds) > 1 {
 		text = fmt.Sprintf("%d ta javob qoralamasi sizni kutmoqda.", len(ds))

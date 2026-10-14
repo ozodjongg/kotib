@@ -20,6 +20,9 @@ import (
 type Controller interface {
 	Pause(owner int64)
 	Resume(ctx context.Context, owner int64) error
+	// SendDraftByID qoralamani yuboradi (text bo'sh bo'lmasa — shu matn); hal qilingan bo'lsa store.ErrNotFound.
+	SendDraftByID(ctx context.Context, owner, id int64, text string) error
+	RejectDraft(ctx context.Context, owner, id int64) error
 }
 
 type Handler struct {
@@ -263,6 +266,9 @@ func ActionButtons(id int64) []bot.Button {
 // Callback — amalni tasdiqlash/rad etish tugmalari. Amal faqat egasiga tegishli bo'lsa
 // topiladi; holat atomar o'zgaradi — ikki marta bosish ikki tadbir yaratmaydi.
 func (h *Handler) Callback(ctx context.Context, from int64, data string) (string, string) {
+	if strings.HasPrefix(data, "d:") {
+		return h.draftCallback(ctx, from, data)
+	}
 	rest, ok := strings.CutPrefix(data, "act:")
 	if !ok {
 		return "", ""
@@ -299,4 +305,101 @@ func (h *Handler) Callback(ctx context.Context, from int64, data string) (string
 	}
 	h.Store.Audit(ctx, from, "action_done", string(a.Kind))
 	return res, summary + "\n\n" + res
+}
+
+// ---- Qoralama bot chatida ----
+
+const maxCardPart = 1200 // Telegram xabari 4096 belgigacha: kontakt matni va javob qisqartiriladi
+
+// DraftCard — qoralama kartasining matni va tugmalari.
+func DraftCard(d store.Draft, contactName string) (string, []bot.Button) {
+	name := strings.TrimSpace(contactName)
+	if name == "" {
+		name = "Kontakt"
+	}
+	text := "✍️ Qoralama · " + name + "\n\n💬 " + clip(d.Incoming, maxCardPart) + "\n\n➡️ " + clip(d.Reply, maxCardPart)
+	if d.Reason != "" && d.Reason != "draft rejimi" {
+		text += "\n\n(" + d.Reason + ")"
+	}
+	text += "\n\nO'zgartirish uchun shu xabarga javob qilib yangi matnni yozing."
+	sid := strconv.FormatInt(d.ID, 10)
+	return text, []bot.Button{{Text: "📤 Yuborish", Data: "d:" + sid + ":s"}, {Text: "✖️ Rad etish", Data: "d:" + sid + ":r"}}
+}
+
+func clip(s string, n int) string {
+	r := []rune(strings.TrimSpace(s))
+	if len(r) <= n {
+		return string(r)
+	}
+	return string(r[:n]) + "…"
+}
+
+func parseDraftData(data string) (int64, string, bool) {
+	rest, ok := strings.CutPrefix(data, "d:")
+	if !ok {
+		return 0, "", false
+	}
+	sid, op, _ := strings.Cut(rest, ":")
+	id, err := strconv.ParseInt(sid, 10, 64)
+	if err != nil || id <= 0 || (op != "s" && op != "r") {
+		return 0, "", false
+	}
+	return id, op, true
+}
+
+func (h *Handler) draftCallback(ctx context.Context, from int64, data string) (string, string) {
+	id, op, ok := parseDraftData(data)
+	if !ok {
+		return "", ""
+	}
+	d, err := h.Store.GetDraft(ctx, from, id)
+	if err != nil {
+		return "Topilmadi", ""
+	}
+	if op == "r" {
+		if err := h.Ctl.RejectDraft(ctx, from, id); err != nil {
+			return "Allaqachon hal qilingan", ""
+		}
+		return "Rad etildi", "✖️ Rad etildi\n\n" + clip(d.Reply, maxCardPart)
+	}
+	return h.sendDraft(ctx, from, d, "")
+}
+
+func (h *Handler) sendDraft(ctx context.Context, from int64, d store.Draft, text string) (string, string) {
+	err := h.Ctl.SendDraftByID(context.WithoutCancel(ctx), from, d.ID, text)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return "Allaqachon hal qilingan", ""
+	case err != nil:
+		h.log().Warn("bot draft send", "owner", from, "err", err)
+		return "Yuborib bo'lmadi, keyinroq urinib ko'ring", ""
+	}
+	sent := d.Reply
+	if strings.TrimSpace(text) != "" {
+		sent = text
+	}
+	return "Yuborildi", "📤 Yuborildi\n\n" + clip(sent, maxCardPart)
+}
+
+// okWords — "asl qoralamani yubor" ma'nosidagi qisqa javoblar.
+var okWords = map[string]bool{"ok": true, "ок": true, "ha": true, "+": true, "✅": true, "👍": true, "yubor": true}
+
+// ReplyTo — qoralama kartasiga javob: "ok" — asl matn, boshqa matn — o'sha matn yuboriladi.
+func (h *Handler) ReplyTo(ctx context.Context, from int64, data, text string) (bot.Reply, string) {
+	id, _, ok := parseDraftData(data)
+	if !ok {
+		return bot.Reply{}, ""
+	}
+	d, err := h.Store.GetDraft(ctx, from, id)
+	if err != nil || d.Status != store.DraftPending {
+		return bot.Reply{Text: "Bu qoralama allaqachon hal qilingan."}, ""
+	}
+	t := strings.TrimSpace(text)
+	if okWords[strings.ToLower(t)] {
+		t = ""
+	} else if len([]rune(t)) > 4000 {
+		return bot.Reply{Text: "Matn juda uzun (4000 belgigacha)."}, ""
+	}
+	toast, edit := h.sendDraft(ctx, from, d, t)
+	return bot.Reply{Text: toast}, edit
 }

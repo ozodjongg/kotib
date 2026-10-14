@@ -56,6 +56,37 @@ type recHandler struct {
 	refunded  []string
 	rejectPre bool
 	callbacks []string
+	replies   []string
+}
+
+func TestReplyToBotMessage(t *testing.T) {
+	updates := `[
+	 {"update_id":1,"message":{"text":"Ertaga gaplashamiz","from":{"id":5},"chat":{"id":5,"type":"private"},
+	   "reply_to_message":{"message_id":42,"from":{"id":1},"reply_markup":{"inline_keyboard":[[{"text":"Yuborish","callback_data":"d:7:s"}]]}}}},
+	 {"update_id":2,"message":{"text":"oddiy matn","from":{"id":5},"chat":{"id":5,"type":"private"}}}
+	]`
+	srv, calls, mu := fakeAPI(t, updates)
+	h := &recHandler{}
+	b := New("TOKEN", "https://app.example/", slog.Default())
+	b.BaseURL, b.Handler = srv.URL, h
+	runBriefly(b)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(h.replies) != 1 || h.replies[0] != "5|d:7:s|Ertaga gaplashamiz" {
+		t.Fatalf("replies: %v", h.replies)
+	}
+	var edited, sent bool
+	for _, c := range *calls {
+		if c["_method"] == "editMessageText" && c["message_id"] == float64(42) {
+			edited = true
+		}
+		if c["_method"] == "sendMessage" && c["text"] == "Yuborildi" {
+			sent = true
+		}
+	}
+	if !edited || !sent {
+		t.Fatalf("edited=%v sent=%v", edited, sent)
+	}
 }
 
 func (h *recHandler) Command(_ context.Context, _ int64, cmd, args string) Reply {
@@ -80,6 +111,13 @@ func (h *recHandler) Callback(_ context.Context, from int64, data string) (strin
 	defer h.mu.Unlock()
 	h.callbacks = append(h.callbacks, fmt.Sprintf("%d|%s", from, data))
 	return "OK", "yangi matn"
+}
+
+func (h *recHandler) ReplyTo(_ context.Context, from int64, data, text string) (Reply, string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.replies = append(h.replies, fmt.Sprintf("%d|%s|%s", from, data, text))
+	return Reply{Text: "Yuborildi"}, "eski karta"
 }
 
 func (h *recHandler) Refunded(_ context.Context, _ int64, id string) {

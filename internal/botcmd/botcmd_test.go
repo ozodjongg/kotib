@@ -11,10 +11,31 @@ import (
 	"github.com/ozodjongg/secretar_ai_agent/internal/store"
 )
 
-type fakeCtl struct{ paused, resumed int }
+type fakeCtl struct {
+	paused, resumed int
+	st              *store.Memory
+	sent            []string
+}
 
 func (f *fakeCtl) Pause(int64)                         { f.paused++ }
 func (f *fakeCtl) Resume(context.Context, int64) error { f.resumed++; return nil }
+func (f *fakeCtl) SendDraftByID(ctx context.Context, owner, id int64, text string) error {
+	d, err := f.st.GetDraft(ctx, owner, id)
+	if err != nil || d.Status != store.DraftPending {
+		return store.ErrNotFound
+	}
+	if err := f.st.ResolveDraft(ctx, owner, id, store.DraftSent); err != nil {
+		return store.ErrNotFound
+	}
+	if text == "" {
+		text = d.Reply
+	}
+	f.sent = append(f.sent, text)
+	return nil
+}
+func (f *fakeCtl) RejectDraft(ctx context.Context, owner, id int64) error {
+	return f.st.ResolveDraft(ctx, owner, id, store.DraftRejected)
+}
 
 type fakeAPI struct{}
 
@@ -29,7 +50,7 @@ func setup(t *testing.T) (*Handler, *store.Memory, *fakeCtl, *[]string) {
 	st := store.NewMemory()
 	now := time.Now()
 	_ = st.UpsertAccount(context.Background(), store.Account{OwnerID: 1, Status: store.StatusActive, ConsentAt: &now})
-	ctl := &fakeCtl{}
+	ctl := &fakeCtl{st: st}
 	var notes []string
 	h := &Handler{
 		Store: st, Ctl: ctl, Admins: map[int64]bool{99: true},
@@ -140,5 +161,52 @@ func TestActionCallback(t *testing.T) {
 		if toast, edit := h.Callback(ctx, 1, bad); toast != "" || edit != "" {
 			t.Fatalf("%q qabul qilinmasligi kerak", bad)
 		}
+	}
+}
+
+func TestDraftInBot(t *testing.T) {
+	h, st, ctl, _ := setup(t)
+	ctx := context.Background()
+	mk := func() store.Draft {
+		id, _ := st.CreateDraft(ctx, store.Draft{OwnerID: 1, ChatID: 100, Incoming: "qalaysan?", Reply: "Yaxshi, rahmat!"})
+		d, _ := st.GetDraft(ctx, 1, id)
+		return d
+	}
+	d := mk()
+	text, btns := DraftCard(d, "Aziz")
+	if !strings.Contains(text, "Aziz") || !strings.Contains(text, "qalaysan?") || !strings.Contains(text, "Yaxshi, rahmat!") || len(btns) != 2 {
+		t.Fatalf("karta: %q", text)
+	}
+	if toast, _ := h.Callback(ctx, 2, btns[0].Data); toast != "Topilmadi" || len(ctl.sent) != 0 {
+		t.Fatal("boshqa foydalanuvchi yubora olmasligi kerak")
+	}
+	if _, edit := h.Callback(ctx, 1, btns[0].Data); !strings.Contains(edit, "Yuborildi") || len(ctl.sent) != 1 {
+		t.Fatalf("yuborish: %q", edit)
+	}
+	if toast, _ := h.Callback(ctx, 1, btns[0].Data); !strings.Contains(toast, "Allaqachon") || len(ctl.sent) != 1 {
+		t.Fatal("ikki marta yuborilmasligi kerak")
+	}
+
+	d = mk()
+	_, btns = DraftCard(d, "")
+	if r, edit := h.ReplyTo(ctx, 1, btns[0].Data, "Ertaga gaplashamiz"); r.Text != "Yuborildi" || !strings.Contains(edit, "Ertaga gaplashamiz") {
+		t.Fatalf("tahrirlab yuborish: %q %q", r.Text, edit)
+	}
+	if ctl.sent[1] != "Ertaga gaplashamiz" {
+		t.Fatalf("yuborilgan: %v", ctl.sent)
+	}
+	d = mk()
+	_, btns = DraftCard(d, "")
+	h.ReplyTo(ctx, 1, btns[0].Data, "OK")
+	if ctl.sent[2] != "Yaxshi, rahmat!" {
+		t.Fatalf("ok — asl matn: %v", ctl.sent)
+	}
+	d = mk()
+	_, btns = DraftCard(d, "")
+	if _, edit := h.Callback(ctx, 1, btns[1].Data); !strings.Contains(edit, "Rad etildi") {
+		t.Fatal("rad etish")
+	}
+	if got, _ := st.GetDraft(ctx, 1, d.ID); got.Status != store.DraftRejected {
+		t.Fatalf("holat: %s", got.Status)
 	}
 }

@@ -147,6 +147,11 @@ func run(log *slog.Logger) error {
 		Entitled: bill.Entitled,
 		Quota:    bill.UseQuota,
 	}
+	mgr.DraftCard = func(ctx context.Context, d store.Draft, name string) error {
+		text, btns := botcmd.DraftCard(d, name)
+		return ctrlBot.Ask(ctx, d.OwnerID, text, btns)
+	}
+
 	// ---- Google (ixtiyoriy) ----
 	gcli := google.New(env("GOOGLE_CLIENT_ID"), env("GOOGLE_CLIENT_SECRET"), googleRedirect(env("GOOGLE_REDIRECT_URL"), env("MINIAPP_URL")), st, vault, log)
 	if gcli != nil {

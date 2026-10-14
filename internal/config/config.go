@@ -53,8 +53,11 @@ type Settings struct {
 	ReplyGroups  bool `json:"reply_groups"`  // guruhlarda javob (default: false, tavsiya etilmaydi)
 	// ReplyBots — botlarga ham javob tayyorlash (default: false). Yoqilsa ham faqat
 	// qoralama: bot bilan avtomatik yozishma cheksiz aylanishga (spam, ban) olib keladi.
-	ReplyBots      bool       `json:"reply_bots"`
-	AllowLinks     bool       `json:"allow_links"`     // javobda havola (default: false)
+	ReplyBots  bool `json:"reply_bots"`
+	AllowLinks bool `json:"allow_links"` // javobda havola (default: false)
+	// DraftsInBot — qoralama matni bot chatiga tugmalar bilan yuboriladi (tasdiqlash ilovasiz).
+	// Default o'chiq: yoqilsa kontakt xabari va javob matni bot chati tarixida qoladi.
+	DraftsInBot    bool       `json:"drafts_in_bot"`
 	DefaultPersona string     `json:"default_persona"` // preset kaliti
 	DefaultCustom  string     `json:"default_custom,omitempty"`
 	OwnerName      string     `json:"owner_name"` // mijoz ismi — "men X man" kontekst uchun

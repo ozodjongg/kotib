@@ -192,6 +192,10 @@ type Handler interface {
 	PreCheckout(ctx context.Context, from int64, currency string, amount int, payload string) error
 	Paid(ctx context.Context, from int64, p billing.PaymentInfo)
 	Refunded(ctx context.Context, from int64, chargeID string)
+	// ReplyTo — foydalanuvchi bot xabariga javob yozdi. data — o'sha xabardagi birinchi
+	// tugmaning callback_data'si (qaysi qoralama ekanini bildiradi); edit — asl xabarning
+	// yangi matni (bo'sh — o'zgarmaydi).
+	ReplyTo(ctx context.Context, from int64, data, text string) (r Reply, edit string)
 	// Callback tugma bosilganda: toast — qisqa javob, edit — xabarning yangi matni
 	// (bo'sh bo'lsa xabar o'zgarmaydi).
 	Callback(ctx context.Context, from int64, data string) (toast, edit string)
@@ -218,8 +222,17 @@ type refundedPayment struct {
 type update struct {
 	UpdateID int `json:"update_id"`
 	Message  *struct {
-		Text string `json:"text"`
-		From *user  `json:"from"`
+		Text           string `json:"text"`
+		From           *user  `json:"from"`
+		ReplyToMessage *struct {
+			MessageID int   `json:"message_id"`
+			From      *user `json:"from"`
+			Markup    *struct {
+				Keyboard [][]struct {
+					Data string `json:"callback_data"`
+				} `json:"inline_keyboard"`
+			} `json:"reply_markup"`
+		} `json:"reply_to_message"`
 		Chat struct {
 			ID   int64  `json:"id"`
 			Type string `json:"type"`
@@ -321,6 +334,7 @@ func (b *Bot) dispatch(ctx context.Context, u update) {
 	}
 	cmd, args, ok := parseCommand(m.Text)
 	if !ok {
+		b.replyTo(ctx, u)
 		return
 	}
 	var r Reply
@@ -353,6 +367,29 @@ func (b *Bot) callback(ctx context.Context, u update) {
 			"chat_id": q.Message.Chat.ID, "message_id": q.Message.MessageID, "text": edit,
 		}, nil); err != nil {
 			b.Log.Warn("editMessageText", "err", err)
+		}
+	}
+}
+
+// replyTo — bot xabariga (masalan, qoralama kartasiga) matnli javob.
+func (b *Bot) replyTo(ctx context.Context, u update) {
+	m := u.Message
+	rt := m.ReplyToMessage
+	if b.Handler == nil || rt == nil || rt.Markup == nil || len(rt.Markup.Keyboard) == 0 ||
+		len(rt.Markup.Keyboard[0]) == 0 || strings.TrimSpace(m.Text) == "" {
+		return
+	}
+	r, edit := b.Handler.ReplyTo(ctx, m.From.ID, rt.Markup.Keyboard[0][0].Data, m.Text)
+	if edit != "" {
+		if err := b.call(ctx, "editMessageText", map[string]any{
+			"chat_id": m.Chat.ID, "message_id": rt.MessageID, "text": edit,
+		}, nil); err != nil {
+			b.Log.Warn("editMessageText", "err", err)
+		}
+	}
+	if r.Text != "" {
+		if err := b.send(ctx, m.Chat.ID, r); err != nil {
+			b.Log.Warn("bot reply", "err", err)
 		}
 	}
 }

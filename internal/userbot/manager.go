@@ -3,9 +3,13 @@ package userbot
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ozodjongg/secretar_ai_agent/internal/llm"
 	"github.com/ozodjongg/secretar_ai_agent/internal/miniapp"
@@ -45,6 +49,8 @@ type Manager struct {
 	Google Google
 	// Propose — taklif qilingan amalni egasiga tasdiqlash uchun yuborish (bot).
 	Propose func(ctx context.Context, owner, actionID int64, text string)
+	// DraftCard — qoralamani bot chatiga tugmalar bilan yuborish (bot).
+	DraftCard func(ctx context.Context, d store.Draft, contactName string) error
 
 	mu         sync.Mutex
 	workers    map[int64]*worker
@@ -129,6 +135,7 @@ func (m *Manager) startWorker(owner int64) {
 	w.pipe = &Pipeline{
 		Owner: owner, Store: m.Store, LLM: m.LLM, Notify: m.Notify, Log: m.Log,
 		Limiter: ratelimit.NewLimiter(m.Limits), Entitled: m.Entitled, Quota: m.Quota, Google: m.Google, Propose: m.Propose,
+		DraftCard: m.DraftCard,
 	}
 	w.pipe.OnFatal = func(reason string) { go m.breaker(owner, reason) }
 	m.workers[owner] = w
@@ -242,6 +249,48 @@ func (m *Manager) SendDraft(ctx context.Context, owner int64, d store.Draft) err
 		return errors.New("sessiya hozir ulanmagan")
 	}
 	return w.pipe.SendDraft(ctx, d)
+}
+
+// ErrDraftGone — qoralama topilmadi yoki allaqachon hal qilingan.
+var ErrDraftGone = fmt.Errorf("qoralama allaqachon hal qilingan: %w", store.ErrNotFound)
+
+// ErrDraftTooLong — tahrirlangan matn Telegram limitidan uzun.
+var ErrDraftTooLong = errors.New("matn juda uzun")
+
+// SendDraftByID kutilayotgan qoralamani yuboradi (bot tugmasi yoki bot xabariga javob).
+// text bo'sh bo'lmasa — qoralama o'rniga shu matn yuboriladi. Holat avval "sent"ga o'tadi
+// (ikki marta bosish ikki marta yubormaydi); yuborilmasa qayta "pending"ga qaytadi.
+func (m *Manager) SendDraftByID(ctx context.Context, owner, id int64, text string) error {
+	d, err := m.Store.GetDraft(ctx, owner, id)
+	if err != nil || d.Status != store.DraftPending {
+		return ErrDraftGone
+	}
+	if t := strings.TrimSpace(text); t != "" {
+		if utf8.RuneCountInString(t) > 4000 {
+			return ErrDraftTooLong
+		}
+		d.Reply = t
+	}
+	if err := m.Store.ResolveDraft(ctx, owner, id, store.DraftSent); err != nil {
+		return ErrDraftGone
+	}
+	if err := m.SendDraft(ctx, owner, d); err != nil {
+		if rerr := m.Store.ReopenDraft(context.WithoutCancel(ctx), owner, id); rerr != nil && m.Log != nil {
+			m.Log.Error("reopen draft", "owner", owner, "draft", id, "err", rerr)
+		}
+		return err
+	}
+	m.Store.Audit(ctx, owner, "draft_sent", strconv.FormatInt(id, 10))
+	return nil
+}
+
+// RejectDraft qoralamani rad etadi.
+func (m *Manager) RejectDraft(ctx context.Context, owner, id int64) error {
+	if err := m.Store.ResolveDraft(ctx, owner, id, store.DraftRejected); err != nil {
+		return ErrDraftGone
+	}
+	m.Store.Audit(ctx, owner, "draft_rejected", strconv.FormatInt(id, 10))
+	return nil
 }
 
 var ErrNoLiveSession = errors.New("jonli sessiya yo'q")
