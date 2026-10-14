@@ -723,6 +723,60 @@ function hookCard() {
   return card;
 }
 
+// ---------- Bosh ekranga qo'shish ----------
+// telegram-web-app.js addToHomeScreen'ni har doim e'lon qiladi, lekin Telegram 8.0 dan eski
+// ilovada chaqiruv jimgina hech narsa qilmaydi — shuning uchun versiya va holatni tekshiramiz,
+// qo'llanmasa qo'lda qo'shish yo'riqnomasini ko'rsatamiz.
+function homeScreenSupported() {
+  try { return !!(tg && tg.addToHomeScreen && tg.isVersionAtLeast && tg.isVersionAtLeast('8.0')); } catch (_) { return false; }
+}
+
+function isIOS() {
+  return (tg && tg.platform === 'ios') || /iPhone|iPad|iPod/.test(navigator.userAgent);
+}
+
+function homeScreenManual() {
+  const link = state.me.bot_username ? `https://t.me/${state.me.bot_username}?startapp` : null;
+  const steps = isIOS()
+    ? [
+      h('li', {}, link ? ["Safari'da oching: ", h('b', {}, link)] : "Safari'da botingizning t.me/<bot>?startapp havolasini oching."),
+      h('li', {}, '«Ulashish» (□↑) → «Bosh ekranga» (Add to Home Screen) → «Qo\'shish».'),
+      h('li', {}, 'Belgi bosilganda Telegram kotib ilovasi bilan ochiladi.')]
+    : [
+      h('li', {}, 'Telegram\'da bot bilan chatni oching.'),
+      h('li', {}, 'Yuqoridagi ⋮ menyu → «Bosh ekranga qo\'shish» (Add to Home Screen / Ярлык).'),
+      h('li', {}, "Yoki Telegram'ni yangilang — shunda pastdagi tugma ishlaydi.")];
+  const kids = [h('ol', { class: 'small muted' }, steps)];
+  if (link) kids.push(h('button', { class: 'btn ghost block', onclick: () => copyText(link) }, 'Havolani nusxalash'));
+  return kids;
+}
+
+function homeScreenBlock() {
+  const box = h('div', {});
+  const intro = h('p', { class: 'muted small' }, "Kotib telefoningiz bosh ekranida alohida ilova bo'lib turadi.");
+  const manual = (why) => swap(box, intro, why ? h('p', { class: 'small' }, why) : null, homeScreenManual());
+  if (!homeScreenSupported()) {
+    manual("Telegram ilovangiz bu funksiyani qo'llamaydi (Telegram'ni yangilang). Qo'lda qo'shish:");
+    return box;
+  }
+  const btn = h('button', { class: 'btn ghost block', onclick: () => {
+    let done = false;
+    const onAdded = () => { done = true; toast("Bosh ekranga qo'shildi ✅"); haptic('success'); swap(box, intro, h('p', { class: 'small' }, "✅ Bosh ekranga qo'shilgan.")); };
+    try { tg.onEvent('homeScreenAdded', onAdded); } catch (_) { /* */ }
+    try { tg.addToHomeScreen(); } catch (_) { manual("Bu qurilmada avtomatik qo'shib bo'lmadi. Qo'lda qo'shish:"); return; }
+    // Ba'zi qurilmalar natijani xabar qilmaydi: oyna chiqmagan bo'lsa, qo'lda yo'l ko'rsatamiz.
+    setTimeout(() => { if (!done && !document.hidden) manual("Oyna chiqmadimi? Qo'lda qo'shish:"); }, 4000);
+  } }, "Bosh ekranga qo'shish");
+  swap(box, intro, btn);
+  try {
+    tg.checkHomeScreenStatus((st) => {
+      if (st === 'added') swap(box, intro, h('p', { class: 'small' }, "✅ Bosh ekranga qo'shilgan."));
+      else if (st === 'unsupported') manual("Bu qurilmada avtomatik qo'shib bo'lmaydi. Qo'lda qo'shish:");
+    });
+  } catch (_) { /* */ }
+  return box;
+}
+
 // deviceCard — telefon qulayliklari: biometrik himoya va bosh ekranga qo'shish.
 function deviceCard() {
   const rows = [];
@@ -733,13 +787,7 @@ function deviceCard() {
         bioSet(v); toast(v ? 'Himoya yoqildi' : "Himoya o'chirildi");
       }, true));
   }
-  if (tg && tg.addToHomeScreen) {
-    const btn = h('button', { class: 'btn ghost block', onclick: () => { try { tg.addToHomeScreen(); } catch (_) { toast("Bu qurilmada qo'llanmaydi", true); } } }, "Bosh ekranga qo'shish");
-    rows.push(h('p', { class: 'muted small' }, "Kotib telefoningiz bosh ekranida alohida ilova bo'lib turadi."), btn);
-    try {
-      if (tg.checkHomeScreenStatus) tg.checkHomeScreenStatus((st) => { if (st === 'added' || st === 'unsupported') btn.remove(); });
-    } catch (_) { /* */ }
-  }
+  rows.push(homeScreenBlock());
   if (!rows.length) return null;
   return h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Telefon')), rows);
 }
