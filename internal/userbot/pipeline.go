@@ -365,7 +365,7 @@ func (p *Pipeline) Handle(ctx context.Context, in Incoming) {
 	defer cancel()
 	req := llm.Request{
 		OwnerName: st.OwnerName, Persona: dec.Persona, Language: st.Language,
-		History: hist, Incoming: in.Text, Away: st.Away, Audio: audio,
+		History: hist, Incoming: in.Text, Away: st.CurrentAway(p.Now()), Audio: audio,
 	}
 	var resp llm.Response
 	connected := p.Google != nil && p.Google.Connected(ctx, p.Owner)

@@ -160,3 +160,27 @@ func TestReplyBotsSetting(t *testing.T) {
 		t.Fatalf("kontakt: %+v", d)
 	}
 }
+
+func TestAwayExpiry(t *testing.T) {
+	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	s := Default()
+	s.SetAway("  Dars   qilyapman ", 90, now)
+	if s.Away != "Dars qilyapman" || s.AwayUntil == nil || !s.AwayUntil.Equal(now.Add(90*time.Minute)) {
+		t.Fatalf("%q %v", s.Away, s.AwayUntil)
+	}
+	if s.CurrentAway(now.Add(89*time.Minute)) == "" || s.CurrentAway(now.Add(90*time.Minute)) != "" {
+		t.Fatal("muddat tugagach holat bo'sh bo'lishi kerak")
+	}
+	s.SetAway("Safardaman", 0, now) // muddatsiz
+	if s.AwayUntil != nil || s.CurrentAway(now.Add(1000*time.Hour)) != "Safardaman" {
+		t.Fatal("muddatsiz holat")
+	}
+	s.SetAway("Uxlayapman", 99999, now) // 1 kun bilan cheklanadi
+	if !s.AwayUntil.Equal(now.Add(MaxAwayMinutes * time.Minute)) {
+		t.Fatal(s.AwayUntil)
+	}
+	s.SetAway("", 60, now)
+	if s.Away != "" || s.AwayUntil != nil {
+		t.Fatal("tozalash")
+	}
+}

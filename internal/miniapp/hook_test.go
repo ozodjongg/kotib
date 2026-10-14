@@ -53,6 +53,15 @@ func TestHookFlow(t *testing.T) {
 	if got, _ = st.GetSettings(ctx, 777); got.Mode != config.ModeDraft || got.Away != "" {
 		t.Fatalf("qaytish: %s %q", got.Mode, got.Away)
 	}
+	// for=<daqiqa> — holat o'zi tugaydi.
+	if code := doReq(t, hook+"?away=Dars+qilyapman&for=90", "GET", ""); code != 200 {
+		t.Fatalf("hook for: %d", code)
+	}
+	got, _ = st.GetSettings(ctx, 777)
+	if got.Away != "Dars qilyapman" || got.AwayUntil == nil || got.AwayUntil.Sub(time.Now()) < 89*time.Minute ||
+		got.CurrentAway(time.Now().Add(91*time.Minute)) != "" {
+		t.Fatalf("muddatli holat: %q %v", got.Away, got.AwayUntil)
+	}
 	if code := doReq(t, hook+"?mode=xyz", "GET", ""); code != 400 {
 		t.Fatal("noto'g'ri rejim rad etilishi kerak")
 	}
@@ -126,6 +135,43 @@ func TestTGLoginPage(t *testing.T) {
 	for _, bad := range []string{"", "abc", "QUJD%22%3E%3Cscript%3E", "javascript:alert(1)aaaaaa"} {
 		if code := doReq(t, srv.URL+"/tglogin?token="+bad, "GET", ""); code != 400 {
 			t.Fatalf("%q rad etilishi kerak: %d", bad, code)
+		}
+	}
+}
+
+func TestQuickAway(t *testing.T) {
+	st := store.NewMemory()
+	ctx := context.Background()
+	srv := newTestServer(t, &Server{BotToken: tok, Store: st, Ctl: &fakeCtl{}})
+	a := userAuth("41")
+	if r, _ := do(t, "POST", srv.URL+"/api/away", a, `{"away":"Sayrdaman","minutes":60}`); r.StatusCode != 403 {
+		t.Fatalf("rozilikdan oldin: %d", r.StatusCode)
+	}
+	do(t, "POST", srv.URL+"/api/consent", a, `{"accepted":true}`)
+	s0 := config.Default()
+	s0.OwnerName = "Aziz"
+	_ = st.SaveSettings(ctx, 41, s0)
+
+	r, m := do(t, "POST", srv.URL+"/api/away", a, `{"away":"  Sayr   qilyapman ","minutes":60}`)
+	if r.StatusCode != 200 || m["away"] != "Sayr qilyapman" || m["away_until"] == nil {
+		t.Fatalf("away: %d %v", r.StatusCode, m)
+	}
+	got, _ := st.GetSettings(ctx, 41)
+	if got.OwnerName != "Aziz" || got.CurrentAway(time.Now()) != "Sayr qilyapman" {
+		t.Fatalf("boshqa sozlamalar saqlanishi kerak: %+v", got)
+	}
+	// Muddatsiz va tozalash.
+	do(t, "POST", srv.URL+"/api/away", a, `{"away":"Safardaman","minutes":0}`)
+	if got, _ = st.GetSettings(ctx, 41); got.AwayUntil != nil || got.Away != "Safardaman" {
+		t.Fatalf("muddatsiz: %+v", got)
+	}
+	do(t, "POST", srv.URL+"/api/away", a, `{"away":"","minutes":30}`)
+	if got, _ = st.GetSettings(ctx, 41); got.Away != "" || got.AwayUntil != nil {
+		t.Fatalf("tozalash: %+v", got)
+	}
+	for _, bad := range []string{`{"away":"x","minutes":-1}`, `{"away":"x","minutes":5000}`, `{"away":"` + strings.Repeat("a", 101) + `"}`} {
+		if r, _ := do(t, "POST", srv.URL+"/api/away", a, bad); r.StatusCode != 400 {
+			t.Fatalf("%s: %d", bad, r.StatusCode)
 		}
 	}
 }

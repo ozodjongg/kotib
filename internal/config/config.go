@@ -61,6 +61,8 @@ type Settings struct {
 	// Away — egasining hozirgi holati ("rulda", "yig'ilishda"); kotib javobda hisobga oladi.
 	// Odatda avtomatlashtirish havolasi (Focus / MacroDroid) o'rnatadi; bo'sh — yo'q.
 	Away string `json:"away,omitempty"`
+	// AwayUntil — holat shu vaqtdan keyin avtomatik tugaydi (odamlar o'chirishni unutadi); nil — muddatsiz.
+	AwayUntil *time.Time `json:"away_until,omitempty"`
 	// NoSuggest — uchrashuv/vazifa takliflarini o'chirish (default: takliflar yoqiq).
 	NoSuggest bool `json:"no_suggest,omitempty"`
 	// ReplyVoice — kontaktning ovozli xabarlariga ham javob tayyorlash (default o'chiq).
@@ -82,6 +84,27 @@ type Settings struct {
 
 // MaxAway — Settings.Away uzunligi chegarasi.
 const MaxAway = 100
+
+// MaxAwayMinutes — holat muddatining yuqori chegarasi (1 kun).
+const MaxAwayMinutes = 24 * 60
+
+// CurrentAway — now paytidagi amaldagi holat: muddati o'tgan bo'lsa bo'sh.
+func (s *Settings) CurrentAway(now time.Time) string {
+	if s.Away == "" || (s.AwayUntil != nil && !now.Before(*s.AwayUntil)) {
+		return ""
+	}
+	return s.Away
+}
+
+// SetAway holatni o'rnatadi; minutes > 0 bo'lsa shuncha daqiqadan keyin avtomatik tugaydi.
+// Bo'sh matn holatni (va muddatini) tozalaydi.
+func (s *Settings) SetAway(text string, minutes int, now time.Time) {
+	s.Away, s.AwayUntil = strings.Join(strings.Fields(text), " "), nil
+	if s.Away != "" && minutes > 0 {
+		t := now.Add(time.Duration(min(minutes, MaxAwayMinutes)) * time.Minute).Truncate(time.Second)
+		s.AwayUntil = &t
+	}
+}
 
 // Default xavfsiz boshlang'ich sozlama.
 func Default() Settings {
