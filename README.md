@@ -173,7 +173,7 @@ Xavfsizlik:
 | **Hozirgi holat** | Sozlamalar → "Hozirgi holatingiz" | "Hozir rulda" — kotib javobda hisobga oladi (aniq vaqt va'da qilmaydi) |
 | **Siri / Google Assistant** | — | `t.me/<bot>?start=pause` va `?start=resume` deep link'lari |
 | **Face ID / barmoq izi** | Hisob → Telefon | Mini App'dan yuborish, avto rejimni yoqish, Google'ni uzish, akkauntni o'chirishdan oldin (shu qurilmada) |
-| **Bosh ekranga qo'shish** | Hisob → Telefon | Telegram `addToHomeScreen` |
+| **Bosh ekranga qo'shish** | Hisob → Telefon | Telegram `addToHomeScreen` (Telegram 8.0+). Eski ilovada yoki qo'llamaydigan qurilmada qo'lda qo'shish yo'riqnomasi ko'rsatiladi: iPhone — Safari'da `t.me/<bot>?startapp` → «Bosh ekranga»; Android — bot chati ⋮ menyusi. `?startapp` ishlashi uchun @BotFather → Bot Settings → **Configure Mini App** (Main Mini App) yoqilgan bo'lishi kerak |
 | **Orqaga tugmasi** | — | Telegram BackButton (Android tizim tugmasi ham): bo'limdan Asosiy'ga |
 | **Pastga surib yopilmaslik** | — | `disableVerticalSwipes`: matn yozayotganda ilova tasodifan yopilmaydi |
 
