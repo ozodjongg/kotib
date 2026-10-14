@@ -57,7 +57,10 @@ type Settings struct {
 	AllowLinks bool `json:"allow_links"` // javobda havola (default: false)
 	// DraftsInBot — qoralama matni bot chatiga tugmalar bilan yuboriladi (tasdiqlash ilovasiz).
 	// Default o'chiq: yoqilsa kontakt xabari va javob matni bot chati tarixida qoladi.
-	DraftsInBot    bool       `json:"drafts_in_bot"`
+	DraftsInBot bool `json:"drafts_in_bot"`
+	// Away — egasining hozirgi holati ("rulda", "yig'ilishda"); kotib javobda hisobga oladi.
+	// Odatda avtomatlashtirish havolasi (Focus / MacroDroid) o'rnatadi; bo'sh — yo'q.
+	Away           string     `json:"away,omitempty"`
 	DefaultPersona string     `json:"default_persona"` // preset kaliti
 	DefaultCustom  string     `json:"default_custom,omitempty"`
 	OwnerName      string     `json:"owner_name"` // mijoz ismi — "men X man" kontekst uchun
@@ -67,6 +70,9 @@ type Settings struct {
 	// ContactTags: userID → teglar. Mini App kontaktlarga teg beradi.
 	ContactTags map[int64][]string `json:"contact_tags,omitempty"`
 }
+
+// MaxAway — Settings.Away uzunligi chegarasi.
+const MaxAway = 100
 
 // Default xavfsiz boshlang'ich sozlama.
 func Default() Settings {
@@ -116,6 +122,9 @@ func (s *Settings) Validate() error {
 	}
 	if utf8.RuneCountInString(s.OwnerName) > 64 {
 		return errors.New("owner_name juda uzun")
+	}
+	if utf8.RuneCountInString(s.Away) > MaxAway || strings.ContainsAny(s.Away, "\r\n") {
+		return errors.New("away juda uzun yoki ko'p qatorli")
 	}
 	switch s.Language {
 	case "uz", "ru", "en", "auto":

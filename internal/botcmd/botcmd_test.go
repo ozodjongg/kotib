@@ -210,3 +210,13 @@ func TestDraftInBot(t *testing.T) {
 		t.Fatalf("holat: %s", got.Status)
 	}
 }
+
+func TestStartDeepLinks(t *testing.T) {
+	h, _, ctl, _ := setup(t)
+	ctx := context.Background()
+	h.Command(ctx, 1, "start", "pause")
+	h.Command(ctx, 1, "start", "resume")
+	if ctl.paused != 1 || ctl.resumed != 1 {
+		t.Fatalf("paused=%d resumed=%d", ctl.paused, ctl.resumed)
+	}
+}

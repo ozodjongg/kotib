@@ -147,4 +147,11 @@ type Store interface {
 	SetActionStatus(ctx context.Context, owner, id int64, from, to ActionStatus) error
 	// PruneActions "before"dan eski amallarni o'chiradi.
 	PruneActions(ctx context.Context, before time.Time) (int64, error)
+
+	// Avtomatlashtirish havolasi: faqat token xeshi saqlanadi.
+	SetHook(ctx context.Context, owner int64, tokenHash []byte) error
+	DeleteHook(ctx context.Context, owner int64) error
+	HasHook(ctx context.Context, owner int64) (bool, error)
+	// OwnerByHook xesh bo'yicha egani topadi (topilmasa ErrNotFound).
+	OwnerByHook(ctx context.Context, tokenHash []byte) (int64, error)
 }

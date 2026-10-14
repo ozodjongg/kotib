@@ -35,7 +35,7 @@ func TestStoreContract(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if _, err := db.Exec(`TRUNCATE accounts, subscriptions, payments, usage_daily, google_links, actions CASCADE`); err != nil {
+		if _, err := db.Exec(`TRUNCATE accounts, subscriptions, payments, usage_daily, google_links, actions, hooks CASCADE`); err != nil {
 			t.Fatal(err)
 		}
 		contract(t, store.NewPostgres(db))
@@ -210,8 +210,27 @@ func contract(t *testing.T, s store.Store) {
 		t.Fatal(n, err)
 	}
 
+	if err := s.SetHook(ctx, 1, []byte("h1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetHook(ctx, 1, []byte("h2")); err != nil { // yangisi eskisini almashtiradi
+		t.Fatal(err)
+	}
+	if _, err := s.OwnerByHook(ctx, []byte("h1")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("eski havola ishlamasligi kerak")
+	}
+	if o, err := s.OwnerByHook(ctx, []byte("h2")); err != nil || o != 1 {
+		t.Fatal(o, err)
+	}
+	if ok, _ := s.HasHook(ctx, 1); !ok {
+		t.Fatal("has hook")
+	}
+
 	if err := s.DeleteAccount(ctx, 1); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := s.OwnerByHook(ctx, []byte("h2")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("havola akkaunt bilan o'chirilishi kerak")
 	}
 	if _, err := s.GetGoogleLink(ctx, 1); !errors.Is(err, store.ErrNotFound) {
 		t.Fatal("google ulanishi akkaunt bilan o'chirilishi kerak")

@@ -177,7 +177,8 @@ func run(log *slog.Logger) error {
 	if staticDir == "" {
 		staticDir = "./webapp"
 	}
-	api := &miniapp.Server{BotToken: env("BOT_TOKEN"), Store: st, Ctl: mgr, Log: log, StaticDir: staticDir}
+	api := &miniapp.Server{BotToken: env("BOT_TOKEN"), Store: st, Ctl: mgr, Log: log, StaticDir: staticDir,
+		PublicURL: publicURL(env("MINIAPP_URL"))}
 	if gcli != nil {
 		ctrlBot.Handler.(*botcmd.Handler).Google = gcli
 		api.Google = gcli
@@ -191,6 +192,16 @@ func run(log *slog.Logger) error {
 	}
 	if bill.Enabled() {
 		api.Billing = bill
+	}
+
+	{
+		cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		if name, err := ctrlBot.Username(cctx); err == nil {
+			api.BotUsername = name
+		} else {
+			log.Warn("bot username olinmadi", "err", err)
+		}
+		cancel()
 	}
 
 	addr, err := listenAddr(env("LISTEN"), env("PORT"))
@@ -265,16 +276,21 @@ func parseIDs(v string) (map[int64]bool, error) {
 	return out, nil
 }
 
+// publicURL — MINIAPP_URL'ning domeni (https://domen).
+func publicURL(miniApp string) string {
+	u, err := url.Parse(miniApp)
+	if err != nil {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
+}
+
 // googleRedirect — OAuth qaytish manzili: aniq GOOGLE_REDIRECT_URL yoki MINIAPP_URL domeni.
 func googleRedirect(explicit, miniApp string) string {
 	if explicit != "" {
 		return explicit
 	}
-	u, err := url.Parse(miniApp)
-	if err != nil {
-		return ""
-	}
-	return u.Scheme + "://" + u.Host + "/oauth/google/callback"
+	return publicURL(miniApp) + "/oauth/google/callback"
 }
 
 // listenAddr tinglash manzilini tanlaydi: aniq LISTEN > PORT (Railway/Heroku kabi

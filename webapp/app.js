@@ -26,6 +26,7 @@ const EVENTS = {
   flood_wait: "Telegram kutishni so'radi", fatal: 'Telegram xatosi', circuit_breaker: "Xavfsizlik uchun to'xtatildi",
   trial_started: 'Bepul sinov boshlandi', payment: "To'lov qabul qilindi", subscription_canceled: 'Obuna bekor qilindi',
   subscription_renewed: 'Obuna qayta yoqildi', refunded: "To'lov qaytarildi",
+  hook: 'Avtomatika rejimni o\'zgartirdi', hook_created: 'Avtomatlashtirish havolasi yaratildi', hook_deleted: "Avtomatlashtirish havolasi o'chirildi",
   google_connected: 'Google ulandi', google_disconnected: 'Google uzildi', google_revoked: "Google ruxsati bekor qilindi",
   action_proposed: 'Taklif yuborildi (taqvim/vazifa)', action_done: "Google'ga qo'shildi",
   action_rejected: 'Taklif rad etildi', action_failed: "Google'ga qo'shib bo'lmadi",
@@ -558,6 +559,9 @@ function viewSettings(view) {
       field('Ish rejimi', modeControl(s), 'Qoralama — siz tasdiqlaysiz (tavsiya). Avto — darhol yuboriladi.'),
       field('Ismingiz', h('input', { type: 'text', value: s.owner_name || '', maxlength: 64, placeholder: 'Masalan: Aziz',
         oninput: (e) => { s.owner_name = e.target.value; markDirty(); } }), 'AI javoblarni sizning nomingizdan yozadi.'),
+      field('Hozirgi holatingiz', h('input', { type: 'text', value: s.away || '', maxlength: 100, placeholder: "Masalan: Hozir rulda / Yig'ilishdaman",
+        oninput: (e) => { s.away = e.target.value.replace(/\s+/g, ' '); markDirty(); } }),
+        "Kotib javobda hisobga oladi. Bo'sh — yo'q. Telefon avtomatikasi (Hisob → Avtomatlashtirish) o'zi o'zgartirishi mumkin."),
       field('Javob tili', select([['auto', 'Suhbatdosh tilida'], ['uz', "O'zbekcha"], ['ru', 'Ruscha'], ['en', 'Inglizcha']], s.language, (v) => { s.language = v; })),
       field('Uslub', personaSelect(s.default_persona, (v) => { s.default_persona = v; })),
       field("O'z ko'rsatmangiz", custom, "Uslub «O'z ko'rsatmam» bo'lsa ishlatiladi.")),
@@ -642,6 +646,81 @@ function ruleCard(r, i, redraw) {
 }
 
 // ---------- Hisob: obuna, faollik, xavfsizlik ----------
+// ---------- Avtomatlashtirish (iPhone Shortcuts / Android MacroDroid) ----------
+const HOOK_PRESETS = [
+  ['🚗 Haydash', { mode: 'auto', away: 'Hozir rulda' }],
+  ["📅 Yig'ilish", { mode: 'auto', away: "Yig'ilishdaman" }],
+  ['🌙 Uyqu', { mode: 'draft', away: 'Uxlayapman' }],
+  ['↩️ Odatiy holat', { mode: 'draft', away: '' }],
+  ["⏸ To'xtatish", { action: 'pause' }],
+  ['▶️ Davom ettirish', { action: 'resume' }],
+];
+
+function hookURL(base, params) {
+  return base + '?' + Object.entries(params).map(([k, v]) => k + '=' + encodeURIComponent(v)).join('&');
+}
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); toast('Nusxa olindi'); haptic('success'); return; } catch (_) { /* eski WebView */ }
+  // Zaxira: tanlab qo'yamiz — foydalanuvchi o'zi nusxalaydi.
+  const ta = h('textarea', { readonly: true }, text);
+  document.body.append(ta); ta.select();
+  try { document.execCommand('copy'); toast('Nusxa olindi'); } catch (_) { toast('Matnni belgilab nusxa oling', true); }
+  ta.remove();
+}
+
+function botLink(start) {
+  const u = state.me.bot_username;
+  return u ? `t.me/${u}?start=${start}` : `t.me/<bot>?start=${start}`;
+}
+
+function hookCard() {
+  const card = h('div', { class: 'card' });
+  const draw = () => {
+    const head = h('div', { class: 'card-head' }, h('h3', {}, 'Avtomatlashtirish'),
+      h('span', { class: 'badge ' + (state.me.hook ? 'ok' : '') }, state.me.hook ? 'Yoqilgan' : "O'chiq"));
+    const create = h('button', { class: state.me.hook ? 'btn ghost block' : 'btn block', onclick: busy(async () => {
+      if (state.me.hook && !(await confirmBox("Yangi havola yaratilsa, eskisi ishlamay qoladi (telefondagi avtomatikani yangilash kerak). Davom etasizmi?"))) return;
+      const { url } = await api('POST', '/hook');
+      state.hookURL = url; state.me.hook = true; draw();
+    }) }, state.me.hook ? 'Yangi havola yaratish' : 'Havola yaratish');
+    const kids = [head,
+      h('p', { class: 'muted small' }, "Telefon rejimiga qarab kotibni o'zi boshqaradi: iPhone'da Focus (Haydash, Uyqu), Android'da MacroDroid/Tasker (Bezovta qilmang, mashina Bluetooth'i)."),
+    ];
+    if (state.hookURL) {
+      kids.push(h('p', { class: 'small' }, 'Kerakli havolani nusxalab, telefon avtomatikasiga qo\'ying:'),
+        h('div', { class: 'hook-list' }, HOOK_PRESETS.map(([label, params]) =>
+          h('button', { class: 'btn ghost block', onclick: () => copyText(hookURL(state.hookURL, params)) }, label + ' — nusxa olish'))),
+        h('p', { class: 'muted small' }, "Havolani hech kimga bermang: u orqali kotib rejimini o'zgartirish mumkin."));
+    } else if (state.me.hook) {
+      kids.push(h('p', { class: 'muted small' }, "Havola xavfsizlik uchun faqat yaratilganda ko'rsatiladi. Qayta ko'rish uchun yangisini yarating."));
+    }
+    kids.push(create);
+    if (state.me.hook) {
+      kids.push(h('button', { class: 'btn ghost block', onclick: busy(async () => {
+        await api('DELETE', '/hook'); state.me.hook = false; state.hookURL = null; toast("O'chirildi"); draw();
+      }) }, "Havolani o'chirish"));
+    }
+    kids.push(h('details', {},
+      h('summary', { class: 'small' }, "iPhone: Shortcuts'da sozlash"),
+      h('ol', { class: 'small muted' },
+        h('li', {}, 'Shortcuts → Automation → «+» → Focus → masalan «Driving» → «When Turning On».'),
+        h('li', {}, '«Run Immediately» ni tanlang → New Blank Automation → «Get Contents of URL».'),
+        h('li', {}, '«🚗 Haydash» havolasini qo\'ying. Xuddi shunday «When Turning Off» uchun «↩️ Odatiy holat».'),
+        h('li', {}, `Siri: «Hey Siri, kotibni to'xtat» — Shortcuts'da «Open URL» bilan ${botLink('pause')} (davom: ${botLink('resume')}).`))),
+    h('details', {},
+      h('summary', { class: 'small' }, "Android: MacroDroid'da sozlash"),
+      h('ol', { class: 'small muted' },
+        h('li', {}, 'MacroDroid → Add Macro → Trigger: «Do Not Disturb» yoki «Bluetooth Event» (mashina).'),
+        h('li', {}, 'Action: Connectivity → «HTTP Request» → GET → havolani qo\'ying.'),
+        h('li', {}, 'Teskari makro (DND o\'chganda) uchun «↩️ Odatiy holat» havolasi.'),
+        h('li', {}, `Google Assistant / bosh ekran yorlig'i: ${botLink('pause')} va ${botLink('resume')}.`))));
+    swap(card, kids);
+  };
+  draw();
+  return card;
+}
+
 // deviceCard — telefon qulayliklari: biometrik himoya va bosh ekranga qo'shish.
 function deviceCard() {
   const rows = [];
@@ -698,6 +777,7 @@ async function viewAccount(view) {
   if (g.enabled) put(view, googleCard(g));
   const dev = deviceCard();
   if (dev) put(view, dev);
+  put(view, hookCard());
 
   put(view, h('h2', {}, 'Oxirgi faollik'));
   const act = h('div', { class: 'card' }, h('div', { class: 'skeleton' }));

@@ -167,6 +167,15 @@ func (b *Bot) RefundStarPayment(ctx context.Context, userID int64, chargeID stri
 	}, nil)
 }
 
+// Username botning @username'ini qaytaradi (getMe).
+func (b *Bot) Username(ctx context.Context) (string, error) {
+	var me struct {
+		Username string `json:"username"`
+	}
+	err := b.call(ctx, "getMe", map[string]any{}, &me)
+	return me.Username, err
+}
+
 // Command — bot menyusidagi buyruq.
 type Command struct {
 	Name, Description string

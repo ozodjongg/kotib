@@ -85,6 +85,13 @@ Sozlamalar, qoidalar va qoralamalar — "Ochish" tugmasi orqali ilovada.`
 func (h *Handler) Command(ctx context.Context, from int64, cmd, args string) bot.Reply {
 	switch cmd {
 	case "start":
+		// Deep link: t.me/<bot>?start=pause — Siri / Google Assistant / yorliq orqali.
+		switch args {
+		case "pause":
+			return h.pause(ctx, from)
+		case "resume":
+			return h.resume(ctx, from)
+		}
 		text := "Salom! Men kotibingizman: shaxsiy xabarlaringizga javob qoralamasini tayyorlayman, siz tasdiqlaganingizdan keyingina yuboriladi.\n\nBoshlash uchun pastdagi tugmani bosing."
 		if h.Billing.Enabled() && h.Billing.TrialDays > 0 {
 			text += fmt.Sprintf("\n\nBirinchi %d kun — bepul.", h.Billing.TrialDays)

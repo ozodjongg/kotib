@@ -3,6 +3,9 @@ package miniapp
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"html/template"
@@ -80,6 +83,10 @@ type Server struct {
 	Ctl      Controller
 	Billing  Billing
 	Google   Google
+	// BotUsername — deep link'lar uchun (t.me/<bot>?start=pause); bo'sh bo'lishi mumkin.
+	BotUsername string
+	// PublicURL — tashqi manzil (https://domen), avtomatlashtirish havolasi uchun.
+	PublicURL string
 	// OnGoogle — ulanish natijasi haqida egasiga bot xabari (ixtiyoriy).
 	OnGoogle func(ctx context.Context, owner int64, err error)
 	Log      *slog.Logger
@@ -124,6 +131,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/google/connect", s.auth(s.handleGoogleConnect))
 	mux.HandleFunc("POST /api/google/disconnect", s.auth(s.handleGoogleDisconnect))
 	mux.HandleFunc("GET /oauth/google/callback", s.handleGoogleCallback)
+	mux.HandleFunc("POST /api/hook", s.auth(s.handleHookCreate))
+	mux.HandleFunc("DELETE /api/hook", s.auth(s.handleHookDelete))
+	mux.HandleFunc("GET /hook/{token}", s.handleHook)
+	mux.HandleFunc("POST /hook/{token}", s.handleHook)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
 	if s.StaticDir != "" {
 		mux.Handle("GET /", staticFiles(s.StaticDir))
@@ -285,6 +296,9 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request, owner int64) {
 		g["connected"], g["email"] = s.Google.Status(r.Context(), owner)
 	}
 	out["google"] = g
+	hasHook, _ := s.Store.HasHook(r.Context(), owner)
+	out["hook"] = hasHook
+	out["bot_username"] = s.BotUsername
 	writeJSON(w, 200, out)
 }
 
@@ -780,4 +794,116 @@ func googlePage(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(code)
 	_ = googleTmpl.Execute(w, msg) // html/template — matn ekranlanadi
+}
+
+// ---- Avtomatlashtirish havolasi (iPhone Shortcuts / Android MacroDroid, Tasker) ----
+
+func hookHash(token string) []byte {
+	sum := sha256.Sum256([]byte(token))
+	return sum[:]
+}
+
+// handleHookCreate yangi maxfiy havola yaratadi (eskisi bekor bo'ladi). Token faqat shu
+// javobda ko'rinadi — bazada xeshi saqlanadi.
+func (s *Server) handleHookCreate(w http.ResponseWriter, r *http.Request, owner int64) {
+	if !s.requireConsent(w, r, owner) {
+		return
+	}
+	b := make([]byte, 24)
+	if _, err := rand.Read(b); err != nil {
+		httpErr(w, 500, "xatolik")
+		return
+	}
+	token := base64.RawURLEncoding.EncodeToString(b)
+	if err := s.Store.SetHook(r.Context(), owner, hookHash(token)); err != nil {
+		httpErr(w, 500, "xatolik")
+		return
+	}
+	s.Store.Audit(r.Context(), owner, "hook_created", "")
+	writeJSON(w, 200, map[string]string{"url": strings.TrimRight(s.PublicURL, "/") + "/hook/" + token})
+}
+
+func (s *Server) handleHookDelete(w http.ResponseWriter, r *http.Request, owner int64) {
+	if err := s.Store.DeleteHook(r.Context(), owner); err != nil {
+		httpErr(w, 500, "xatolik")
+		return
+	}
+	s.Store.Audit(r.Context(), owner, "hook_deleted", "")
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+// handleHook — telefon avtomatikasi chaqiradi (initData yo'q, egani maxfiy token belgilaydi).
+// Parametrlar: mode=draft|auto|off, away=<holat matni> (bo'sh — tozalash), action=pause|resume.
+func (s *Server) handleHook(w http.ResponseWriter, r *http.Request) {
+	token := r.PathValue("token")
+	if len(token) < 20 || len(token) > 64 {
+		s.hookFail(w)
+		return
+	}
+	owner, err := s.Store.OwnerByHook(r.Context(), hookHash(token))
+	if err != nil {
+		s.hookFail(w)
+		return
+	}
+	if !s.allow(owner) {
+		httpErr(w, http.StatusTooManyRequests, "juda tez-tez so'rov")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	_ = r.ParseForm() // GET query va POST form ikkalasi ham
+	q := r.Form
+	st, err := s.Store.GetSettings(r.Context(), owner)
+	if err != nil {
+		httpErr(w, 500, "xatolik")
+		return
+	}
+	changed := false
+	if v := q.Get("mode"); v != "" {
+		st.Mode, changed = config.Mode(v), true
+	}
+	if _, ok := q["away"]; ok {
+		st.Away, changed = strings.Join(strings.Fields(q.Get("away")), " "), true
+	}
+	if changed {
+		if err := st.Validate(); err != nil {
+			httpErr(w, 400, err.Error())
+			return
+		}
+		if err := s.Store.SaveSettings(r.Context(), owner, st); err != nil {
+			httpErr(w, 500, "xatolik")
+			return
+		}
+		s.Store.Audit(r.Context(), owner, "hook", "mode="+string(st.Mode))
+	}
+	switch q.Get("action") {
+	case "":
+	case "pause":
+		s.Ctl.Pause(owner)
+		_ = s.Store.SetStatus(r.Context(), owner, store.StatusPaused, "avtomatika to'xtatdi")
+		s.Store.Audit(r.Context(), owner, "paused", "hook")
+	case "resume":
+		acc, err := s.Store.GetAccount(r.Context(), owner)
+		if err != nil || acc.ConsentAt == nil || acc.Status == store.StatusPending || acc.Status == store.StatusRevoked {
+			httpErr(w, 400, "avval Telegram akkauntni ulang")
+			return
+		}
+		if err := s.Ctl.Resume(context.WithoutCancel(r.Context()), owner); err != nil {
+			httpErr(w, 400, "davom ettirib bo'lmadi")
+			return
+		}
+		_ = s.Store.SetStatus(r.Context(), owner, store.StatusActive, "")
+		s.Store.Audit(r.Context(), owner, "resumed", "hook")
+	default:
+		httpErr(w, 400, "action: pause yoki resume")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "mode": st.Mode, "away": st.Away})
+}
+
+func (s *Server) hookFail(w http.ResponseWriter) {
+	if !s.allowAuthFailure() {
+		httpErr(w, http.StatusTooManyRequests, "juda tez-tez so'rov")
+		return
+	}
+	httpErr(w, http.StatusNotFound, "havola yaroqsiz")
 }

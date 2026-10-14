@@ -276,7 +276,7 @@ func (p *Pipeline) Handle(ctx context.Context, in Incoming) {
 	defer cancel()
 	req := llm.Request{
 		OwnerName: st.OwnerName, Persona: dec.Persona, Language: st.Language,
-		History: hist, Incoming: in.Text,
+		History: hist, Incoming: in.Text, Away: st.Away,
 	}
 	var resp llm.Response
 	if asst, ok := p.LLM.(llm.Assistant); ok && p.Google != nil && p.Google.Connected(ctx, p.Owner) {

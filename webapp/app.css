@@ -222,3 +222,9 @@ textarea { min-height: 96px; resize: vertical; line-height: 1.5; }
 .empty .big { font-family: var(--serif); font-size: 20px; margin-bottom: 6px; }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* avtomatlashtirish */
+.hook-list { display: grid; gap: 8px; margin: 8px 0 12px; }
+details { margin-top: 10px; }
+details summary { cursor: pointer; color: var(--accent); font-weight: 600; padding: 6px 0; }
+details ol { margin: 6px 0 0; padding-left: 20px; line-height: 1.55; }

@@ -23,6 +23,7 @@ type Memory struct {
 	usage    map[usageKey]int
 	google   map[int64]GoogleLink
 	actions  map[int64]Action
+	hooks    map[int64]string // owner → token xeshi
 }
 
 type usageKey struct {
@@ -47,6 +48,7 @@ func NewMemory() *Memory {
 		usage:    map[usageKey]int{},
 		google:   map[int64]GoogleLink{},
 		actions:  map[int64]Action{},
+		hooks:    map[int64]string{},
 	}
 }
 
@@ -110,6 +112,7 @@ func (m *Memory) DeleteAccount(_ context.Context, owner int64) error {
 	delete(m.sessions, owner)
 	delete(m.settings, owner)
 	delete(m.google, owner)
+	delete(m.hooks, owner)
 	for id, a := range m.actions {
 		if a.OwnerID == owner {
 			delete(m.actions, id)
@@ -458,4 +461,39 @@ func (m *Memory) PruneActions(_ context.Context, before time.Time) (int64, error
 		}
 	}
 	return n, nil
+}
+
+func (m *Memory) SetHook(_ context.Context, owner int64, tokenHash []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.accounts[owner]; !ok {
+		return ErrNotFound
+	}
+	m.hooks[owner] = string(tokenHash)
+	return nil
+}
+
+func (m *Memory) DeleteHook(_ context.Context, owner int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.hooks, owner)
+	return nil
+}
+
+func (m *Memory) HasHook(_ context.Context, owner int64) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.hooks[owner]
+	return ok, nil
+}
+
+func (m *Memory) OwnerByHook(_ context.Context, tokenHash []byte) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for owner, h := range m.hooks {
+		if h == string(tokenHash) {
+			return owner, nil
+		}
+	}
+	return 0, ErrNotFound
 }

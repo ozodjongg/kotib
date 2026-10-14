@@ -434,3 +434,30 @@ func (p *Postgres) PruneActions(ctx context.Context, before time.Time) (int64, e
 	}
 	return res.RowsAffected()
 }
+
+func (p *Postgres) SetHook(ctx context.Context, owner int64, tokenHash []byte) error {
+	_, err := p.DB.ExecContext(ctx, `
+		INSERT INTO hooks (owner_id, token_hash) VALUES ($1, $2)
+		ON CONFLICT (owner_id) DO UPDATE SET token_hash = EXCLUDED.token_hash, created_at = now()`, owner, tokenHash)
+	return err
+}
+
+func (p *Postgres) DeleteHook(ctx context.Context, owner int64) error {
+	_, err := p.DB.ExecContext(ctx, `DELETE FROM hooks WHERE owner_id = $1`, owner)
+	return err
+}
+
+func (p *Postgres) HasHook(ctx context.Context, owner int64) (bool, error) {
+	var ok bool
+	err := p.DB.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM hooks WHERE owner_id = $1)`, owner).Scan(&ok)
+	return ok, err
+}
+
+func (p *Postgres) OwnerByHook(ctx context.Context, tokenHash []byte) (int64, error) {
+	var owner int64
+	err := p.DB.QueryRowContext(ctx, `SELECT owner_id FROM hooks WHERE token_hash = $1`, tokenHash).Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	return owner, err
+}
