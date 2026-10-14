@@ -90,6 +90,7 @@ func run(log *slog.Logger) error {
 
 	// ---- Saqlash ----
 	var st store.Store
+	var pgDB *sql.DB // bitta nusxa qulfi uchun (faqat Postgres)
 	switch {
 	case env("DATABASE_URL") != "":
 		db, err := sql.Open("pgx", env("DATABASE_URL"))
@@ -112,6 +113,7 @@ func run(log *slog.Logger) error {
 			return fmt.Errorf("baza: %w", err)
 		}
 		st = store.NewPostgres(db)
+		pgDB = db
 	case env("DEV_MEMORY") == "1":
 		log.Warn("XOTIRADAGI saqlash: qayta ishga tushganda barcha sessiyalar yo'qoladi (faqat dev)")
 		st = store.NewMemory()
@@ -158,6 +160,16 @@ func run(log *slog.Logger) error {
 	mgr.CalendarFallback = true
 	icsKey := sha256.Sum256([]byte("kotib-ics:" + env("MASTER_KEY")))
 	icsSigner := &ics.Signer{Key: icsKey[:], Base: publicURL(env("MINIAPP_URL"))}
+
+	// Faqat bitta nusxa Telegram'ga ulansin: deploy paytida yangi nusxa eskisi to'xtashini kutadi.
+	gate := make(chan struct{})
+	mgr.Gate = gate
+	releaseLock := func() {}
+	if pgDB != nil {
+		releaseLock = holdInstanceLock(pgDB, gate, log, stop)
+	} else {
+		close(gate)
+	}
 
 	mgr.DraftCard = func(ctx context.Context, d store.Draft, name string) error {
 		text, btns := botcmd.DraftCard(d, name)
@@ -250,7 +262,87 @@ func run(log *slog.Logger) error {
 	defer cancel()
 	_ = srv.Shutdown(shCtx)
 	mgr.Shutdown()
+	releaseLock() // sessiyalar to'liq uzilgandan KEYIN — yangi nusxa shundan so'ng ulanadi
 	return nil
+}
+
+// instanceLockID — "bitta nusxa" advisory lock'i (migratsiya lock'idan farqli).
+const instanceLockID = 7_311_002_402
+
+// holdInstanceLock Postgres advisory lock'ini oladi va gate'ni ochadi. Railway yangi versiyani
+// yoqqanda eskisi bir necha soniya ishlab turadi; ikkala nusxa bitta Telegram sessiyasiga ulansa,
+// Telegram AUTH_KEY_DUPLICATED bilan sessiyani bekor qiladi. Lock alohida ulanishda ushlanadi;
+// ulanish uzilsa (lock yo'qoldi) — jarayon to'xtatiladi, platforma qayta ishga tushiradi.
+// Qaytarilgan funksiya lock'ni bo'shatadi (sessiyalar yopilgandan keyin chaqiriladi).
+func holdInstanceLock(db *sql.DB, gate chan struct{}, log *slog.Logger, onLost func()) (release func()) {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	var conn *sql.Conn
+	locked := false
+	go func() {
+		defer close(done)
+		waited := false
+		for {
+			var err error
+			if conn == nil {
+				conn, err = db.Conn(ctx)
+			}
+			var ok bool
+			if err == nil {
+				err = conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock($1)`, instanceLockID).Scan(&ok)
+			}
+			if err != nil && conn != nil {
+				conn.Close()
+				conn = nil
+			}
+			if ok {
+				break
+			}
+			if !waited {
+				log.Warn("boshqa nusxa Telegram sessiyalarini ushlab turibdi — u to'xtashi kutilmoqda")
+				waited = true
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(2 * time.Second):
+			}
+		}
+		locked = true
+		log.Info("bitta nusxa qulfi olindi — Telegram sessiyalari ulanadi")
+		close(gate)
+		t := time.NewTicker(15 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if _, err := conn.ExecContext(ctx, `SELECT 1`); err != nil && ctx.Err() == nil {
+					log.Error("bitta nusxa qulfi yo'qoldi — jarayon to'xtatiladi", "err", err)
+					onLost()
+					return
+				}
+			}
+		}
+	}()
+	return func() {
+		cancel()
+		<-done
+		if conn == nil {
+			return
+		}
+		// sql.Conn.Close ulanishni yopmaydi — pulga qaytaradi, lock esa ulanishda qoladi.
+		// Shuning uchun lock'ni aniq bo'shatamiz.
+		if locked {
+			uctx, ucancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if _, err := conn.ExecContext(uctx, `SELECT pg_advisory_unlock($1)`, instanceLockID); err != nil {
+				log.Warn("bitta nusxa qulfi bo'shatilmadi", "err", err)
+			}
+			ucancel()
+		}
+		conn.Close()
+	}
 }
 
 // intEnv butun sonli env qiymatini o'qiydi (bo'sh → def) va oraliqni tekshiradi.

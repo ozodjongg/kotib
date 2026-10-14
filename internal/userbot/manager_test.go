@@ -3,6 +3,7 @@ package userbot
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -49,12 +50,13 @@ func TestFatalRunErrorDoesNotDeadlock(t *testing.T) {
 		m.mu.Lock()
 		_, running := m.workers[7]
 		m.mu.Unlock()
-		if acc.Status == store.StatusBroken && !running {
+		// Sessiya bekor qilingan: kutish foydasiz — "revoked" (Mini App qayta ulashni so'raydi).
+		if acc.Status == store.StatusRevoked && !running {
 			break
 		}
 		select {
 		case <-deadline:
-			t.Fatalf("worker to'xtamadi yoki holat broken emas: %s running=%v", acc.Status, running)
+			t.Fatalf("worker to'xtamadi yoki holat revoked emas: %s running=%v", acc.Status, running)
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
@@ -102,4 +104,71 @@ func waitStep(t *testing.T, m *Manager, owner int64, step string) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+}
+
+func waitStatus(t *testing.T, st *store.Memory, owner int64, want store.AccountStatus) store.Account {
+	t.Helper()
+	deadline := time.After(3 * time.Second)
+	for {
+		acc, _ := st.GetAccount(context.Background(), owner)
+		if acc.Status == want {
+			return acc
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("holat %s emas: %s", want, acc.Status)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+func TestFatalReasons(t *testing.T) {
+	// AUTH_KEY_DUPLICATED — sessiya o'lik: qayta ulash kerak.
+	m, st := newManager(&fakeConn{runErr: &FatalError{Reason: "AUTH_KEY_DUPLICATED"}})
+	var notes []string
+	m.Notify = func(_ context.Context, _ int64, text string, _ bool) { notes = append(notes, text) }
+	_ = st.UpsertAccount(context.Background(), store.Account{OwnerID: 7, Status: store.StatusActive})
+	m.startWorker(7)
+	acc := waitStatus(t, st, 7, store.StatusRevoked)
+	if !strings.Contains(acc.StatusNote, "AUTH_KEY_DUPLICATED") {
+		t.Fatalf("izoh: %q", acc.StatusNote)
+	}
+	// PEER_FLOOD — cheklov: kutish mumkin, "broken".
+	m2, st2 := newManager(&fakeConn{runErr: &FatalError{Reason: "PEER_FLOOD"}})
+	_ = st2.UpsertAccount(context.Background(), store.Account{OwnerID: 7, Status: store.StatusActive})
+	m2.startWorker(7)
+	waitStatus(t, st2, 7, store.StatusBroken)
+}
+
+// countConn — Run chaqiruvlarini sanaydi va ctx tugaguncha ishlaydi.
+type countConn struct {
+	fakeConn
+	runs chan struct{}
+}
+
+func (c *countConn) Run(ctx context.Context, _ int64, _ func(Telegram), _ func(Incoming)) error {
+	c.runs <- struct{}{}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestGateDelaysTelegramConnect(t *testing.T) {
+	c := &countConn{runs: make(chan struct{}, 4)}
+	m, st := newManager(c)
+	gate := make(chan struct{})
+	m.Gate = gate
+	_ = st.UpsertAccount(context.Background(), store.Account{OwnerID: 7, Status: store.StatusActive})
+	m.startWorker(7)
+	select {
+	case <-c.runs:
+		t.Fatal("gate ochilmasdan Telegram'ga ulanmasligi kerak")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(gate)
+	select {
+	case <-c.runs:
+	case <-time.After(2 * time.Second):
+		t.Fatal("gate ochilgach ulanishi kerak")
+	}
+	m.Shutdown()
 }

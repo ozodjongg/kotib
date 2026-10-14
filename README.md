@@ -61,7 +61,11 @@ Repoda `railway.json` bor: Dockerfile bilan yig'iladi, healthcheck `/healthz`, *
 3. Settings → Networking → Generate Domain; domenni `MINIAPP_URL`ga qo'ying va @BotFather → Menu Button'ga ulang.
 
 **Replica sonini oshirmang**: ikki nusxa bitta Telegram sessiyasiga ulanib, ban xavfini oshiradi
-(login holati ham xotirada). Railway IP'lari umumiy — Telegram login'ni bloklasa, `TG_PROXY` qo'shing.
+(login holati ham xotirada). Deploy paytida eski va yangi nusxa bir necha soniya birga ishlaydi —
+bitta sessiyaga ikki joydan ulanilsa Telegram `AUTH_KEY_DUPLICATED` bilan sessiyani butunlay bekor qiladi.
+Buning oldini olish uchun ilova Postgres advisory lock'ini ushlaydi: yangi nusxa HTTP'ni darhol ochadi
+(healthcheck o'tadi), lekin Telegram sessiyalariga faqat eski nusxa to'liq to'xtagach ulanadi.
+Sessiya bekor qilinsa, akkaunt "uzilgan" holatga o'tadi va Mini App qayta ulashni so'raydi. Railway IP'lari umumiy — Telegram login'ni bloklasa, `TG_PROXY` qo'shing.
 
 ## Brending
 

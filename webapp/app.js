@@ -324,7 +324,9 @@ function renderConnect() {
       h('button', { class: 'btn block', onclick: busy(async () => { await refreshMe(); state.tab = 'home'; render(); }) }, 'Davom etish')];
   } else {
     const phone = h('input', { type: 'tel', placeholder: '+998 90 123 45 67', autocomplete: 'tel' });
-    body = [h('h3', {}, 'Telegram akkauntini ulang'),
+    const dead = state.me.status === 'revoked' && state.me.note;
+    body = [h('h3', {}, dead ? 'Akkauntni qayta ulang' : 'Telegram akkauntini ulang'),
+      dead ? h('div', { class: 'card accent' }, h('p', { class: 'small' }, state.me.note + '. Bu sessiya endi ishlamaydi — qayta kiring. Qoidalar va sozlamalaringiz saqlangan.')) : null,
       h('p', { class: 'muted' }, 'Kotib ishlashi uchun telefon raqamingiz bilan kiring. Kod faqat shu oynaga kiritiladi.'), phone,
       h('button', { class: 'btn block', onclick: busy(async () => {
         await api('POST', '/login/phone', { phone: phone.value });
