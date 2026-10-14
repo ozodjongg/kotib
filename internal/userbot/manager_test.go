@@ -25,6 +25,14 @@ func (f *fakeConn) Login(ctx context.Context, _ int64, _ string, io LoginIO) err
 	return ctx.Err()
 }
 
+func (f *fakeConn) LoginQR(ctx context.Context, _ int64, io LoginIO) error {
+	if f.loginFn != nil {
+		return f.loginFn(ctx, io)
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
 func (f *fakeConn) Run(ctx context.Context, _ int64, _ func(Telegram), _ func(Incoming)) error {
 	return f.runErr
 }
@@ -171,4 +179,66 @@ func TestGateDelaysTelegramConnect(t *testing.T) {
 		t.Fatal("gate ochilgach ulanishi kerak")
 	}
 	m.Shutdown()
+}
+
+func waitLogin(t *testing.T, m *Manager, owner int64, step string) miniapp.LoginState {
+	t.Helper()
+	deadline := time.After(3 * time.Second)
+	for {
+		st := m.LoginState(owner)
+		if st.Step == step {
+			return st
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("login holati %q emas: %+v", step, st)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+func TestQRLoginFlow(t *testing.T) {
+	accept := make(chan struct{})
+	conn := &fakeConn{loginFn: func(ctx context.Context, io LoginIO) error {
+		io.QR("tg://login?token=abc", "data:image/png;base64,AA", time.Now().Add(30*time.Second))
+		select {
+		case <-accept:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}}
+	m, st := newManager(conn)
+	ctx := context.Background()
+	now := time.Now()
+	_ = st.UpsertAccount(ctx, store.Account{OwnerID: 7, Status: store.StatusRevoked, ConsentAt: &now})
+	if err := m.BeginQRLogin(ctx, 7); err != nil {
+		t.Fatal(err)
+	}
+	qs := waitLogin(t, m, 7, "wait_qr")
+	if qs.QRURL != "tg://login?token=abc" || qs.QRImage == "" || qs.QRExpires == nil {
+		t.Fatalf("qr holati: %+v", qs)
+	}
+	close(accept)
+	waitLogin(t, m, 7, "done")
+	if acc, _ := st.GetAccount(ctx, 7); acc.Status != store.StatusActive {
+		t.Fatalf("akkaunt faol bo'lishi kerak: %s", acc.Status)
+	}
+	m.Shutdown()
+}
+
+func TestQRLoginWrongAccount(t *testing.T) {
+	m, st := newManager(&fakeConn{loginFn: func(context.Context, LoginIO) error { return ErrWrongAccount }})
+	ctx := context.Background()
+	_ = st.UpsertAccount(ctx, store.Account{OwnerID: 7, Status: store.StatusRevoked})
+	if err := m.BeginQRLogin(ctx, 7); err != nil {
+		t.Fatal(err)
+	}
+	es := waitLogin(t, m, 7, "error")
+	if !strings.Contains(es.Error, "Boshqa Telegram akkaunt") {
+		t.Fatalf("xato matni: %q", es.Error)
+	}
+	if acc, _ := st.GetAccount(ctx, 7); acc.Status == store.StatusActive {
+		t.Fatal("boshqa akkaunt bilan faollashmasligi kerak")
+	}
 }

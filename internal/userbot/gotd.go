@@ -5,8 +5,10 @@ package userbot
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"image/png"
 	"io"
 	"net"
 	"net/url"
@@ -18,6 +20,7 @@ import (
 	"github.com/gotd/td/session"
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/auth"
+	"github.com/gotd/td/telegram/auth/qrlogin"
 	"github.com/gotd/td/telegram/dcs"
 	"github.com/gotd/td/telegram/downloader"
 	"github.com/gotd/td/telegram/message"
@@ -25,6 +28,7 @@ import (
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
 	"golang.org/x/net/proxy"
+	"rsc.io/qr"
 
 	"github.com/ozodjongg/secretar_ai_agent/internal/config"
 	"github.com/ozodjongg/secretar_ai_agent/internal/llm"
@@ -167,9 +171,67 @@ func (c *GotdConnector) Login(ctx context.Context, owner int64, phone string, io
 	}
 	return client.Run(ctx, func(ctx context.Context) error {
 		flow := auth.NewFlow(loginAuth{phone: phone, io: io}, auth.SendCodeOptions{})
-		return client.Auth().IfNecessary(ctx, flow)
+		if err := client.Auth().IfNecessary(ctx, flow); err != nil {
+			return err
+		}
 		// 2FA paroli faqat Password() ichida ishlatiladi va hech qayerda saqlanmaydi.
+		return ensureOwner(ctx, client, owner)
 	})
+}
+
+// LoginQR — kodsiz kirish (Telegram Desktop'dagi QR kabi): server login token oladi, mijoz uni
+// o'z Telegram ilovasida tasdiqlaydi (tg://login havola yoki boshqa qurilmadan QR). SMS/kod
+// yetkazilmasa ham ishlaydi. Token ~30 soniyada yangilanadi — har safar io.QR chaqiriladi.
+func (c *GotdConnector) LoginQR(ctx context.Context, owner int64, io LoginIO) error {
+	d := tg.NewUpdateDispatcher()
+	loggedIn := qrlogin.OnLoginToken(d)
+	client, err := c.newClient(owner, d)
+	if err != nil {
+		return err
+	}
+	return client.Run(ctx, func(ctx context.Context) error {
+		if st, err := client.Auth().Status(ctx); err == nil && st.Authorized {
+			return ensureOwner(ctx, client, owner) // eski sessiya hali tirik
+		}
+		_, err := client.QR().Auth(ctx, loggedIn, func(ctx context.Context, t qrlogin.Token) error {
+			img, err := t.Image(qr.M)
+			if err != nil {
+				return err
+			}
+			var buf bytes.Buffer
+			if err := png.Encode(&buf, img); err != nil {
+				return err
+			}
+			io.QR(t.URL(), "data:image/png;base64,"+base64.StdEncoding.EncodeToString(buf.Bytes()), t.Expires())
+			return nil
+		})
+		if tgerr.Is(err, "SESSION_PASSWORD_NEEDED") {
+			// Ikki bosqichli parol: token tasdiqlangan, endi parol kerak (saqlanmaydi).
+			pw, perr := io.Password(ctx)
+			if perr != nil {
+				return perr
+			}
+			_, err = client.Auth().Password(ctx, pw)
+		}
+		if err != nil {
+			return err
+		}
+		return ensureOwner(ctx, client, owner)
+	})
+}
+
+// ensureOwner — tasdiqlangan akkaunt Mini App egasining o'zi ekanini tekshiradi. Aks holda
+// (masalan, havolani boshqa odam tasdiqlagan) sessiya darhol uziladi.
+func ensureOwner(ctx context.Context, client *telegram.Client, owner int64) error {
+	self, err := client.Self(ctx)
+	if err != nil {
+		return err
+	}
+	if self.ID != owner {
+		_, _ = client.API().AuthLogOut(ctx)
+		return ErrWrongAccount
+	}
+	return nil
 }
 
 // ---- Run ----

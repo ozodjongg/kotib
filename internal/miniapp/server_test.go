@@ -21,6 +21,7 @@ type fakeCtl struct {
 }
 
 func (f *fakeCtl) BeginLogin(context.Context, int64, string) error { return f.loginErr }
+func (f *fakeCtl) BeginQRLogin(context.Context, int64) error       { return f.loginErr }
 func (f *fakeCtl) SubmitCode(int64, string) error                  { return nil }
 func (f *fakeCtl) SubmitPassword(int64, string) error              { return nil }
 func (f *fakeCtl) LoginState(int64) LoginState                     { return LoginState{Step: "idle"} }
