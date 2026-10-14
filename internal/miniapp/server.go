@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html/template"
 	"io"
 	"log/slog"
@@ -21,6 +22,8 @@ import (
 
 	"github.com/ozodjongg/secretar_ai_agent/internal/billing"
 	"github.com/ozodjongg/secretar_ai_agent/internal/config"
+	"github.com/ozodjongg/secretar_ai_agent/internal/google"
+	"github.com/ozodjongg/secretar_ai_agent/internal/ics"
 	"github.com/ozodjongg/secretar_ai_agent/internal/ratelimit"
 	"github.com/ozodjongg/secretar_ai_agent/internal/store"
 )
@@ -83,6 +86,8 @@ type Server struct {
 	Ctl      Controller
 	Billing  Billing
 	Google   Google
+	// ICS — Google'siz taqvim havolalari (imzo tekshiruvi); nil → o'chiq.
+	ICS *ics.Signer
 	// BotUsername — deep link'lar uchun (t.me/<bot>?start=pause); bo'sh bo'lishi mumkin.
 	BotUsername string
 	// PublicURL — tashqi manzil (https://domen), avtomatlashtirish havolasi uchun.
@@ -131,6 +136,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/google/connect", s.auth(s.handleGoogleConnect))
 	mux.HandleFunc("POST /api/google/disconnect", s.auth(s.handleGoogleDisconnect))
 	mux.HandleFunc("GET /oauth/google/callback", s.handleGoogleCallback)
+	mux.HandleFunc("GET /ics/{owner}/{id}/{sig}", s.handleICS)
 	mux.HandleFunc("POST /api/hook", s.auth(s.handleHookCreate))
 	mux.HandleFunc("DELETE /api/hook", s.auth(s.handleHookDelete))
 	mux.HandleFunc("GET /hook/{token}", s.handleHook)
@@ -906,4 +912,45 @@ func (s *Server) hookFail(w http.ResponseWriter) {
 		return
 	}
 	httpErr(w, http.StatusNotFound, "havola yaroqsiz")
+}
+
+// handleICS — egasi tasdiqlagan uchrashuvning .ics fayli (imzolangan havola, 7 kun amal qiladi:
+// amallar shundan keyin o'chiriladi). Telefon taqvimi faylni ochib "qo'shish"ni taklif qiladi.
+func (s *Server) handleICS(w http.ResponseWriter, r *http.Request) {
+	if s.ICS == nil {
+		http.NotFound(w, r)
+		return
+	}
+	owner, id, ok := s.ICS.Verify(r.PathValue("owner"), r.PathValue("id"), r.PathValue("sig"))
+	if !ok {
+		s.hookFail(w)
+		return
+	}
+	a, err := s.Store.GetAction(r.Context(), owner, id)
+	if err != nil || a.Kind != store.ActionEvent || a.Status != store.ActionDone {
+		httpErr(w, 404, "topilmadi")
+		return
+	}
+	var p google.EventPayload
+	if err := json.Unmarshal(a.Payload, &p); err != nil {
+		httpErr(w, 500, "xatolik")
+		return
+	}
+	start, err := time.Parse(time.RFC3339, p.Start)
+	if err != nil {
+		httpErr(w, 500, "xatolik")
+		return
+	}
+	note := "Telegram kotibi taklif qildi, siz tasdiqladingiz."
+	if p.With != "" {
+		note = "Kim bilan: " + p.With + ". " + note
+	}
+	host := strings.TrimPrefix(strings.TrimPrefix(s.PublicURL, "https://"), "http://")
+	body := ics.Build(ics.Event{
+		UID: fmt.Sprintf("kotib-%d-%d@%s", owner, id, host), Title: p.Title, Start: start,
+		Duration: time.Duration(p.Duration) * time.Minute, Note: note,
+	}, time.Now())
+	w.Header().Set("Content-Type", "text/calendar; charset=utf-8")
+	w.Header().Set("Content-Disposition", `inline; filename="kotib.ics"`)
+	_, _ = w.Write(body)
 }

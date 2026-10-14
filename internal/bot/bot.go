@@ -123,6 +123,13 @@ func (b *Bot) send(ctx context.Context, chatID int64, r Reply) error {
 	return b.call(ctx, "sendMessage", p, nil)
 }
 
+// Answer — tugma bosilishiga javob. Edit bo'sh bo'lsa xabar o'zgarmaydi (tugmalar qoladi);
+// aks holda tugmalar olib tashlanadi, URL berilsa o'rniga havola tugmasi qo'yiladi.
+type Answer struct {
+	Toast, Edit  string
+	URL, URLText string
+}
+
 // Button — callback tugmasi (Data ≤ 64 bayt).
 type Button struct{ Text, Data string }
 
@@ -205,9 +212,8 @@ type Handler interface {
 	// tugmaning callback_data'si (qaysi qoralama ekanini bildiradi); edit — asl xabarning
 	// yangi matni (bo'sh — o'zgarmaydi).
 	ReplyTo(ctx context.Context, from int64, data, text string) (r Reply, edit string)
-	// Callback tugma bosilganda: toast — qisqa javob, edit — xabarning yangi matni
-	// (bo'sh bo'lsa xabar o'zgarmaydi).
-	Callback(ctx context.Context, from int64, data string) (toast, edit string)
+	// Callback tugma bosilganda: qisqa javob, xabarning yangi matni va ixtiyoriy havola tugmasi.
+	Callback(ctx context.Context, from int64, data string) Answer
 }
 
 type user struct {
@@ -362,19 +368,21 @@ func (b *Bot) dispatch(ctx context.Context, u update) {
 
 func (b *Bot) callback(ctx context.Context, u update) {
 	q := u.CallbackQuery
-	var toast, edit string
+	var a Answer
 	// Faqat shaxsiy chatdagi o'z xabarimiz: from — Telegram tasdiqlagan foydalanuvchi.
 	if b.Handler != nil && len(q.Data) <= 64 && (q.Message == nil || q.Message.Chat.Type == "private") {
-		toast, edit = b.Handler.Callback(ctx, q.From.ID, q.Data)
+		a = b.Handler.Callback(ctx, q.From.ID, q.Data)
 	}
-	if err := b.call(ctx, "answerCallbackQuery", map[string]any{"callback_query_id": q.ID, "text": toast}, nil); err != nil {
+	if err := b.call(ctx, "answerCallbackQuery", map[string]any{"callback_query_id": q.ID, "text": a.Toast}, nil); err != nil {
 		b.Log.Warn("answerCallbackQuery", "err", err)
 	}
-	if edit != "" && q.Message != nil {
+	if a.Edit != "" && q.Message != nil {
 		// Tugmalar olib tashlanadi — qayta bosib bo'lmasin.
-		if err := b.call(ctx, "editMessageText", map[string]any{
-			"chat_id": q.Message.Chat.ID, "message_id": q.Message.MessageID, "text": edit,
-		}, nil); err != nil {
+		p := map[string]any{"chat_id": q.Message.Chat.ID, "message_id": q.Message.MessageID, "text": a.Edit}
+		if a.URL != "" {
+			p["reply_markup"] = map[string]any{"inline_keyboard": [][]inlineBtn{{{Text: a.URLText, URL: a.URL}}}}
+		}
+		if err := b.call(ctx, "editMessageText", p, nil); err != nil {
 			b.Log.Warn("editMessageText", "err", err)
 		}
 	}

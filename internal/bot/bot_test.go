@@ -39,7 +39,7 @@ func TestCallbackAnsweredAndEdited(t *testing.T) {
 			answers++
 		case "editMessageText":
 			edits++
-			if c["message_id"] != float64(9) || c["text"] != "yangi matn" {
+			if c["message_id"] != float64(9) || c["text"] != "yangi matn" || !strings.Contains(fmt.Sprint(c["reply_markup"]), "a.ics") {
 				t.Fatalf("edit: %v", c)
 			}
 		}
@@ -106,11 +106,11 @@ func (h *recHandler) Paid(_ context.Context, _ int64, p billing.PaymentInfo) {
 	defer h.mu.Unlock()
 	h.paid = append(h.paid, p)
 }
-func (h *recHandler) Callback(_ context.Context, from int64, data string) (string, string) {
+func (h *recHandler) Callback(_ context.Context, from int64, data string) Answer {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.callbacks = append(h.callbacks, fmt.Sprintf("%d|%s", from, data))
-	return "OK", "yangi matn"
+	return Answer{Toast: "OK", Edit: "yangi matn", URL: "https://x.example/a.ics", URLText: "Taqvim"}
 }
 
 func (h *recHandler) ReplyTo(_ context.Context, from int64, data, text string) (Reply, string) {

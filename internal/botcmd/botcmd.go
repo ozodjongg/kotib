@@ -13,6 +13,7 @@ import (
 	"github.com/ozodjongg/secretar_ai_agent/internal/billing"
 	"github.com/ozodjongg/secretar_ai_agent/internal/bot"
 	"github.com/ozodjongg/secretar_ai_agent/internal/google"
+	"github.com/ozodjongg/secretar_ai_agent/internal/ics"
 	"github.com/ozodjongg/secretar_ai_agent/internal/store"
 )
 
@@ -35,10 +36,13 @@ type Handler struct {
 	Loc     *time.Location // sanalarni ko'rsatish uchun (default Asia/Tashkent)
 	// Google — tasdiqlangan amallarni bajarish (google.Client); nil → o'chiq.
 	Google Executor
+	// ICS — Google ulanmagan mijozlar uchun .ics havolalari; nil → o'chiq.
+	ICS *ics.Signer
 }
 
 // Executor — egasi tasdiqlagan amalni Google'da bajaradi.
 type Executor interface {
+	Connected(ctx context.Context, owner int64) bool
 	Execute(ctx context.Context, a store.Action) (string, error)
 }
 
@@ -272,46 +276,54 @@ func ActionButtons(id int64) []bot.Button {
 
 // Callback — amalni tasdiqlash/rad etish tugmalari. Amal faqat egasiga tegishli bo'lsa
 // topiladi; holat atomar o'zgaradi — ikki marta bosish ikki tadbir yaratmaydi.
-func (h *Handler) Callback(ctx context.Context, from int64, data string) (string, string) {
+func (h *Handler) Callback(ctx context.Context, from int64, data string) bot.Answer {
 	if strings.HasPrefix(data, "d:") {
-		return h.draftCallback(ctx, from, data)
+		toast, edit := h.draftCallback(ctx, from, data)
+		return bot.Answer{Toast: toast, Edit: edit}
 	}
 	rest, ok := strings.CutPrefix(data, "act:")
 	if !ok {
-		return "", ""
+		return bot.Answer{}
 	}
 	sid, ans, _ := strings.Cut(rest, ":")
 	id, err := strconv.ParseInt(sid, 10, 64)
 	if err != nil || (ans != "y" && ans != "n") {
-		return "", ""
+		return bot.Answer{}
 	}
 	a, err := h.Store.GetAction(ctx, from, id)
 	if err != nil {
-		return "Topilmadi yoki eskirgan", ""
+		return bot.Answer{Toast: "Topilmadi yoki eskirgan"}
 	}
 	summary, _, _ := strings.Cut(google.Describe(a), "\n\n")
 	if ans == "n" {
 		if err := h.Store.SetActionStatus(ctx, from, id, store.ActionPending, store.ActionRejected); err != nil {
-			return "Allaqachon hal qilingan", ""
+			return bot.Answer{Toast: "Allaqachon hal qilingan"}
 		}
 		h.Store.Audit(ctx, from, "action_rejected", string(a.Kind))
-		return "Bekor qilindi", summary + "\n\n✖️ Qo'shilmadi"
+		return bot.Answer{Toast: "Bekor qilindi", Edit: summary + "\n\n✖️ Qo'shilmadi"}
 	}
-	if h.Google == nil {
-		return "Google integratsiyasi o'chiq", ""
+	useGoogle := h.Google != nil && h.Google.Connected(ctx, from)
+	if !useGoogle && (a.Kind != store.ActionEvent || h.ICS == nil) {
+		return bot.Answer{Toast: "Google ulanmagan"}
 	}
 	if err := h.Store.SetActionStatus(ctx, from, id, store.ActionPending, store.ActionDone); err != nil {
-		return "Allaqachon hal qilingan", ""
+		return bot.Answer{Toast: "Allaqachon hal qilingan"}
+	}
+	if !useGoogle {
+		// Google'siz: imzolangan .ics havola — telefon taqvimi o'zi "qo'shish" oynasini ochadi.
+		h.Store.Audit(ctx, from, "action_done", "ics")
+		return bot.Answer{Toast: "Tayyor", Edit: summary + "\n\nTelefoningiz taqvimiga qo'shish uchun pastdagi tugmani bosing.",
+			URL: h.ICS.URL(from, id), URLText: "📅 Taqvimga qo'shish"}
 	}
 	res, err := h.Google.Execute(context.WithoutCancel(ctx), a)
 	if err != nil {
 		_ = h.Store.SetActionStatus(ctx, from, id, store.ActionDone, store.ActionFailed)
 		h.Store.Audit(ctx, from, "action_failed", string(a.Kind))
 		h.log().Warn("google execute", "owner", from, "err", err)
-		return "Xatolik", summary + "\n\n⚠️ " + google.UserMessage(err)
+		return bot.Answer{Toast: "Xatolik", Edit: summary + "\n\n⚠️ " + google.UserMessage(err)}
 	}
 	h.Store.Audit(ctx, from, "action_done", string(a.Kind))
-	return res, summary + "\n\n" + res
+	return bot.Answer{Toast: res, Edit: summary + "\n\n" + res}
 }
 
 // ---- Qoralama bot chatida ----

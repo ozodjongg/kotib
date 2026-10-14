@@ -14,7 +14,7 @@ import (
 func testAssist() *Assist {
 	loc := time.FixedZone("Asia/Tashkent", 5*3600)
 	return &Assist{
-		Now: time.Date(2026, 10, 14, 10, 30, 0, 0, loc), Loc: loc,
+		Now: time.Date(2026, 10, 14, 10, 30, 0, 0, loc), Loc: loc, Google: true,
 		Busy:        []Interval{{Start: time.Date(2026, 10, 15, 10, 0, 0, 0, time.UTC), End: time.Date(2026, 10, 15, 11, 0, 0, 0, time.UTC)}},
 		ContactName: "Aziz", ContactNote: "hamkor",
 	}

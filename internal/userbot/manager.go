@@ -49,6 +49,8 @@ type Manager struct {
 	Google Google
 	// Propose — taklif qilingan amalni egasiga tasdiqlash uchun yuborish (bot).
 	Propose func(ctx context.Context, owner, actionID int64, text string)
+	// CalendarFallback — Google'siz ham uchrashuv taklif qilish (.ics).
+	CalendarFallback bool
 	// DraftCard — qoralamani bot chatiga tugmalar bilan yuborish (bot).
 	DraftCard func(ctx context.Context, d store.Draft, contactName string) error
 
@@ -135,7 +137,7 @@ func (m *Manager) startWorker(owner int64) {
 	w.pipe = &Pipeline{
 		Owner: owner, Store: m.Store, LLM: m.LLM, Notify: m.Notify, Log: m.Log,
 		Limiter: ratelimit.NewLimiter(m.Limits), Entitled: m.Entitled, Quota: m.Quota, Google: m.Google, Propose: m.Propose,
-		DraftCard: m.DraftCard,
+		DraftCard: m.DraftCard, CalendarFallback: m.CalendarFallback,
 	}
 	w.pipe.OnFatal = func(reason string) { go m.breaker(owner, reason) }
 	m.workers[owner] = w

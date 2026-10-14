@@ -3,12 +3,14 @@ package miniapp
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ozodjongg/secretar_ai_agent/internal/config"
+	"github.com/ozodjongg/secretar_ai_agent/internal/ics"
 	"github.com/ozodjongg/secretar_ai_agent/internal/store"
 )
 
@@ -76,5 +78,36 @@ func TestHookFlow(t *testing.T) {
 	}
 	if ok, _ := st.HasHook(ctx, 777); ok {
 		t.Fatal("o'chirilishi kerak")
+	}
+}
+
+func TestICSEndpoint(t *testing.T) {
+	st := store.NewMemory()
+	ctx := context.Background()
+	_ = st.UpsertAccount(ctx, store.Account{OwnerID: 7, Status: store.StatusActive})
+	signer := &ics.Signer{Key: []byte("k"), Base: "https://kotib.example"}
+	s := &Server{BotToken: tok, Store: st, PublicURL: "https://kotib.example", ICS: signer}
+	srv := newTestServer(t, s)
+	id, _ := st.CreateAction(ctx, store.Action{OwnerID: 7, Kind: store.ActionEvent,
+		Payload: []byte(`{"title":"Aziz bilan uchrashuv","start":"2026-10-15T15:00:00+05:00","tz":"Asia/Tashkent","duration_min":30,"with":"Aziz"}`)})
+	path := strings.TrimPrefix(signer.URL(7, id), "https://kotib.example")
+
+	if code := doReq(t, srv.URL+path, "GET", ""); code != 404 {
+		t.Fatal("tasdiqlanmagan amal berilmasligi kerak")
+	}
+	_ = st.SetActionStatus(ctx, 7, id, store.ActionPending, store.ActionDone)
+	resp, err := http.Get(srv.URL + path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/calendar") ||
+		!strings.Contains(string(b), "DTSTART:20261015T100000Z") || !strings.Contains(string(b), "DTEND:20261015T103000Z") {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	bad := strings.Replace(path, "/7/", "/8/", 1)
+	if code := doReq(t, srv.URL+bad, "GET", ""); code != 404 {
+		t.Fatal("imzo boshqa egaga mos kelmasligi kerak")
 	}
 }

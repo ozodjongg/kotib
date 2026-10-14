@@ -271,7 +271,7 @@ func Describe(a store.Action) string {
 		if p.With != "" {
 			s += "\nKim bilan: " + p.With
 		}
-		return s + "\n\nGoogle Calendar'ga qo'shaymi?"
+		return s + "\n\nTaqvimga qo'shaymi?"
 	case store.ActionTask:
 		var p TaskPayload
 		if json.Unmarshal(a.Payload, &p) != nil {

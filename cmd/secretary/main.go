@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -20,6 +21,7 @@ import (
 	"github.com/ozodjongg/secretar_ai_agent/internal/botcmd"
 	"github.com/ozodjongg/secretar_ai_agent/internal/crypto"
 	"github.com/ozodjongg/secretar_ai_agent/internal/google"
+	"github.com/ozodjongg/secretar_ai_agent/internal/ics"
 	"github.com/ozodjongg/secretar_ai_agent/internal/llm"
 	"github.com/ozodjongg/secretar_ai_agent/internal/miniapp"
 	"github.com/ozodjongg/secretar_ai_agent/internal/store"
@@ -147,6 +149,16 @@ func run(log *slog.Logger) error {
 		Entitled: bill.Entitled,
 		Quota:    bill.UseQuota,
 	}
+	// Tasdiq tugmali takliflar (uchrashuv/vazifa) — Google bo'lsa ham, bo'lmasa ham (.ics).
+	mgr.Propose = func(ctx context.Context, owner, id int64, text string) {
+		if err := ctrlBot.Ask(ctx, owner, text, botcmd.ActionButtons(id)); err != nil {
+			log.Warn("amal taklifi yuborilmadi", "owner", owner, "err", err)
+		}
+	}
+	mgr.CalendarFallback = true
+	icsKey := sha256.Sum256([]byte("kotib-ics:" + env("MASTER_KEY")))
+	icsSigner := &ics.Signer{Key: icsKey[:], Base: publicURL(env("MINIAPP_URL"))}
+
 	mgr.DraftCard = func(ctx context.Context, d store.Draft, name string) error {
 		text, btns := botcmd.DraftCard(d, name)
 		return ctrlBot.Ask(ctx, d.OwnerID, text, btns)
@@ -160,16 +172,11 @@ func run(log *slog.Logger) error {
 		}
 		// Interfeys maydonlariga faqat yoqilganda qo'yamiz (typed nil != nil).
 		mgr.Google = gcli
-		mgr.Propose = func(ctx context.Context, owner, id int64, text string) {
-			if err := ctrlBot.Ask(ctx, owner, text, botcmd.ActionButtons(id)); err != nil {
-				log.Warn("amal taklifi yuborilmadi", "owner", owner, "err", err)
-			}
-		}
 		log.Info("Google integratsiyasi yoqilgan", "redirect", gcli.RedirectURL)
 	}
 
 	ctrlBot.Handler = &botcmd.Handler{
-		Store: st, Billing: bill, Ctl: mgr, Admins: admins, Log: log,
+		Store: st, Billing: bill, Ctl: mgr, Admins: admins, Log: log, ICS: icsSigner,
 		Notify: func(ctx context.Context, owner int64, text string, openApp bool) { notify(ctx, owner, text, openApp) },
 	}
 
@@ -178,7 +185,7 @@ func run(log *slog.Logger) error {
 		staticDir = "./webapp"
 	}
 	api := &miniapp.Server{BotToken: env("BOT_TOKEN"), Store: st, Ctl: mgr, Log: log, StaticDir: staticDir,
-		PublicURL: publicURL(env("MINIAPP_URL"))}
+		PublicURL: publicURL(env("MINIAPP_URL")), ICS: icsSigner}
 	if gcli != nil {
 		ctrlBot.Handler.(*botcmd.Handler).Google = gcli
 		api.Google = gcli

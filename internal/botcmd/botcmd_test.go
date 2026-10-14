@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ozodjongg/secretar_ai_agent/internal/billing"
+	"github.com/ozodjongg/secretar_ai_agent/internal/ics"
 	"github.com/ozodjongg/secretar_ai_agent/internal/store"
 )
 
@@ -115,9 +116,12 @@ func TestSubscribeAndPaid(t *testing.T) {
 }
 
 type fakeExec struct {
-	n   int
-	err error
+	n            int
+	err          error
+	disconnected bool
 }
+
+func (f *fakeExec) Connected(context.Context, int64) bool { return !f.disconnected }
 
 func (f *fakeExec) Execute(context.Context, store.Action) (string, error) {
 	f.n++
@@ -133,32 +137,32 @@ func TestActionCallback(t *testing.T) {
 	id, _ := st.CreateAction(ctx, store.Action{OwnerID: 1, Kind: store.ActionEvent, Payload: payload})
 	data := ActionButtons(id)[0].Data
 
-	if toast, _ := h.Callback(ctx, 2, data); !strings.Contains(toast, "Topilmadi") || ex.n != 0 {
+	if a := h.Callback(ctx, 2, data); !strings.Contains(a.Toast, "Topilmadi") || ex.n != 0 {
 		t.Fatal("boshqa foydalanuvchi bosa olmasligi kerak")
 	}
-	_, edit := h.Callback(ctx, 1, data)
+	edit := h.Callback(ctx, 1, data).Edit
 	if ex.n != 1 || !strings.Contains(edit, "Aziz bilan uchrashuv") || !strings.Contains(edit, "qo'shildi") || strings.Contains(edit, "qo'shaymi") {
 		t.Fatalf("n=%d edit=%q", ex.n, edit)
 	}
-	if toast, _ := h.Callback(ctx, 1, data); !strings.Contains(toast, "Allaqachon") || ex.n != 1 {
+	if a := h.Callback(ctx, 1, data); !strings.Contains(a.Toast, "Allaqachon") || ex.n != 1 {
 		t.Fatal("ikki marta bajarilmasligi kerak")
 	}
 
 	id2, _ := st.CreateAction(ctx, store.Action{OwnerID: 1, Kind: store.ActionEvent, Payload: payload})
-	if _, edit := h.Callback(ctx, 1, ActionButtons(id2)[1].Data); !strings.Contains(edit, "Qo'shilmadi") || ex.n != 1 {
+	if edit := h.Callback(ctx, 1, ActionButtons(id2)[1].Data).Edit; !strings.Contains(edit, "Qo'shilmadi") || ex.n != 1 {
 		t.Fatalf("rad etish: %q", edit)
 	}
 
 	ex.err = errors.New("x")
 	id3, _ := st.CreateAction(ctx, store.Action{OwnerID: 1, Kind: store.ActionEvent, Payload: payload})
-	if _, edit := h.Callback(ctx, 1, ActionButtons(id3)[0].Data); !strings.Contains(edit, "⚠️") {
+	if edit := h.Callback(ctx, 1, ActionButtons(id3)[0].Data).Edit; !strings.Contains(edit, "⚠️") {
 		t.Fatalf("xato: %q", edit)
 	}
 	if a, _ := st.GetAction(ctx, 1, id3); a.Status != store.ActionFailed {
 		t.Fatalf("holat: %s", a.Status)
 	}
 	for _, bad := range []string{"act:x:y", "act:1:z", "boshqa"} {
-		if toast, edit := h.Callback(ctx, 1, bad); toast != "" || edit != "" {
+		if a := h.Callback(ctx, 1, bad); a.Toast != "" || a.Edit != "" {
 			t.Fatalf("%q qabul qilinmasligi kerak", bad)
 		}
 	}
@@ -177,13 +181,13 @@ func TestDraftInBot(t *testing.T) {
 	if !strings.Contains(text, "Aziz") || !strings.Contains(text, "qalaysan?") || !strings.Contains(text, "Yaxshi, rahmat!") || len(btns) != 2 {
 		t.Fatalf("karta: %q", text)
 	}
-	if toast, _ := h.Callback(ctx, 2, btns[0].Data); toast != "Topilmadi" || len(ctl.sent) != 0 {
+	if a := h.Callback(ctx, 2, btns[0].Data); a.Toast != "Topilmadi" || len(ctl.sent) != 0 {
 		t.Fatal("boshqa foydalanuvchi yubora olmasligi kerak")
 	}
-	if _, edit := h.Callback(ctx, 1, btns[0].Data); !strings.Contains(edit, "Yuborildi") || len(ctl.sent) != 1 {
+	if edit := h.Callback(ctx, 1, btns[0].Data).Edit; !strings.Contains(edit, "Yuborildi") || len(ctl.sent) != 1 {
 		t.Fatalf("yuborish: %q", edit)
 	}
-	if toast, _ := h.Callback(ctx, 1, btns[0].Data); !strings.Contains(toast, "Allaqachon") || len(ctl.sent) != 1 {
+	if a := h.Callback(ctx, 1, btns[0].Data); !strings.Contains(a.Toast, "Allaqachon") || len(ctl.sent) != 1 {
 		t.Fatal("ikki marta yuborilmasligi kerak")
 	}
 
@@ -203,7 +207,7 @@ func TestDraftInBot(t *testing.T) {
 	}
 	d = mk()
 	_, btns = DraftCard(d, "")
-	if _, edit := h.Callback(ctx, 1, btns[1].Data); !strings.Contains(edit, "Rad etildi") {
+	if edit := h.Callback(ctx, 1, btns[1].Data).Edit; !strings.Contains(edit, "Rad etildi") {
 		t.Fatal("rad etish")
 	}
 	if got, _ := st.GetDraft(ctx, 1, d.ID); got.Status != store.DraftRejected {
@@ -218,5 +222,28 @@ func TestStartDeepLinks(t *testing.T) {
 	h.Command(ctx, 1, "start", "resume")
 	if ctl.paused != 1 || ctl.resumed != 1 {
 		t.Fatalf("paused=%d resumed=%d", ctl.paused, ctl.resumed)
+	}
+}
+
+func TestActionICSWithoutGoogle(t *testing.T) {
+	h, st, _, _ := setup(t)
+	ctx := context.Background()
+	h.Google = &fakeExec{disconnected: true}
+	payload := []byte(`{"title":"Uchrashuv","start":"2026-10-15T15:00:00+05:00","tz":"Asia/Tashkent","duration_min":60}`)
+	id, _ := st.CreateAction(ctx, store.Action{OwnerID: 1, Kind: store.ActionEvent, Payload: payload})
+	if a := h.Callback(ctx, 1, ActionButtons(id)[0].Data); a.Toast != "Google ulanmagan" {
+		t.Fatalf("ICS'siz: %+v", a)
+	}
+	h.ICS = &ics.Signer{Key: []byte("k"), Base: "https://kotib.example"}
+	a := h.Callback(ctx, 1, ActionButtons(id)[0].Data)
+	if !strings.HasPrefix(a.URL, "https://kotib.example/ics/1/") || !strings.Contains(a.Edit, "Uchrashuv") {
+		t.Fatalf("ics: %+v", a)
+	}
+	if got, _ := st.GetAction(ctx, 1, id); got.Status != store.ActionDone {
+		t.Fatal(got.Status)
+	}
+	tid, _ := st.CreateAction(ctx, store.Action{OwnerID: 1, Kind: store.ActionTask, Payload: []byte(`{"title":"t"}`)})
+	if a := h.Callback(ctx, 1, ActionButtons(tid)[0].Data); a.URL != "" || a.Toast != "Google ulanmagan" {
+		t.Fatal("vazifa Google'siz bajarilmaydi")
 	}
 }

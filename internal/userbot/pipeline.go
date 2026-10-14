@@ -91,6 +91,9 @@ type Pipeline struct {
 	Google Google
 	// Propose — kotib taklif qilgan amalni egasiga tasdiqlash uchun yuboradi (bot tugmalari).
 	Propose func(ctx context.Context, owner, actionID int64, text string)
+	// CalendarFallback — Google ulanmagan mijozlarga ham uchrashuv taklif qilinadi
+	// (tasdiqlansa .ics havola). false → takliflar faqat Google bilan.
+	CalendarFallback bool
 	// DraftCard — qoralamani bot chatiga tugmalar bilan yuboradi (Settings.DraftsInBot).
 	DraftCard func(ctx context.Context, d store.Draft, contactName string) error
 	Debounce  time.Duration // ketma-ket xabarlarni birlashtirish oynasi (default 4s)
@@ -279,8 +282,9 @@ func (p *Pipeline) Handle(ctx context.Context, in Incoming) {
 		History: hist, Incoming: in.Text, Away: st.Away,
 	}
 	var resp llm.Response
-	if asst, ok := p.LLM.(llm.Assistant); ok && p.Google != nil && p.Google.Connected(ctx, p.Owner) {
-		req.Assist = p.assistContext(lctx, &st, in)
+	connected := p.Google != nil && p.Google.Connected(ctx, p.Owner)
+	if asst, ok := p.LLM.(llm.Assistant); ok && p.Propose != nil && !st.NoSuggest && (connected || p.CalendarFallback) {
+		req.Assist = p.assistContext(lctx, &st, in, connected)
 		resp, err = asst.Assist(lctx, req)
 	} else {
 		resp.Text, err = p.LLM.Reply(lctx, req)
@@ -427,12 +431,15 @@ func (p *Pipeline) notifyOnce(ctx context.Context, key string, every time.Durati
 
 // assistContext Google'dan vaqt, band vaqtlar va kontakt eslatmasini yig'adi. Google
 // xatolari javobni to'xtatmaydi — kontekstsiz davom etamiz.
-func (p *Pipeline) assistContext(ctx context.Context, st *config.Settings, in Incoming) *llm.Assist {
-	ctx, cancel := context.WithTimeout(ctx, googleTimeout)
-	defer cancel()
+func (p *Pipeline) assistContext(ctx context.Context, st *config.Settings, in Incoming, connected bool) *llm.Assist {
 	loc := st.Location()
 	now := p.Now().In(loc)
-	a := &llm.Assist{Now: now, Loc: loc}
+	a := &llm.Assist{Now: now, Loc: loc, Google: connected}
+	if !connected {
+		return a
+	}
+	ctx, cancel := context.WithTimeout(ctx, googleTimeout)
+	defer cancel()
 	if busy, err := p.Google.Busy(ctx, p.Owner, now, now.Add(busyHorizon)); err == nil {
 		a.Busy = busy
 	} else {
@@ -463,8 +470,8 @@ func (p *Pipeline) propose(ctx context.Context, in Incoming, a *llm.Assist, resp
 	if resp.Event != nil && !titleOK(resp.Event.Title) {
 		resp.Event = nil
 	}
-	if resp.Task != nil && !titleOK(resp.Task.Title) {
-		resp.Task = nil
+	if resp.Task != nil && (!a.Google || !titleOK(resp.Task.Title)) {
+		resp.Task = nil // vazifalar faqat Google Tasks'ga yoziladi
 	}
 	if resp.Event != nil {
 		if b, err := google.NewEventPayload(*resp.Event, with); err == nil {

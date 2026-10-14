@@ -333,6 +333,36 @@ func TestGoogleAssistProposesActions(t *testing.T) {
 	}
 }
 
+func TestCalendarFallbackWithoutGoogle(t *testing.T) {
+	e := newEnv(t, nil)
+	_ = e.st.UpsertAccount(context.Background(), store.Account{OwnerID: owner, Status: store.StatusActive})
+	loc, _ := time.LoadLocation("Asia/Tashkent")
+	fa := &fakeAssistant{resp: llm.Response{
+		Text:  "Maqul",
+		Event: &llm.Event{Title: "Uchrashuv", Start: time.Date(2026, 10, 14, 15, 0, 0, 0, loc), Duration: time.Hour},
+		Task:  &llm.Task{Title: "Vazifa"},
+	}}
+	e.p.LLM, e.p.Google, e.p.CalendarFallback = fa, &fakeGoogle{connected: false}, true
+	var proposed []string
+	e.p.Propose = func(_ context.Context, _, _ int64, text string) { proposed = append(proposed, text) }
+	e.p.Handle(context.Background(), in("ertaga 15:00?", true))
+	if fa.assists != 1 || fa.last.Assist.Google || len(fa.last.Assist.Busy) != 0 {
+		t.Fatalf("assist: %d %+v", fa.assists, fa.last.Assist)
+	}
+	if len(proposed) != 1 || !strings.Contains(proposed[0], "Uchrashuv") {
+		t.Fatalf("faqat uchrashuv taklif qilinishi kerak: %q", proposed)
+	}
+	// Sozlamada o'chirilsa — oddiy javob.
+	e2 := newEnv(t, func(s *config.Settings) { s.NoSuggest = true })
+	fa2 := &fakeAssistant{fakeLLM: fakeLLM{reply: "x"}}
+	e2.p.LLM, e2.p.CalendarFallback = fa2, true
+	e2.p.Propose = func(context.Context, int64, int64, string) {}
+	e2.p.Handle(context.Background(), in("salom", true))
+	if fa2.assists != 0 || fa2.calls != 1 {
+		t.Fatal("takliflar o'chiq bo'lsa Assist chaqirilmasligi kerak")
+	}
+}
+
 func TestGoogleNotConnectedUsesPlainReply(t *testing.T) {
 	e := newEnv(t, nil)
 	fa := &fakeAssistant{fakeLLM: fakeLLM{reply: "Salom"}}
