@@ -8,6 +8,7 @@ require (
 	github.com/gotd/td v0.162.0
 	github.com/jackc/pgx/v5 v5.11.0
 	golang.org/x/net v0.61.0
+	rsc.io/qr v0.2.0
 )
 
 require (
@@ -51,5 +52,4 @@ require (
 	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/tools v0.51.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
-	rsc.io/qr v0.2.0 // indirect
 )

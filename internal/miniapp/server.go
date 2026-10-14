@@ -43,6 +43,10 @@ type LoginState struct {
 	Via string `json:"via,omitempty"`
 	// Hint — qo'shimcha: email shabloni (a***@gmail.com) yoki fragment havolasi.
 	Hint string `json:"hint,omitempty"`
+	// QR orqali kirish (wait_qr): tg://login havolasi, QR rasm (data:image/png) va muddati.
+	QRURL     string     `json:"qr_url,omitempty"`
+	QRImage   string     `json:"qr_image,omitempty"`
+	QRExpires *time.Time `json:"qr_expires,omitempty"`
 }
 
 // ContactInfo — kontakt tanlash ro'yxati uchun (faqat egasiga ko'rsatiladi).
@@ -54,6 +58,8 @@ type ContactInfo struct {
 // Controller — Mini App userbot menejeriga murojaat qiladigan interfeys.
 type Controller interface {
 	BeginLogin(ctx context.Context, owner int64, phone string) error
+	// BeginQRLogin kodsiz kirish: Telegram ilovasida tasdiqlanadigan token (QR / tg://login havola).
+	BeginQRLogin(ctx context.Context, owner int64) error
 	SubmitCode(owner int64, code string) error
 	SubmitPassword(owner int64, password string) error
 	LoginState(owner int64) LoginState
@@ -122,6 +128,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/settings", s.auth(s.handleGetSettings))
 	mux.HandleFunc("PUT /api/settings", s.auth(s.handlePutSettings))
 	mux.HandleFunc("POST /api/login/phone", s.auth(s.handleLoginPhone))
+	mux.HandleFunc("POST /api/login/qr", s.auth(s.handleLoginQR))
 	mux.HandleFunc("POST /api/login/code", s.auth(s.handleLoginCode))
 	mux.HandleFunc("POST /api/login/password", s.auth(s.handleLoginPassword))
 	mux.HandleFunc("GET /api/login/state", s.auth(s.handleLoginState))
@@ -458,6 +465,23 @@ func (s *Server) handleLoginPassword(w http.ResponseWriter, r *http.Request, own
 	// Parol faqat shu yerdan o'tadi: saqlanmaydi, log qilinmaydi.
 	if err := s.Ctl.SubmitPassword(owner, in.Password); err != nil {
 		httpErr(w, 409, "parol kutilmayapti")
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleLoginQR(w http.ResponseWriter, r *http.Request, owner int64) {
+	if !s.requireConsent(w, r, owner) {
+		return
+	}
+	// MUHIM: kontekst so'rovdan emas — login jarayoni so'rov tugagandan keyin ham davom etadi.
+	if err := s.Ctl.BeginQRLogin(context.WithoutCancel(r.Context()), owner); err != nil {
+		if errors.Is(err, ErrTooManyAttempts) {
+			httpErr(w, http.StatusTooManyRequests, err.Error())
+			return
+		}
+		s.logger().Warn("begin qr login", "owner", owner, "err", err)
+		httpErr(w, 400, "ulanishni boshlab bo'lmadi")
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})

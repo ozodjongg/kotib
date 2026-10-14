@@ -166,6 +166,20 @@ Xavfsizlik:
   bir necha haftagacha. Pullik xavfsizlik auditi (CASA) faqat restricted scope'lar (Gmail, Drive) uchun — bu yerda shart emas.
 - Maxfiylik siyosatida ko'rsating: band vaqtlar va kontakt eslatmasi javob tayyorlash uchun Gemini'ga yuboriladi.
 
+## Telegram akkauntini ulash
+
+Ikki yo'l bor (Mini App → ulash oynasi):
+
+1. **Kodsiz (tavsiya etiladi)** — Telegram Desktop'dagi QR-kirish kabi: server login token oladi
+   (`auth.exportLoginToken`), mijoz «Telegram'da tasdiqlash» tugmasini bosadi va Telegram ilovasida
+   kirishni tasdiqlaydi (`tg://login?token=…`). Tugma ishlamasa — boshqa qurilmadan QR skanerlash
+   (Sozlamalar → Qurilmalar → Kompyuterni ulash). Token ~30 soniyada yangilanadi. SMS/kod yetkazilmasa
+   ham ishlaydi; 2FA paroli bo'lsa, alohida so'raladi.
+2. **Telefon raqam va kod** — kod qayerga yuborilgani (Telegram chati, SMS, qo'ng'iroq, email) ko'rsatiladi.
+
+Ikkala yo'lda ham tasdiqlangan akkaunt **Mini App'ni ochgan foydalanuvchining o'zi** bo'lishi shart
+(`self.id == owner`): havolani boshqa odam tasdiqlasa, sessiya darhol uziladi.
+
 ## Telefon qulayliklari (iPhone va Android)
 
 | Qulaylik | Qayerda yoqiladi | Izoh |

@@ -334,6 +334,23 @@ function renderConnect() {
     body = [h('h3', {}, 'Ikki bosqichli parol'),
       h('p', { class: 'muted' }, 'Akkauntingizda 2FA yoqilgan. Parol saqlanmaydi — faqat bir marta ishlatiladi.'), pw,
       h('button', { class: 'btn block', onclick: busy(() => submitLogin('/login/password', { password: pw.value })) }, 'Tasdiqlash')];
+  } else if (st.step === 'wait_qr') {
+    // tg://login havolasi Telegram ilovasining o'zida ochiladi va "Kirishga ruxsat berasizmi?" deb so'raydi.
+    const confirm = h('a', { class: 'btn block', href: st.qr_url, onclick: () => haptic('tap') }, "Telegram'da tasdiqlash");
+    const secs = st.qr_expires ? Math.max(0, Math.round((new Date(st.qr_expires) - Date.now()) / 1000)) : null;
+    body = [h('h3', {}, "Telegram'da tasdiqlang"),
+      h('p', { class: 'muted' }, "Tugmani bosing — Telegram «Yangi qurilmaga kirish» so'rovini ko'rsatadi. «Tasdiqlash»ni bosing. Kod kerak emas."),
+      confirm,
+      h('div', { class: 'card accent' }, h('p', { class: 'small' }, "Faqat shu so'rovni o'zingiz boshlagan bo'lsangiz tasdiqlang. Kotib faqat shu oynani ochgan akkauntingizga ulanadi — boshqa akkaunt tasdiqlasa, ulanish bekor qilinadi.")),
+      h('details', {},
+        h('summary', { class: 'small' }, "Tugma ishlamadimi? Boshqa qurilmadan QR"),
+        h('ol', { class: 'small muted' },
+          h('li', {}, "Kompyuter yoki boshqa telefondagi Telegram'ni oching (shu akkaunt bilan)."),
+          h('li', {}, 'Sozlamalar → Qurilmalar → «Kompyuterni ulash» (Link Desktop Device).'),
+          h('li', {}, 'Quyidagi QR kodni skanerlang.')),
+        st.qr_image ? h('img', { class: 'qr', src: st.qr_image, alt: 'Kirish QR kodi', width: 220, height: 220 }) : null),
+      secs != null ? h('p', { class: 'muted small center' }, `Kod ${secs} soniyadan keyin avtomatik yangilanadi.`) : null];
+    setTimeout(pollQR, 2000);
   } else if (st.step === 'connecting') {
     body = [h('h3', {}, 'Ulanmoqda…'), h('div', { class: 'skeleton' })];
     setTimeout(pollLogin, 1500);
@@ -345,11 +362,19 @@ function renderConnect() {
     const dead = state.me.status === 'revoked' && state.me.note;
     body = [h('h3', {}, dead ? 'Akkauntni qayta ulang' : 'Telegram akkauntini ulang'),
       dead ? h('div', { class: 'card accent' }, h('p', { class: 'small' }, state.me.note + '. Bu sessiya endi ishlamaydi — qayta kiring. Qoidalar va sozlamalaringiz saqlangan.')) : null,
-      h('p', { class: 'muted' }, 'Kotib ishlashi uchun telefon raqamingiz bilan kiring. Kod faqat shu oynaga kiritiladi.'), phone,
+      h('p', { class: 'muted' }, "Eng oson yo'l — kodsiz: Telegram ilovangizda bir marta «Tasdiqlash»ni bosasiz."),
       h('button', { class: 'btn block', onclick: busy(async () => {
-        await api('POST', '/login/phone', { phone: phone.value });
+        await api('POST', '/login/qr');
         state.login = { step: 'connecting' }; render();
-      }) }, 'Kod olish')];
+      }) }, "Telegram orqali ulash (kodsiz)"),
+      h('details', {},
+        h('summary', { class: 'small' }, 'Yoki telefon raqam va kod bilan'),
+        h('div', { class: 'stack' },
+          h('p', { class: 'muted small' }, 'Kod faqat shu oynaga kiritiladi.'), phone,
+          h('button', { class: 'btn ghost block', onclick: busy(async () => {
+            await api('POST', '/login/phone', { phone: phone.value });
+            state.login = { step: 'connecting' }; render();
+          }) }, 'Kod olish')))];
   }
   swap(root, steps(2),
     h('div', { class: 'card stack' }, body),
@@ -361,6 +386,21 @@ async function submitLogin(path, payload) {
   await api('POST', path, payload);
   state.login = { step: 'connecting' };
   render();
+}
+
+// pollQR — QR kutish holatida: token yangilansa yoki tasdiqlansa ekranni yangilaydi (miltillamasin).
+async function pollQR() {
+  if (state.login.step !== 'wait_qr') return;
+  const prev = state.login.qr_url;
+  try {
+    const st = await api('GET', '/login/state');
+    if (st.step === 'wait_qr' && st.qr_url === prev) { setTimeout(pollQR, 2000); return; }
+    state.login = st;
+    if (st.step === 'done') await refreshMe();
+  } catch (_) { setTimeout(pollQR, 3000); return; }
+  if (state.login.step === 'error') haptic('error');
+  if (state.login.step === 'done') haptic('success');
+  renderConnect();
 }
 
 async function pollLogin() {

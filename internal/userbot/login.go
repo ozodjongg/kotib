@@ -40,6 +40,12 @@ func (io loginIO) Code(ctx context.Context, via, hint string) (string, error) {
 	return recv(ctx, io.l.codeCh)
 }
 
+func (io loginIO) QR(url, image string, expires time.Time) {
+	io.l.mu.Lock()
+	io.l.state = miniapp.LoginState{Step: "wait_qr", QRURL: url, QRImage: image, QRExpires: &expires}
+	io.l.mu.Unlock()
+}
+
 func (io loginIO) Password(ctx context.Context) (string, error) {
 	io.l.set("wait_password", "")
 	return recv(ctx, io.l.pwCh)
@@ -63,7 +69,24 @@ const (
 
 var ErrTooManyLogins = miniapp.ErrTooManyAttempts
 
+// ErrWrongAccount — tasdiqlangan Telegram akkaunt Mini App egasiniki emas (boshqa akkauntni
+// birovning kotibiga ulab bo'lmaydi). Bunday sessiya darhol uziladi.
+var ErrWrongAccount = errors.New("boshqa Telegram akkaunt tasdiqladi")
+
 func (m *Manager) BeginLogin(ctx context.Context, owner int64, phone string) error {
+	return m.beginLogin(ctx, owner, func(lctx context.Context, io LoginIO) error {
+		return m.Conn.Login(lctx, owner, phone, io)
+	})
+}
+
+// BeginQRLogin kodsiz kirish: Telegram ilovasida tasdiqlanadigan token (SMS/kod kelmaganda ham ishlaydi).
+func (m *Manager) BeginQRLogin(ctx context.Context, owner int64) error {
+	return m.beginLogin(ctx, owner, func(lctx context.Context, io LoginIO) error {
+		return m.Conn.LoginQR(lctx, owner, io)
+	})
+}
+
+func (m *Manager) beginLogin(ctx context.Context, owner int64, run func(context.Context, LoginIO) error) error {
 	m.init(ctx)
 	m.mu.Lock()
 	if old := m.logins[owner]; old != nil {
@@ -97,14 +120,18 @@ func (m *Manager) BeginLogin(ctx context.Context, owner int64, phone string) err
 
 	go func() {
 		defer cancel()
-		err := m.Conn.Login(lctx, owner, phone, loginIO{ls})
+		err := run(lctx, loginIO{ls})
 		if err == nil && lctx.Err() != nil {
 			err = lctx.Err() // bekor qilingan (akkaunt o'chirildi) yoki muddati o'tdi
 		}
 		if err != nil {
 			// Xato tafsilotini mijozga ko'rsatmaymiz (telefon/kod bo'lishi mumkin) — umumiy matn.
 			m.Log.Warn("login", "owner", owner, "err", err)
-			ls.set("error", "Ulanib bo'lmadi. Kod/parolni tekshirib, qayta urinib ko'ring.")
+			msg := "Ulanib bo'lmadi. Kod/parolni tekshirib, qayta urinib ko'ring."
+			if errors.Is(err, ErrWrongAccount) {
+				msg = "Boshqa Telegram akkaunt tasdiqladi. Kotibni ochgan akkauntingizning o'zida tasdiqlang."
+			}
+			ls.set("error", msg)
 			m.Store.Audit(context.Background(), owner, "login_failed", "")
 			return
 		}
