@@ -344,11 +344,17 @@ function renderConnect() {
       h('p', { class: 'muted' }, 'Akkauntingizda 2FA yoqilgan. Parol saqlanmaydi — faqat bir marta ishlatiladi.'), pw,
       h('button', { class: 'btn block', onclick: busy(() => submitLogin('/login/password', { password: pw.value })) }, 'Tasdiqlash')];
   } else if (st.step === 'wait_qr') {
-    // tg://login havolasi Telegram ilovasining o'zida ochiladi va "Kirishga ruxsat berasizmi?" deb so'raydi.
-    const confirm = h('a', { class: 'btn block', href: st.qr_url, onclick: () => haptic('tap') }, "Telegram'da tasdiqlash");
+    // Mini App ichida tg:// havola ochilmaydi (Telegram openLink faqat https qabul qiladi): tashqi
+    // brauzerda o'z sahifamizni ochamiz, u tg://login'ni Telegram ilovasiga uzatadi.
+    const token = (st.qr_url || '').split('token=')[1] || '';
+    const confirm = h('button', { class: 'btn block', onclick: () => {
+      haptic('tap');
+      const url = location.origin + '/tglogin?token=' + encodeURIComponent(token);
+      if (tg && tg.openLink) tg.openLink(url); else location.href = st.qr_url;
+    } }, "Telegram'da tasdiqlash");
     const secs = st.qr_expires ? Math.max(0, Math.round((new Date(st.qr_expires) - Date.now()) / 1000)) : null;
     body = [h('h3', {}, "Telegram'da tasdiqlang"),
-      h('p', { class: 'muted' }, "Tugmani bosing — Telegram «Yangi qurilmaga kirish» so'rovini ko'rsatadi. «Tasdiqlash»ni bosing. Kod kerak emas."),
+      h('p', { class: 'muted' }, "Tugmani bosing — brauzer ochiladi va Telegram'ni chaqiradi (kerak bo'lsa «Telegram'ni ochish»ni bosing). Telegram kirishni tasdiqlashni so'raydi — tasdiqlang va shu yerga qayting. Kod kerak emas."),
       confirm,
       h('div', { class: 'card accent' }, h('p', { class: 'small' }, "Faqat shu so'rovni o'zingiz boshlagan bo'lsangiz tasdiqlang. Kotib faqat shu oynani ochgan akkauntingizga ulanadi — boshqa akkaunt tasdiqlasa, ulanish bekor qilinadi.")),
       h('details', {},

@@ -129,6 +129,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/settings", s.auth(s.handlePutSettings))
 	mux.HandleFunc("POST /api/login/phone", s.auth(s.handleLoginPhone))
 	mux.HandleFunc("POST /api/login/qr", s.auth(s.handleLoginQR))
+	mux.HandleFunc("GET /tglogin", handleTGLogin)
 	mux.HandleFunc("POST /api/login/code", s.auth(s.handleLoginCode))
 	mux.HandleFunc("POST /api/login/password", s.auth(s.handleLoginPassword))
 	mux.HandleFunc("GET /api/login/state", s.auth(s.handleLoginState))
@@ -822,6 +823,32 @@ func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	googlePage(w, 200, "Google ulandi ✅ Endi Telegram'ga qaytishingiz mumkin.")
+}
+
+// loginTokenRe — Telegram login tokeni (base64url, padding bilan).
+var loginTokenRe = regexp.MustCompile(`^[A-Za-z0-9_=-]{10,256}$`)
+
+var tgLoginTmpl = template.Must(template.New("l").Parse(`<!doctype html><html lang="uz"><head><meta charset="utf-8">` +
+	`<meta name="viewport" content="width=device-width, initial-scale=1"><title>Kotib · Telegram'da tasdiqlash</title>` +
+	`<meta http-equiv="refresh" content="0;url={{.}}"></head>` +
+	`<body><h2>Kotib</h2><p>Telegram ochilib, «Kirishni tasdiqlaysizmi?» deb so'raydi — tasdiqlang, so'ng Telegram'ga qayting.</p>` +
+	`<p><a href="{{.}}"><b>Telegram'ni ochish</b></a></p>` +
+	`<p>Ochilmasa: boshqa qurilmadagi Telegram → Sozlamalar → Qurilmalar → «Kompyuterni ulash» orqali Mini App'dagi QR'ni skanerlang.</p>` +
+	`</body></html>`))
+
+// handleTGLogin — Mini App ichida tg:// havolalarni ochib bo'lmaydi (Telegram openLink faqat
+// https qabul qiladi). Shuning uchun Mini App tashqi brauzerda shu sahifani ochadi, sahifa esa
+// tg://login havolasini Telegram ilovasiga uzatadi. Token qisqa muddatli (~30 s) va uni boshqa
+// akkaunt tasdiqlasa ham kotib ulanmaydi (ensureOwner), shuning uchun alohida auth shart emas.
+func handleTGLogin(w http.ResponseWriter, r *http.Request) {
+	token := r.URL.Query().Get("token")
+	if !loginTokenRe.MatchString(token) {
+		http.Error(w, "havola yaroqsiz", http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// tg:// sxemasi html/template'da "xavfsiz" deb belgilanishi kerak; token regex bilan tekshirilgan.
+	_ = tgLoginTmpl.Execute(w, template.URL("tg://login?token="+token))
 }
 
 func googlePage(w http.ResponseWriter, code int, msg string) {
