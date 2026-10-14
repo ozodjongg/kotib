@@ -241,7 +241,15 @@ func run(log *slog.Logger) error {
 			log.Warn("bot buyruqlari o'rnatilmadi", "err", err)
 		}
 	}()
-	go ctrlBot.Run(ctx)
+	go func() {
+		// Telegram getUpdates'ni bir vaqtda faqat bitta nusxaga beradi (aks holda 409 Conflict):
+		// bot ham eski nusxa to'xtagach (bitta nusxa qulfi) ishga tushadi.
+		select {
+		case <-gate:
+			ctrlBot.Run(ctx)
+		case <-ctx.Done():
+		}
+	}()
 	go janitor(ctx, st, bill, notify, log)
 	go func() {
 		if err := mgr.Start(ctx); err != nil && ctx.Err() == nil {
