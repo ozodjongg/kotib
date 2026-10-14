@@ -3,9 +3,11 @@
 package userbot
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"strconv"
@@ -17,6 +19,7 @@ import (
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/auth"
 	"github.com/gotd/td/telegram/dcs"
+	"github.com/gotd/td/telegram/downloader"
 	"github.com/gotd/td/telegram/message"
 	"github.com/gotd/td/telegram/updates"
 	"github.com/gotd/td/tg"
@@ -149,7 +152,11 @@ func (c *GotdConnector) Run(ctx context.Context, owner int64, onReady func(Teleg
 			g.remember(usr)
 		}
 		m, ok := u.Message.(*tg.Message)
-		if !ok || m.Out || m.Message == "" {
+		if !ok || m.Out {
+			return nil
+		}
+		voice := g.voice(m)
+		if m.Message == "" && voice == nil {
 			return nil
 		}
 		pu, ok := m.PeerID.(*tg.PeerUser) // faqat shaxsiy chatlar (guruh/kanal — qo'llab-quvvatlanmaydi)
@@ -175,11 +182,16 @@ func (c *GotdConnector) Run(ctx context.Context, owner int64, onReady func(Teleg
 		if known {
 			contact.IsContact = info.contact
 			contact.IsBot = info.bot
+			contact.Name, contact.Phone = info.name, info.phone
 		} else {
 			// Kimligi aniqlanmadi — xavfsiz tomon: bot deb hisoblaymiz (javob yozilmaydi).
 			contact.IsBot = true
 		}
-		onMsg(Incoming{ChatID: pu.UserID, MsgID: m.ID, Text: m.Message, Contact: contact})
+		text := m.Message
+		if voice != nil {
+			text = strings.TrimSpace(VoiceText + "\n" + text)
+		}
+		onMsg(Incoming{ChatID: pu.UserID, MsgID: m.ID, Text: text, Contact: contact, Voice: voice})
 		return nil
 	})
 
@@ -210,12 +222,58 @@ func (c *GotdConnector) Run(ctx context.Context, owner int64, onReady func(Teleg
 	return classify(err)
 }
 
+// maxVoiceBytes — bundan katta ovozli fayl yuklanmaydi.
+const maxVoiceBytes = 2 << 20
+
+// voice xabar ovozli bo'lsa, faylni kerak bo'lganda yuklaydigan Voice qaytaradi.
+func (g *gotdTG) voice(m *tg.Message) *Voice {
+	md, ok := m.Media.(*tg.MessageMediaDocument)
+	if !ok {
+		return nil
+	}
+	doc, ok := md.Document.(*tg.Document)
+	if !ok || doc.Size > maxVoiceBytes {
+		return nil
+	}
+	for _, a := range doc.Attributes {
+		au, ok := a.(*tg.DocumentAttributeAudio)
+		if !ok || !au.Voice {
+			continue
+		}
+		loc := &tg.InputDocumentFileLocation{ID: doc.ID, AccessHash: doc.AccessHash, FileReference: doc.FileReference}
+		return &Voice{Duration: au.Duration, Load: func(ctx context.Context) ([]byte, error) {
+			var buf bytes.Buffer
+			if _, err := downloader.NewDownloader().Download(g.api, loc).Stream(ctx, &limitWriter{w: &buf, n: maxVoiceBytes}); err != nil {
+				return nil, classify(err)
+			}
+			return buf.Bytes(), nil
+		}}
+	}
+	return nil
+}
+
+// limitWriter — n baytdan oshsa xato (kutilmagan katta fayldan himoya).
+type limitWriter struct {
+	w io.Writer
+	n int64
+}
+
+func (l *limitWriter) Write(p []byte) (int, error) {
+	if int64(len(p)) > l.n {
+		return 0, errors.New("ovozli fayl juda katta")
+	}
+	l.n -= int64(len(p))
+	return l.w.Write(p)
+}
+
 // ---- Telegram interfeysi implementatsiyasi ----
 
 type userInfo struct {
 	accessHash int64
 	contact    bool
 	bot        bool
+	name       string
+	phone      string
 }
 
 type gotdTG struct {
@@ -242,7 +300,10 @@ func (g *gotdTG) remember(u *tg.User) {
 	if _, ok := g.users[u.ID]; !ok && len(g.users) >= maxCachedUsers {
 		return
 	}
-	g.users[u.ID] = userInfo{accessHash: u.AccessHash, contact: u.Contact, bot: u.Bot}
+	g.users[u.ID] = userInfo{
+		accessHash: u.AccessHash, contact: u.Contact, bot: u.Bot,
+		name: strings.TrimSpace(u.FirstName + " " + u.LastName), phone: u.Phone,
+	}
 }
 
 func (g *gotdTG) user(id int64) (userInfo, bool) {

@@ -51,6 +51,41 @@ type Draft struct {
 	CreatedAt  time.Time
 }
 
+// GoogleLink — mijozning Google akkaunti (OAuth). Token — shifrlangan refresh token.
+type GoogleLink struct {
+	OwnerID   int64
+	Email     string
+	Token     []byte
+	CreatedAt time.Time
+}
+
+type ActionKind string
+
+const (
+	ActionEvent ActionKind = "event" // Google Calendar tadbiri
+	ActionTask  ActionKind = "task"  // Google Tasks vazifasi
+)
+
+type ActionStatus string
+
+const (
+	ActionPending  ActionStatus = "pending"
+	ActionDone     ActionStatus = "done"
+	ActionRejected ActionStatus = "rejected"
+	ActionFailed   ActionStatus = "failed"
+)
+
+// Action — kotib taklif qilgan, egasi tasdiqlashi kerak bo'lgan amal.
+// Payload — turga mos JSON (google.Event / google.Task).
+type Action struct {
+	ID        int64
+	OwnerID   int64
+	Kind      ActionKind
+	Payload   []byte
+	Status    ActionStatus
+	CreatedAt time.Time
+}
+
 type Store interface {
 	// Account
 	UpsertAccount(ctx context.Context, a Account) error
@@ -100,4 +135,23 @@ type Store interface {
 	// UseDaily — day kuni (YYYY-MM-DD) uchun hisobni atomar bittaga oshiradi, agar u
 	// limit'dan kichik bo'lsa; limitga yetgan bo'lsa hech narsa o'zgarmaydi va false.
 	UseDaily(ctx context.Context, owner int64, day string, limit int) (bool, error)
+
+	// Google (DeleteAccount bularni ham o'chiradi)
+	SaveGoogleLink(ctx context.Context, l GoogleLink) error
+	GetGoogleLink(ctx context.Context, owner int64) (GoogleLink, error)
+	DeleteGoogleLink(ctx context.Context, owner int64) error
+	CreateAction(ctx context.Context, a Action) (int64, error)
+	GetAction(ctx context.Context, owner, id int64) (Action, error)
+	// SetActionStatus holatni from → to o'zgartiradi (atomar); holat from bo'lmasa ErrNotFound —
+	// bir tugmani ikki marta bosish ikki tadbir yaratmasin.
+	SetActionStatus(ctx context.Context, owner, id int64, from, to ActionStatus) error
+	// PruneActions "before"dan eski amallarni o'chiradi.
+	PruneActions(ctx context.Context, before time.Time) (int64, error)
+
+	// Avtomatlashtirish havolasi: faqat token xeshi saqlanadi.
+	SetHook(ctx context.Context, owner int64, tokenHash []byte) error
+	DeleteHook(ctx context.Context, owner int64) error
+	HasHook(ctx context.Context, owner int64) (bool, error)
+	// OwnerByHook xesh bo'yicha egani topadi (topilmasa ErrNotFound).
+	OwnerByHook(ctx context.Context, tokenHash []byte) (int64, error)
 }

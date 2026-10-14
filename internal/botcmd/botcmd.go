@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/ozodjongg/secretar_ai_agent/internal/billing"
 	"github.com/ozodjongg/secretar_ai_agent/internal/bot"
+	"github.com/ozodjongg/secretar_ai_agent/internal/google"
+	"github.com/ozodjongg/secretar_ai_agent/internal/ics"
 	"github.com/ozodjongg/secretar_ai_agent/internal/store"
 )
 
@@ -18,6 +21,9 @@ import (
 type Controller interface {
 	Pause(owner int64)
 	Resume(ctx context.Context, owner int64) error
+	// SendDraftByID qoralamani yuboradi (text bo'sh bo'lmasa — shu matn); hal qilingan bo'lsa store.ErrNotFound.
+	SendDraftByID(ctx context.Context, owner, id int64, text string) error
+	RejectDraft(ctx context.Context, owner, id int64) error
 }
 
 type Handler struct {
@@ -28,6 +34,16 @@ type Handler struct {
 	Admins  map[int64]bool // ADMIN_IDS: /stats, /refund
 	Log     *slog.Logger
 	Loc     *time.Location // sanalarni ko'rsatish uchun (default Asia/Tashkent)
+	// Google — tasdiqlangan amallarni bajarish (google.Client); nil → o'chiq.
+	Google Executor
+	// ICS — Google ulanmagan mijozlar uchun .ics havolalari; nil → o'chiq.
+	ICS *ics.Signer
+}
+
+// Executor — egasi tasdiqlagan amalni Google'da bajaradi.
+type Executor interface {
+	Connected(ctx context.Context, owner int64) bool
+	Execute(ctx context.Context, a store.Action) (string, error)
 }
 
 var _ bot.Handler = (*Handler)(nil)
@@ -73,6 +89,13 @@ Sozlamalar, qoidalar va qoralamalar — "Ochish" tugmasi orqali ilovada.`
 func (h *Handler) Command(ctx context.Context, from int64, cmd, args string) bot.Reply {
 	switch cmd {
 	case "start":
+		// Deep link: t.me/<bot>?start=pause — Siri / Google Assistant / yorliq orqali.
+		switch args {
+		case "pause":
+			return h.pause(ctx, from)
+		case "resume":
+			return h.resume(ctx, from)
+		}
 		text := "Salom! Men kotibingizman: shaxsiy xabarlaringizga javob qoralamasini tayyorlayman, siz tasdiqlaganingizdan keyingina yuboriladi.\n\nBoshlash uchun pastdagi tugmani bosing."
 		if h.Billing.Enabled() && h.Billing.TrialDays > 0 {
 			text += fmt.Sprintf("\n\nBirinchi %d kun — bepul.", h.Billing.TrialDays)
@@ -243,4 +266,159 @@ func (h *Handler) Refunded(ctx context.Context, from int64, chargeID string) {
 	if err := h.Billing.Refunded(ctx, from, chargeID); err != nil {
 		h.log().Error("refund record", "owner", from, "err", err)
 	}
+}
+
+// ActionButtons — taklif qilingan amal uchun tasdiq tugmalari.
+func ActionButtons(id int64) []bot.Button {
+	sid := strconv.FormatInt(id, 10)
+	return []bot.Button{{Text: "✅ Qo'shish", Data: "act:" + sid + ":y"}, {Text: "✖️ Kerak emas", Data: "act:" + sid + ":n"}}
+}
+
+// Callback — amalni tasdiqlash/rad etish tugmalari. Amal faqat egasiga tegishli bo'lsa
+// topiladi; holat atomar o'zgaradi — ikki marta bosish ikki tadbir yaratmaydi.
+func (h *Handler) Callback(ctx context.Context, from int64, data string) bot.Answer {
+	if strings.HasPrefix(data, "d:") {
+		toast, edit := h.draftCallback(ctx, from, data)
+		return bot.Answer{Toast: toast, Edit: edit}
+	}
+	rest, ok := strings.CutPrefix(data, "act:")
+	if !ok {
+		return bot.Answer{}
+	}
+	sid, ans, _ := strings.Cut(rest, ":")
+	id, err := strconv.ParseInt(sid, 10, 64)
+	if err != nil || (ans != "y" && ans != "n") {
+		return bot.Answer{}
+	}
+	a, err := h.Store.GetAction(ctx, from, id)
+	if err != nil {
+		return bot.Answer{Toast: "Topilmadi yoki eskirgan"}
+	}
+	summary, _, _ := strings.Cut(google.Describe(a), "\n\n")
+	if ans == "n" {
+		if err := h.Store.SetActionStatus(ctx, from, id, store.ActionPending, store.ActionRejected); err != nil {
+			return bot.Answer{Toast: "Allaqachon hal qilingan"}
+		}
+		h.Store.Audit(ctx, from, "action_rejected", string(a.Kind))
+		return bot.Answer{Toast: "Bekor qilindi", Edit: summary + "\n\n✖️ Qo'shilmadi"}
+	}
+	useGoogle := h.Google != nil && h.Google.Connected(ctx, from)
+	if !useGoogle && (a.Kind != store.ActionEvent || h.ICS == nil) {
+		return bot.Answer{Toast: "Google ulanmagan"}
+	}
+	if err := h.Store.SetActionStatus(ctx, from, id, store.ActionPending, store.ActionDone); err != nil {
+		return bot.Answer{Toast: "Allaqachon hal qilingan"}
+	}
+	if !useGoogle {
+		// Google'siz: imzolangan .ics havola — telefon taqvimi o'zi "qo'shish" oynasini ochadi.
+		h.Store.Audit(ctx, from, "action_done", "ics")
+		return bot.Answer{Toast: "Tayyor", Edit: summary + "\n\nTelefoningiz taqvimiga qo'shish uchun pastdagi tugmani bosing.",
+			URL: h.ICS.URL(from, id), URLText: "📅 Taqvimga qo'shish"}
+	}
+	res, err := h.Google.Execute(context.WithoutCancel(ctx), a)
+	if err != nil {
+		_ = h.Store.SetActionStatus(ctx, from, id, store.ActionDone, store.ActionFailed)
+		h.Store.Audit(ctx, from, "action_failed", string(a.Kind))
+		h.log().Warn("google execute", "owner", from, "err", err)
+		return bot.Answer{Toast: "Xatolik", Edit: summary + "\n\n⚠️ " + google.UserMessage(err)}
+	}
+	h.Store.Audit(ctx, from, "action_done", string(a.Kind))
+	return bot.Answer{Toast: res, Edit: summary + "\n\n" + res}
+}
+
+// ---- Qoralama bot chatida ----
+
+const maxCardPart = 1200 // Telegram xabari 4096 belgigacha: kontakt matni va javob qisqartiriladi
+
+// DraftCard — qoralama kartasining matni va tugmalari.
+func DraftCard(d store.Draft, contactName string) (string, []bot.Button) {
+	name := strings.TrimSpace(contactName)
+	if name == "" {
+		name = "Kontakt"
+	}
+	text := "✍️ Qoralama · " + name + "\n\n💬 " + clip(d.Incoming, maxCardPart) + "\n\n➡️ " + clip(d.Reply, maxCardPart)
+	if d.Reason != "" && d.Reason != "draft rejimi" {
+		text += "\n\n(" + d.Reason + ")"
+	}
+	text += "\n\nO'zgartirish uchun shu xabarga javob qilib yangi matnni yozing."
+	sid := strconv.FormatInt(d.ID, 10)
+	return text, []bot.Button{{Text: "📤 Yuborish", Data: "d:" + sid + ":s"}, {Text: "✖️ Rad etish", Data: "d:" + sid + ":r"}}
+}
+
+func clip(s string, n int) string {
+	r := []rune(strings.TrimSpace(s))
+	if len(r) <= n {
+		return string(r)
+	}
+	return string(r[:n]) + "…"
+}
+
+func parseDraftData(data string) (int64, string, bool) {
+	rest, ok := strings.CutPrefix(data, "d:")
+	if !ok {
+		return 0, "", false
+	}
+	sid, op, _ := strings.Cut(rest, ":")
+	id, err := strconv.ParseInt(sid, 10, 64)
+	if err != nil || id <= 0 || (op != "s" && op != "r") {
+		return 0, "", false
+	}
+	return id, op, true
+}
+
+func (h *Handler) draftCallback(ctx context.Context, from int64, data string) (string, string) {
+	id, op, ok := parseDraftData(data)
+	if !ok {
+		return "", ""
+	}
+	d, err := h.Store.GetDraft(ctx, from, id)
+	if err != nil {
+		return "Topilmadi", ""
+	}
+	if op == "r" {
+		if err := h.Ctl.RejectDraft(ctx, from, id); err != nil {
+			return "Allaqachon hal qilingan", ""
+		}
+		return "Rad etildi", "✖️ Rad etildi\n\n" + clip(d.Reply, maxCardPart)
+	}
+	return h.sendDraft(ctx, from, d, "")
+}
+
+func (h *Handler) sendDraft(ctx context.Context, from int64, d store.Draft, text string) (string, string) {
+	err := h.Ctl.SendDraftByID(context.WithoutCancel(ctx), from, d.ID, text)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return "Allaqachon hal qilingan", ""
+	case err != nil:
+		h.log().Warn("bot draft send", "owner", from, "err", err)
+		return "Yuborib bo'lmadi, keyinroq urinib ko'ring", ""
+	}
+	sent := d.Reply
+	if strings.TrimSpace(text) != "" {
+		sent = text
+	}
+	return "Yuborildi", "📤 Yuborildi\n\n" + clip(sent, maxCardPart)
+}
+
+// okWords — "asl qoralamani yubor" ma'nosidagi qisqa javoblar.
+var okWords = map[string]bool{"ok": true, "ок": true, "ha": true, "+": true, "✅": true, "👍": true, "yubor": true}
+
+// ReplyTo — qoralama kartasiga javob: "ok" — asl matn, boshqa matn — o'sha matn yuboriladi.
+func (h *Handler) ReplyTo(ctx context.Context, from int64, data, text string) (bot.Reply, string) {
+	id, _, ok := parseDraftData(data)
+	if !ok {
+		return bot.Reply{}, ""
+	}
+	d, err := h.Store.GetDraft(ctx, from, id)
+	if err != nil || d.Status != store.DraftPending {
+		return bot.Reply{Text: "Bu qoralama allaqachon hal qilingan."}, ""
+	}
+	t := strings.TrimSpace(text)
+	if okWords[strings.ToLower(t)] {
+		t = ""
+	} else if len([]rune(t)) > 4000 {
+		return bot.Reply{Text: "Matn juda uzun (4000 belgigacha)."}, ""
+	}
+	toast, edit := h.sendDraft(ctx, from, d, t)
+	return bot.Reply{Text: toast}, edit
 }

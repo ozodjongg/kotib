@@ -374,3 +374,90 @@ func (p *Postgres) UseDaily(ctx context.Context, owner int64, day string, limit 
 	}
 	return err == nil, err
 }
+
+func (p *Postgres) SaveGoogleLink(ctx context.Context, l GoogleLink) error {
+	_, err := p.DB.ExecContext(ctx, `
+		INSERT INTO google_links (owner_id, email, token, created_at) VALUES ($1, $2, $3, now())
+		ON CONFLICT (owner_id) DO UPDATE SET email = EXCLUDED.email, token = EXCLUDED.token, created_at = now()`,
+		l.OwnerID, l.Email, l.Token)
+	return err
+}
+
+func (p *Postgres) GetGoogleLink(ctx context.Context, owner int64) (GoogleLink, error) {
+	l := GoogleLink{OwnerID: owner}
+	err := p.DB.QueryRowContext(ctx,
+		`SELECT email, token, created_at FROM google_links WHERE owner_id = $1`, owner).
+		Scan(&l.Email, &l.Token, &l.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return GoogleLink{}, ErrNotFound
+	}
+	return l, err
+}
+
+func (p *Postgres) DeleteGoogleLink(ctx context.Context, owner int64) error {
+	_, err := p.DB.ExecContext(ctx, `DELETE FROM google_links WHERE owner_id = $1`, owner)
+	return err
+}
+
+func (p *Postgres) CreateAction(ctx context.Context, a Action) (int64, error) {
+	var id int64
+	err := p.DB.QueryRowContext(ctx,
+		`INSERT INTO actions (owner_id, kind, payload) VALUES ($1, $2, $3) RETURNING id`,
+		a.OwnerID, string(a.Kind), a.Payload).Scan(&id)
+	return id, err
+}
+
+func (p *Postgres) GetAction(ctx context.Context, owner, id int64) (Action, error) {
+	a := Action{ID: id, OwnerID: owner}
+	var kind, st string
+	err := p.DB.QueryRowContext(ctx,
+		`SELECT kind, payload, status, created_at FROM actions WHERE id = $1 AND owner_id = $2`, id, owner).
+		Scan(&kind, &a.Payload, &st, &a.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Action{}, ErrNotFound
+	}
+	a.Kind, a.Status = ActionKind(kind), ActionStatus(st)
+	return a, err
+}
+
+func (p *Postgres) SetActionStatus(ctx context.Context, owner, id int64, from, to ActionStatus) error {
+	res, err := p.DB.ExecContext(ctx,
+		`UPDATE actions SET status = $4 WHERE id = $1 AND owner_id = $2 AND status = $3`,
+		id, owner, string(from), string(to))
+	return affected(res, err)
+}
+
+func (p *Postgres) PruneActions(ctx context.Context, before time.Time) (int64, error) {
+	res, err := p.DB.ExecContext(ctx, `DELETE FROM actions WHERE created_at < $1`, before)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+func (p *Postgres) SetHook(ctx context.Context, owner int64, tokenHash []byte) error {
+	_, err := p.DB.ExecContext(ctx, `
+		INSERT INTO hooks (owner_id, token_hash) VALUES ($1, $2)
+		ON CONFLICT (owner_id) DO UPDATE SET token_hash = EXCLUDED.token_hash, created_at = now()`, owner, tokenHash)
+	return err
+}
+
+func (p *Postgres) DeleteHook(ctx context.Context, owner int64) error {
+	_, err := p.DB.ExecContext(ctx, `DELETE FROM hooks WHERE owner_id = $1`, owner)
+	return err
+}
+
+func (p *Postgres) HasHook(ctx context.Context, owner int64) (bool, error) {
+	var ok bool
+	err := p.DB.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM hooks WHERE owner_id = $1)`, owner).Scan(&ok)
+	return ok, err
+}
+
+func (p *Postgres) OwnerByHook(ctx context.Context, tokenHash []byte) (int64, error) {
+	var owner int64
+	err := p.DB.QueryRowContext(ctx, `SELECT owner_id FROM hooks WHERE token_hash = $1`, tokenHash).Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	return owner, err
+}

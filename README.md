@@ -17,6 +17,8 @@ internal/miniapp/     initData HMAC auth + HTTP API
 internal/store/       Store interfeysi, Postgres, Memory (dev)
 internal/bot/         boshqaruv boti (/start, bildirishnoma)
 internal/billing/     Telegram Stars obunasi: sinov, to'lov tasdig'i, bekor qilish, refund, eslatmalar
+internal/google/      Google: OAuth (PKCE), Calendar (band vaqt, tadbir), Contacts (eslatma), Tasks
+internal/ics/         Google'siz taqvim: .ics fayl va imzolangan havola
 internal/botcmd/      bot buyruqlari (/status, /pause, /obuna, admin /stats, /refund) va to'lov hodisalari
 webapp/               Mini App (vanilla JS, innerHTML ishlatilmaydi; iliq fil suyagi/terrakota dizayn, yorug'/qorong'i)
 migrations/           Postgres sxema (binary ichiga joylangan, ishga tushganda avtomatik qo'llanadi)
@@ -91,6 +93,8 @@ Wordmark shrifti — Source Serif 4 (SIL Open Font License), matn vektor konturg
 | `TRIAL_DAYS` | bepul sinov kunlari (default 7) |
 | `TRIAL_DAILY_LIMIT` | sinovda kuniga ko'pi bilan nechta javob tayyorlanadi (default 50; 0 — cheksiz). To'langan obunada cheklov yo'q |
 | `ADMIN_IDS` | admin Telegram ID'lari, vergul bilan: `/stats`, `/refund`; adminlar uchun kotib bepul |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | ixtiyoriy: Google integratsiyasi (pastda). Bo'sh — o'chiq |
+| `GOOGLE_REDIRECT_URL` | ixtiyoriy; default `<MINIAPP_URL domeni>/oauth/google/callback` |
 | `LISTEN` | aniq manzil (masalan `127.0.0.1:8080`); berilmasa `PORT` ishlatiladi |
 | `PORT` | platforma beradi (Railway); `0.0.0.0:$PORT` da tinglanadi. Ikkalasi ham bo'lmasa — `127.0.0.1:8080` |
 | `STATIC_DIR` | Mini App fayllari, default `./webapp` |
@@ -119,11 +123,68 @@ To'lov xavfsizligi:
 - Faol obunada ikkinchi to'lov havolasi berilmaydi (ikki marta yechilmasin).
 - `payments`/`subscriptions` akkaunt o'chirilganda ham saqlanadi (faqat ID, sana, summa — xabar matni yo'q).
 
+## Google integratsiyasi (Calendar, Contacts, Tasks)
+
+Mijoz Mini App → **Hisob → Google'ni ulash** orqali o'z Google akkauntini ulaydi (tashqi brauzerda ochiladi:
+Google Telegram ichidagi WebView'da kirishni bloklaydi). Shundan keyin kotib:
+
+- **Taqvimni biladi**: keyingi 7 kundagi band vaqtlar (`freeBusy`, faqat vaqt — tadbir nomlari emas) modelga beriladi.
+  Kontakt band vaqtga uchrashuv taklif qilsa, kotib muloyim boshqa vaqt so'raydi.
+- **Kontaktni taniydi**: Google Contacts'dan telefon (bo'lmasa ism) bo'yicha ism va egasining eslatmasi ("Izoh") olinadi.
+- **Uchrashuv/vazifani taklif qiladi**: suhbatda aniq vaqtli uchrashuv yoki egasiga topshiriq chiqsa, bot egasiga
+  "📅 Aziz bilan uchrashuv, 15.10.2026 15:00–16:00. Google Calendar'ga qo'shaymi?" deb **tugmali xabar** yuboradi.
+  Google'ga faqat **✅ Qo'shish** bosilganda yoziladi; avtomatik hech narsa qo'shilmaydi.
+
+Xavfsizlik:
+- OAuth: authorization code + PKCE, `state` bir martalik va 15 daqiqa amal qiladi, egasiga bog'langan.
+- Refresh token AES-256-GCM bilan shifrlanadi (`aad = google:<owner>`), access token faqat xotirada.
+- Tugma faqat egasida ishlaydi va amal holati atomar o'zgaradi — ikki marta bosish ikki tadbir yaratmaydi.
+- Kontakt xabari asosida taklif qilingan nomda havola/raqam bo'lsa, taklif tashlanadi; egasiga takliflar
+  5 ta, keyin ~10 daqiqada bittadan ko'p yuborilmaydi.
+- "Uzish" va akkauntni o'chirish Google'da ham tokenni bekor qiladi (`revoke`). Mijoz ruxsatni Google'da olib tashlasa,
+  ulanish avtomatik o'chiriladi va bot bir marta xabar beradi. Takliflar 7 kundan keyin o'chiriladi.
+
+### Sozlash (Google Cloud Console)
+
+1. Yangi loyiha → **APIs & Services → Library**: *Google Calendar API*, *People API*, *Google Tasks API* ni yoqing.
+2. **OAuth consent screen** (Google Auth Platform): User type — *External*; ilova nomi, logo (`branding/logo-512.png`),
+   **maxfiylik siyosati** va **foydalanish shartlari** havolalari, domen.
+   Scopes: `calendar.events`, `calendar.freebusy`, `contacts.readonly`, `tasks` (hammasi *sensitive*, Gmail kabi *restricted* emas).
+3. **Credentials → Create OAuth client ID → Web application**.
+   Authorized redirect URI: `https://<domeningiz>/oauth/google/callback` (aynan `MINIAPP_URL` domeni).
+4. `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` ni env'ga qo'ying va qayta ishga tushiring.
+
+**Muhim — Google tekshiruvi (verification):**
+- Ilova *Testing* holatida faqat qo'lda qo'shilgan **100 tagacha test foydalanuvchi** ulay oladi va ularning
+  ulanishi **7 kunda tugaydi** (Google refresh tokenni bekor qiladi). Sinov uchun yetarli, sotuv uchun emas.
+- *In production* uchun sensitive scope'lar bo'yicha Google tekshiruvidan o'tish kerak: tasdiqlangan domen,
+  maxfiylik siyosati (Google ma'lumotlari qanday ishlatilishi, Gemini'ga yuborilishi), demo video. Odatda bir necha kundan
+  bir necha haftagacha. Pullik xavfsizlik auditi (CASA) faqat restricted scope'lar (Gmail, Drive) uchun — bu yerda shart emas.
+- Maxfiylik siyosatida ko'rsating: band vaqtlar va kontakt eslatmasi javob tayyorlash uchun Gemini'ga yuboriladi.
+
+## Telefon qulayliklari (iPhone va Android)
+
+| Qulaylik | Qayerda yoqiladi | Izoh |
+|---|---|---|
+| **Qoralama bot chatida** | Sozlamalar → "Qoralamalar bot chatida" | Bot qoralamani **[📤 Yuborish] [✖️ Rad etish]** bilan yuboradi. Kartaga javob qilib matn yozsangiz — shu matn ketadi, "ok" — asl qoralama. Android'da bildirishnomadan javob berish mumkin. Default o'chiq: matnlar bot chati tarixida qoladi |
+| **Taqvimga taklif** | Sozlamalar → "Uchrashuvlarni taqvimga taklif qilish" (default yoqiq) | Google ulangan bo'lsa — Google Calendar/Tasks. Ulanmagan bo'lsa — ✅ bosilganda imzolangan `.ics` havola: iPhone'da Apple Taqvim, Android'da taqvim ilovasi o'zi "qo'shish"ni taklif qiladi (15 daqiqa oldin eslatma bilan, havola 7 kun amal qiladi) |
+| **Ovozli xabarlar** | Sozlamalar → "Ovozli xabarlarga ham" (default o'chiq) | 2 daqiqagacha ovoz Gemini'ga audio sifatida yuboriladi. Audio matn filtridan o'tolmagani uchun javob **har doim faqat qoralama** |
+| **Avtomatlashtirish** | Hisob → Avtomatlashtirish | Shaxsiy maxfiy havola: iPhone Shortcuts (Focus: Haydash, Uyqu), Android MacroDroid/Tasker (Bezovta qilmang, mashina Bluetooth'i) kotib rejimini va "hozirgi holat"ini o'zgartiradi. Token faqat xeshi bilan saqlanadi |
+| **Hozirgi holat** | Sozlamalar → "Hozirgi holatingiz" | "Hozir rulda" — kotib javobda hisobga oladi (aniq vaqt va'da qilmaydi) |
+| **Siri / Google Assistant** | — | `t.me/<bot>?start=pause` va `?start=resume` deep link'lari |
+| **Face ID / barmoq izi** | Hisob → Telefon | Mini App'dan yuborish, avto rejimni yoqish, Google'ni uzish, akkauntni o'chirishdan oldin (shu qurilmada) |
+| **Bosh ekranga qo'shish** | Hisob → Telefon | Telegram `addToHomeScreen` |
+| **Orqaga tugmasi** | — | Telegram BackButton (Android tizim tugmasi ham): bo'limdan Asosiy'ga |
+| **Pastga surib yopilmaslik** | — | `disableVerticalSwipes`: matn yozayotganda ilova tasodifan yopilmaydi |
+
+Avtomatlashtirish havolasi parametrlari: `mode=draft|auto|off`, `away=<matn>` (bo'sh — tozalash), `action=pause|resume`.
+Masalan: `https://<domen>/hook/<token>?mode=auto&away=Hozir%20rulda`. GET ham, POST ham ishlaydi.
+
 ## Bot buyruqlari
 
 | Buyruq | Kim | Vazifa |
 |---|---|---|
-| `/start`, `/help` | hamma | Mini App'ni ochish, yordam |
+| `/start`, `/help` | hamma | Mini App'ni ochish, yordam (`/start pause`, `/start resume` — deep link) |
 | `/status` | hamma | holat, kutilayotgan qoralamalar, obuna |
 | `/pause`, `/resume` | hamma | kotibni darhol to'xtatish / davom ettirish |
 | `/obuna` | hamma | Stars bilan obuna bo'lish |
@@ -153,7 +214,7 @@ To'lov xavfsizligi:
 3. Login kodini Telegram boshqa qurilmaga kiritilganini sezib, kirishni bloklashi mumkin ("login attempt blocked"). Mijozga kodni chatda yozmaslikni ayting.
 4. Mijoz nomidan javob berish — mijozning suhbatdoshlari uchun shaffoflik masalasi. Model "inson ekanini" tasdiqlamaydi, lekin ishlatish qoidalarida (ToS) mijoz javobgarligini aniq yozing; ro'yxatdan o'tish paytidagi rozilik (`consent_at`) saqlanadi.
 5. Qonuniy tomon: mijozning suhbatdoshlari xabarlari Gemini'ga (Google) yuboriladi — maxfiylik siyosatida ko'rsating; O'zbekiston "Shaxsga doir ma'lumotlar to'g'risida"gi qonuni talablarini yurist bilan tekshiring.
-6. Faqat **shaxsiy matnli xabarlar**: guruh, ovoz, rasm hozircha qo'llab-quvvatlanmaydi. `updates.Manager` qisqa uzilishlarni tiklaydi, lekin holat xotirada saqlanadi: ilova qayta ishga tushganda o'chiq paytdagi xabarlar javobsiz qoladi.
+6. Faqat **shaxsiy matnli va ovozli xabarlar** (ovoz — faqat qoralama): guruh, rasm, video hozircha qo'llab-quvvatlanmaydi. `updates.Manager` qisqa uzilishlarni tiklaydi, lekin holat xotirada saqlanadi: ilova qayta ishga tushganda o'chiq paytdagi xabarlar javobsiz qoladi.
 
 ## Keyingi qadamlar
 

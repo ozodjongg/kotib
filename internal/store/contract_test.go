@@ -35,7 +35,7 @@ func TestStoreContract(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if _, err := db.Exec(`TRUNCATE accounts, subscriptions, payments, usage_daily CASCADE`); err != nil {
+		if _, err := db.Exec(`TRUNCATE accounts, subscriptions, payments, usage_daily, google_links, actions, hooks CASCADE`); err != nil {
 			t.Fatal(err)
 		}
 		contract(t, store.NewPostgres(db))
@@ -178,8 +178,65 @@ func contract(t *testing.T, s store.Store) {
 		t.Fatal("har egasi alohida")
 	}
 
+	if _, err := s.GetGoogleLink(ctx, 1); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal(err)
+	}
+	if err := s.SaveGoogleLink(ctx, store.GoogleLink{OwnerID: 1, Email: "a@x.uz", Token: []byte{1, 2}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveGoogleLink(ctx, store.GoogleLink{OwnerID: 1, Email: "b@x.uz", Token: []byte{3}}); err != nil {
+		t.Fatal(err)
+	}
+	if l, err := s.GetGoogleLink(ctx, 1); err != nil || l.Email != "b@x.uz" || len(l.Token) != 1 {
+		t.Fatalf("google link: %+v %v", l, err)
+	}
+	aid, err := s.CreateAction(ctx, store.Action{OwnerID: 1, Kind: store.ActionEvent, Payload: []byte(`{"title":"x"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetAction(ctx, 2, aid); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("boshqa egasining amali ko'rinmasligi kerak")
+	}
+	if a, err := s.GetAction(ctx, 1, aid); err != nil || a.Status != store.ActionPending || a.Kind != store.ActionEvent || string(a.Payload) != `{"title": "x"}` && string(a.Payload) != `{"title":"x"}` {
+		t.Fatalf("action: %+v %v", a, err)
+	}
+	if err := s.SetActionStatus(ctx, 1, aid, store.ActionPending, store.ActionDone); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetActionStatus(ctx, 1, aid, store.ActionPending, store.ActionDone); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("ikki marta bajarilmasligi kerak")
+	}
+	if n, err := s.PruneActions(ctx, time.Now().Add(-time.Hour)); err != nil || n != 0 {
+		t.Fatal(n, err)
+	}
+
+	if err := s.SetHook(ctx, 1, []byte("h1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetHook(ctx, 1, []byte("h2")); err != nil { // yangisi eskisini almashtiradi
+		t.Fatal(err)
+	}
+	if _, err := s.OwnerByHook(ctx, []byte("h1")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("eski havola ishlamasligi kerak")
+	}
+	if o, err := s.OwnerByHook(ctx, []byte("h2")); err != nil || o != 1 {
+		t.Fatal(o, err)
+	}
+	if ok, _ := s.HasHook(ctx, 1); !ok {
+		t.Fatal("has hook")
+	}
+
 	if err := s.DeleteAccount(ctx, 1); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := s.OwnerByHook(ctx, []byte("h2")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("havola akkaunt bilan o'chirilishi kerak")
+	}
+	if _, err := s.GetGoogleLink(ctx, 1); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("google ulanishi akkaunt bilan o'chirilishi kerak")
+	}
+	if _, err := s.GetAction(ctx, 1, aid); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("amallar akkaunt bilan o'chirilishi kerak")
 	}
 	if ok, _ := s.UseDaily(ctx, 1, "2026-10-13", 2); ok {
 		t.Fatal("akkaunt o'chirilsa ham kunlik hisob saqlanishi kerak")

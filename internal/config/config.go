@@ -53,8 +53,19 @@ type Settings struct {
 	ReplyGroups  bool `json:"reply_groups"`  // guruhlarda javob (default: false, tavsiya etilmaydi)
 	// ReplyBots — botlarga ham javob tayyorlash (default: false). Yoqilsa ham faqat
 	// qoralama: bot bilan avtomatik yozishma cheksiz aylanishga (spam, ban) olib keladi.
-	ReplyBots      bool       `json:"reply_bots"`
-	AllowLinks     bool       `json:"allow_links"`     // javobda havola (default: false)
+	ReplyBots  bool `json:"reply_bots"`
+	AllowLinks bool `json:"allow_links"` // javobda havola (default: false)
+	// DraftsInBot — qoralama matni bot chatiga tugmalar bilan yuboriladi (tasdiqlash ilovasiz).
+	// Default o'chiq: yoqilsa kontakt xabari va javob matni bot chati tarixida qoladi.
+	DraftsInBot bool `json:"drafts_in_bot"`
+	// Away — egasining hozirgi holati ("rulda", "yig'ilishda"); kotib javobda hisobga oladi.
+	// Odatda avtomatlashtirish havolasi (Focus / MacroDroid) o'rnatadi; bo'sh — yo'q.
+	Away string `json:"away,omitempty"`
+	// NoSuggest — uchrashuv/vazifa takliflarini o'chirish (default: takliflar yoqiq).
+	NoSuggest bool `json:"no_suggest,omitempty"`
+	// ReplyVoice — kontaktning ovozli xabarlariga ham javob tayyorlash (default o'chiq).
+	// Ovoz matn filtridan o'tolmaydi, shuning uchun javob har doim faqat qoralama.
+	ReplyVoice     bool       `json:"reply_voice,omitempty"`
 	DefaultPersona string     `json:"default_persona"` // preset kaliti
 	DefaultCustom  string     `json:"default_custom,omitempty"`
 	OwnerName      string     `json:"owner_name"` // mijoz ismi — "men X man" kontekst uchun
@@ -64,6 +75,9 @@ type Settings struct {
 	// ContactTags: userID → teglar. Mini App kontaktlarga teg beradi.
 	ContactTags map[int64][]string `json:"contact_tags,omitempty"`
 }
+
+// MaxAway — Settings.Away uzunligi chegarasi.
+const MaxAway = 100
 
 // Default xavfsiz boshlang'ich sozlama.
 func Default() Settings {
@@ -113,6 +127,9 @@ func (s *Settings) Validate() error {
 	}
 	if utf8.RuneCountInString(s.OwnerName) > 64 {
 		return errors.New("owner_name juda uzun")
+	}
+	if utf8.RuneCountInString(s.Away) > MaxAway || strings.ContainsAny(s.Away, "\r\n") {
+		return errors.New("away juda uzun yoki ko'p qatorli")
 	}
 	switch s.Language {
 	case "uz", "ru", "en", "auto":
@@ -207,7 +224,9 @@ func parseHM(v string) (int, error) {
 // Contact — kiruvchi xabar jo'natuvchisi haqida runtime ma'lumot.
 type Contact struct {
 	UserID    int64
-	IsContact bool // mijozning Telegram kontaktlarida bormi
+	Name      string // Telegram'dagi ism (Google Contacts'da qidirish, tadbir nomi uchun)
+	Phone     string // faqat raqamlar; Telegram faqat kontaktlar uchun beradi
+	IsContact bool   // mijozning Telegram kontaktlarida bormi
 	IsBot     bool
 	IsGroup   bool // xabar guruhdan keldimi
 	IsChannel bool
@@ -328,6 +347,17 @@ func containsID(ids []int64, id int64) bool {
 		}
 	}
 	return false
+}
+
+// Location — mijozning vaqt zonasi (tinch soatlar sozlamasidan), default Asia/Tashkent.
+func (s *Settings) Location() *time.Location {
+	if loc, err := time.LoadLocation(s.Quiet.TZ); err == nil && s.Quiet.TZ != "" {
+		return loc
+	}
+	if loc, err := time.LoadLocation("Asia/Tashkent"); err == nil {
+		return loc
+	}
+	return time.FixedZone("Asia/Tashkent", 5*60*60)
 }
 
 func (s *Settings) inQuiet(now time.Time) bool {

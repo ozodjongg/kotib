@@ -26,6 +26,10 @@ const EVENTS = {
   flood_wait: "Telegram kutishni so'radi", fatal: 'Telegram xatosi', circuit_breaker: "Xavfsizlik uchun to'xtatildi",
   trial_started: 'Bepul sinov boshlandi', payment: "To'lov qabul qilindi", subscription_canceled: 'Obuna bekor qilindi',
   subscription_renewed: 'Obuna qayta yoqildi', refunded: "To'lov qaytarildi",
+  voice_error: "Ovozli xabar yuklanmadi", hook: 'Avtomatika rejimni o\'zgartirdi', hook_created: 'Avtomatlashtirish havolasi yaratildi', hook_deleted: "Avtomatlashtirish havolasi o'chirildi",
+  google_connected: 'Google ulandi', google_disconnected: 'Google uzildi', google_revoked: "Google ruxsati bekor qilindi",
+  action_proposed: 'Taklif yuborildi (taqvim/vazifa)', action_done: "Google'ga qo'shildi",
+  action_rejected: 'Taklif rad etildi', action_failed: "Google'ga qo'shib bo'lmadi",
 };
 
 const state = {
@@ -158,6 +162,44 @@ function quietInfo(q) {
   return { hours, active };
 }
 
+// ---------- Face ID / barmoq izi ----------
+// Yoqilgan bo'lsa: Mini App'dan qoralama yuborish, avtomatik rejimni yoqish, Google'ni uzish va
+// akkauntni o'chirishdan oldin biometrik tasdiq so'raladi. Tanlov shu qurilmada saqlanadi.
+const BIO_KEY = 'kotib.bio';
+const bio = { ready: false, available: false, type: 'unknown' };
+function bioMgr() { return tg && tg.BiometricManager; }
+function bioInit() {
+  const m = bioMgr();
+  if (!m) return;
+  try {
+    m.init(() => { bio.ready = true; bio.available = !!m.isBiometricAvailable; bio.type = m.biometricType || 'unknown'; if (state.tab === 'account' && state.me) renderMain(); });
+  } catch (_) { /* eski klient */ }
+}
+function bioName() { return bio.type === 'face' ? 'Face ID' : bio.type === 'finger' ? 'Barmoq izi' : 'Biometrik himoya'; }
+function bioEnabled() {
+  try { return localStorage.getItem(BIO_KEY) === '1'; } catch (_) { return false; }
+}
+function bioSet(on) { try { if (on) localStorage.setItem(BIO_KEY, '1'); else localStorage.removeItem(BIO_KEY); } catch (_) { /* */ } }
+function bioRequestAccess() {
+  return new Promise((resolve) => {
+    const m = bioMgr();
+    if (!m || !bio.available) return resolve(false);
+    if (m.isAccessGranted) return resolve(true);
+    try { m.requestAccess({ reason: "Muhim amallarni tasdiqlash uchun" }, (ok) => resolve(!!ok)); } catch (_) { resolve(false); }
+  });
+}
+// bioGate — himoya yoqilgan bo'lsa biometrik tasdiq; rad etilsa xato (busy() toast ko'rsatadi).
+function bioGate(reason) {
+  return new Promise((resolve, reject) => {
+    const m = bioMgr();
+    if (!bioEnabled() || !m || !bio.available) return resolve();
+    if (!m.isAccessGranted) { bioSet(false); return resolve(); } // ruxsat Telegram sozlamalarida olib tashlangan
+    try {
+      m.authenticate({ reason }, (ok) => (ok ? resolve() : reject(new Error('Tasdiqlanmadi'))));
+    } catch (_) { resolve(); }
+  });
+}
+
 // ---------- mavzu ----------
 function applyTheme() {
   const dark = tg ? tg.colorScheme === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -173,6 +215,11 @@ async function boot() {
   if (tg) {
     tg.ready(); tg.expand();
     try { tg.onEvent('themeChanged', applyTheme); } catch (_) { /* */ }
+    // Matn yozayotganda pastga surilsa ilova yopilib, yozilgan matn yo'qolmasin (ayniqsa iPhone'da).
+    try { if (tg.disableVerticalSwipes) tg.disableVerticalSwipes(); } catch (_) { /* eski klient */ }
+    // Telegram "orqaga" tugmasi (Android'da tizim tugmasi ham shu): bo'limdan Asosiy'ga qaytaradi.
+    try { if (tg.BackButton) tg.BackButton.onClick(() => go('home')); } catch (_) { /* */ }
+    bioInit();
   }
   if (!tg || !tg.initData) {
     swap(root, h('div', { class: 'empty' },
@@ -185,6 +232,7 @@ async function boot() {
     await refreshMe();
     state.settings = await api('GET', '/settings');
     if (!Array.isArray(state.settings.rules)) state.settings.rules = [];
+    state.savedMode = state.settings.mode;
     if (!state.settings.quiet_hours) state.settings.quiet_hours = { enabled: false, start: '23:00', end: '07:00', tz: 'Asia/Tashkent' };
   } catch (e) {
     swap(root, h('div', { class: 'empty' },
@@ -329,6 +377,7 @@ function renderNav() {
 
 function renderMain() {
   renderNav();
+  try { if (tg && tg.BackButton) { if (state.tab === 'home') tg.BackButton.hide(); else tg.BackButton.show(); } } catch (_) { /* */ }
   const view = h('div', {});
   swap(root, view);
   ({ home: viewHome, drafts: viewDrafts, rules: viewRules, settings: viewSettings, account: viewAccount })[state.tab](view);
@@ -437,6 +486,7 @@ function draftCard(d) {
       h('button', { class: 'btn ghost', onclick: busy(async () => { await api('POST', `/drafts/${d.id}/reject`); removeCard(); toast('Rad etildi'); }) }, 'Rad etish'),
       h('button', { class: 'btn', onclick: busy(async () => {
         if (!text.value.trim()) throw new Error("Javob bo'sh");
+        await bioGate('Javobni yuborish');
         await api('POST', `/drafts/${d.id}/send`, { reply: text.value });
         removeCard(); toast('Yuborildi');
       }) }, 'Yuborish')));
@@ -447,8 +497,9 @@ function draftCard(d) {
 function field(label, control, hint) {
   return h('div', { class: 'field' }, h('label', {}, label), control, hint ? h('div', { class: 'hint' }, hint) : null);
 }
-function switchRow(title, desc, checked, onchange) {
-  const input = h('input', { type: 'checkbox', checked: !!checked, onchange: (e) => { haptic('tap'); onchange(e.target.checked); markDirty(); } });
+// local=true — sozlamalarga tegishli emas (saqlash tugmasi faollashmaydi).
+function switchRow(title, desc, checked, onchange, local) {
+  const input = h('input', { type: 'checkbox', checked: !!checked, onchange: (e) => { haptic('tap'); onchange(e.target.checked); if (!local) markDirty(); } });
   return h('label', { class: 'switch-row' },
     h('div', {}, h('div', { class: 't' }, title), desc ? h('div', { class: 'd' }, desc) : null),
     h('span', { class: 'switch' }, input, h('span', {})));
@@ -462,7 +513,9 @@ function markDirty() { state.dirty = true; const b = document.getElementById('sa
 
 function saveButton() {
   return h('button', { id: 'save', class: 'btn block', disabled: !state.dirty, onclick: busy(async () => {
+    if (state.settings.mode === 'auto' && state.savedMode !== 'auto') await bioGate('Avtomatik rejimni yoqish');
     await api('PUT', '/settings', state.settings);
+    state.savedMode = state.settings.mode;
     state.dirty = false; toast('Saqlandi');
     const b = document.getElementById('save'); if (b) b.disabled = true;
   }) }, 'Saqlash');
@@ -506,14 +559,20 @@ function viewSettings(view) {
       field('Ish rejimi', modeControl(s), 'Qoralama — siz tasdiqlaysiz (tavsiya). Avto — darhol yuboriladi.'),
       field('Ismingiz', h('input', { type: 'text', value: s.owner_name || '', maxlength: 64, placeholder: 'Masalan: Aziz',
         oninput: (e) => { s.owner_name = e.target.value; markDirty(); } }), 'AI javoblarni sizning nomingizdan yozadi.'),
+      field('Hozirgi holatingiz', h('input', { type: 'text', value: s.away || '', maxlength: 100, placeholder: "Masalan: Hozir rulda / Yig'ilishdaman",
+        oninput: (e) => { s.away = e.target.value.replace(/\s+/g, ' '); markDirty(); } }),
+        "Kotib javobda hisobga oladi. Bo'sh — yo'q. Telefon avtomatikasi (Hisob → Avtomatlashtirish) o'zi o'zgartirishi mumkin."),
       field('Javob tili', select([['auto', 'Suhbatdosh tilida'], ['uz', "O'zbekcha"], ['ru', 'Ruscha'], ['en', 'Inglizcha']], s.language, (v) => { s.language = v; })),
       field('Uslub', personaSelect(s.default_persona, (v) => { s.default_persona = v; })),
       field("O'z ko'rsatmangiz", custom, "Uslub «O'z ko'rsatmam» bo'lsa ishlatiladi.")),
     h('h2', {}, 'Kimga javob beriladi'),
     h('div', { class: 'card' },
       switchRow("Kontaktda yo'qlarga ham", 'Tavsiya etilmaydi: spam va firibgarlar ko\'p', s.reply_unknown, (v) => { s.reply_unknown = v; }),
+      switchRow('Ovozli xabarlarga ham', "Kotib ovozli xabarni tinglab, javob qoralamasini tayyorlaydi (2 daqiqagacha). Ovozga javob doim faqat qoralama — avtomatik yuborilmaydi.", s.reply_voice, (v) => { s.reply_voice = v; }),
       switchRow('Botlarga ham', "Faqat qoralama: bot bilan cheksiz yozishma bo'lmasligi uchun avtomatik yuborilmaydi", s.reply_bots, (v) => { s.reply_bots = v; }),
-      switchRow('Javobda havolalar', "O'chiq bo'lsa, havolali javoblar qoralamada qoladi", s.allow_links, (v) => { s.allow_links = v; })),
+      switchRow('Javobda havolalar', "O'chiq bo'lsa, havolali javoblar qoralamada qoladi", s.allow_links, (v) => { s.allow_links = v; }),
+      switchRow('Uchrashuvlarni taqvimga taklif qilish', "Suhbatda aniq vaqtli uchrashuv chiqsa, bot «Taqvimga qo'shaymi?» deb so'raydi. Google ulanmagan bo'lsa ham ishlaydi (iPhone/Android taqvimi).", !s.no_suggest, (v) => { s.no_suggest = !v; }),
+      switchRow('Qoralamalar bot chatida', "Qoralama botga tugmalar bilan keladi: bir bosishda yuborasiz yoki xabarga javob qilib matnni o'zgartirasiz. Matnlar bot chatida saqlanib qoladi.", s.drafts_in_bot, (v) => { s.drafts_in_bot = v; })),
     h('h2', {}, 'Tinch soatlar'),
     h('div', { class: 'card' },
       switchRow('Tunda javob yozilmasin', 'Shu vaqt oralig\'ida kotib jim turadi', s.quiet_hours.enabled, (v) => { s.quiet_hours.enabled = v; quietHint(); }),
@@ -589,10 +648,138 @@ function ruleCard(r, i, redraw) {
 }
 
 // ---------- Hisob: obuna, faollik, xavfsizlik ----------
+// ---------- Avtomatlashtirish (iPhone Shortcuts / Android MacroDroid) ----------
+const HOOK_PRESETS = [
+  ['🚗 Haydash', { mode: 'auto', away: 'Hozir rulda' }],
+  ["📅 Yig'ilish", { mode: 'auto', away: "Yig'ilishdaman" }],
+  ['🌙 Uyqu', { mode: 'draft', away: 'Uxlayapman' }],
+  ['↩️ Odatiy holat', { mode: 'draft', away: '' }],
+  ["⏸ To'xtatish", { action: 'pause' }],
+  ['▶️ Davom ettirish', { action: 'resume' }],
+];
+
+function hookURL(base, params) {
+  return base + '?' + Object.entries(params).map(([k, v]) => k + '=' + encodeURIComponent(v)).join('&');
+}
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); toast('Nusxa olindi'); haptic('success'); return; } catch (_) { /* eski WebView */ }
+  // Zaxira: tanlab qo'yamiz — foydalanuvchi o'zi nusxalaydi.
+  const ta = h('textarea', { readonly: true }, text);
+  document.body.append(ta); ta.select();
+  try { document.execCommand('copy'); toast('Nusxa olindi'); } catch (_) { toast('Matnni belgilab nusxa oling', true); }
+  ta.remove();
+}
+
+function botLink(start) {
+  const u = state.me.bot_username;
+  return u ? `t.me/${u}?start=${start}` : `t.me/<bot>?start=${start}`;
+}
+
+function hookCard() {
+  const card = h('div', { class: 'card' });
+  const draw = () => {
+    const head = h('div', { class: 'card-head' }, h('h3', {}, 'Avtomatlashtirish'),
+      h('span', { class: 'badge ' + (state.me.hook ? 'ok' : '') }, state.me.hook ? 'Yoqilgan' : "O'chiq"));
+    const create = h('button', { class: state.me.hook ? 'btn ghost block' : 'btn block', onclick: busy(async () => {
+      if (state.me.hook && !(await confirmBox("Yangi havola yaratilsa, eskisi ishlamay qoladi (telefondagi avtomatikani yangilash kerak). Davom etasizmi?"))) return;
+      const { url } = await api('POST', '/hook');
+      state.hookURL = url; state.me.hook = true; draw();
+    }) }, state.me.hook ? 'Yangi havola yaratish' : 'Havola yaratish');
+    const kids = [head,
+      h('p', { class: 'muted small' }, "Telefon rejimiga qarab kotibni o'zi boshqaradi: iPhone'da Focus (Haydash, Uyqu), Android'da MacroDroid/Tasker (Bezovta qilmang, mashina Bluetooth'i)."),
+    ];
+    if (state.hookURL) {
+      kids.push(h('p', { class: 'small' }, 'Kerakli havolani nusxalab, telefon avtomatikasiga qo\'ying:'),
+        h('div', { class: 'hook-list' }, HOOK_PRESETS.map(([label, params]) =>
+          h('button', { class: 'btn ghost block', onclick: () => copyText(hookURL(state.hookURL, params)) }, label + ' — nusxa olish'))),
+        h('p', { class: 'muted small' }, "Havolani hech kimga bermang: u orqali kotib rejimini o'zgartirish mumkin."));
+    } else if (state.me.hook) {
+      kids.push(h('p', { class: 'muted small' }, "Havola xavfsizlik uchun faqat yaratilganda ko'rsatiladi. Qayta ko'rish uchun yangisini yarating."));
+    }
+    kids.push(create);
+    if (state.me.hook) {
+      kids.push(h('button', { class: 'btn ghost block', onclick: busy(async () => {
+        await api('DELETE', '/hook'); state.me.hook = false; state.hookURL = null; toast("O'chirildi"); draw();
+      }) }, "Havolani o'chirish"));
+    }
+    kids.push(h('details', {},
+      h('summary', { class: 'small' }, "iPhone: Shortcuts'da sozlash"),
+      h('ol', { class: 'small muted' },
+        h('li', {}, 'Shortcuts → Automation → «+» → Focus → masalan «Driving» → «When Turning On».'),
+        h('li', {}, '«Run Immediately» ni tanlang → New Blank Automation → «Get Contents of URL».'),
+        h('li', {}, '«🚗 Haydash» havolasini qo\'ying. Xuddi shunday «When Turning Off» uchun «↩️ Odatiy holat».'),
+        h('li', {}, `Siri: «Hey Siri, kotibni to'xtat» — Shortcuts'da «Open URL» bilan ${botLink('pause')} (davom: ${botLink('resume')}).`))),
+    h('details', {},
+      h('summary', { class: 'small' }, "Android: MacroDroid'da sozlash"),
+      h('ol', { class: 'small muted' },
+        h('li', {}, 'MacroDroid → Add Macro → Trigger: «Do Not Disturb» yoki «Bluetooth Event» (mashina).'),
+        h('li', {}, 'Action: Connectivity → «HTTP Request» → GET → havolani qo\'ying.'),
+        h('li', {}, 'Teskari makro (DND o\'chganda) uchun «↩️ Odatiy holat» havolasi.'),
+        h('li', {}, `Google Assistant / bosh ekran yorlig'i: ${botLink('pause')} va ${botLink('resume')}.`))));
+    swap(card, kids);
+  };
+  draw();
+  return card;
+}
+
+// deviceCard — telefon qulayliklari: biometrik himoya va bosh ekranga qo'shish.
+function deviceCard() {
+  const rows = [];
+  if (bio.ready && bio.available) {
+    rows.push(switchRow(bioName(), "Qoralama yuborish, avtomatik rejimni yoqish va akkauntni o'chirishdan oldin so'raladi (shu telefonda).",
+      bioEnabled(), async (v) => {
+        if (v && !(await bioRequestAccess())) { bioSet(false); toast('Ruxsat berilmadi', true); renderMain(); return; }
+        bioSet(v); toast(v ? 'Himoya yoqildi' : "Himoya o'chirildi");
+      }, true));
+  }
+  if (tg && tg.addToHomeScreen) {
+    const btn = h('button', { class: 'btn ghost block', onclick: () => { try { tg.addToHomeScreen(); } catch (_) { toast("Bu qurilmada qo'llanmaydi", true); } } }, "Bosh ekranga qo'shish");
+    rows.push(h('p', { class: 'muted small' }, "Kotib telefoningiz bosh ekranida alohida ilova bo'lib turadi."), btn);
+    try {
+      if (tg.checkHomeScreenStatus) tg.checkHomeScreenStatus((st) => { if (st === 'added' || st === 'unsupported') btn.remove(); });
+    } catch (_) { /* */ }
+  }
+  if (!rows.length) return null;
+  return h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Telefon')), rows);
+}
+
+function googleCard(g) {
+  const status = h('span', { class: 'badge ' + (g.connected ? 'ok' : '') }, g.connected ? 'Ulangan' : 'Ulanmagan');
+  const body = g.connected
+    ? [
+      h('p', { class: 'muted small' }, g.email ? `Akkaunt: ${g.email}` : 'Google akkaunt ulangan.'),
+      h('ul', { class: 'perks' },
+        h('li', {}, "Kotib taqvimdagi band vaqtlaringizni biladi"),
+        h('li', {}, "Uchrashuv va vazifalarni botda tasdiqlasangiz — Calendar/Tasks'ga qo'shiladi"),
+        h('li', {}, "Kontakt haqidagi eslatmalaringiz (Google Contacts) hisobga olinadi")),
+      h('button', { class: 'btn ghost block', onclick: busy(async () => {
+        if (!(await confirmBox("Google uziladi va ruxsat bekor qilinadi. Davom etasizmi?"))) return;
+        await bioGate("Google'ni uzish");
+        await api('POST', '/google/disconnect'); await refreshMe(); toast('Google uzildi'); renderMain();
+      }) }, 'Google\'ni uzish'),
+    ]
+    : [
+      h('p', { class: 'muted small' }, "Calendar, Contacts va Tasks. Kotib hech narsani o'zi qo'shmaydi — har bir uchrashuv va vazifa uchun botda sizdan so'raydi."),
+      h('button', { class: 'btn block', onclick: busy(async () => {
+        const { url } = await api('POST', '/google/connect');
+        // Google ichki brauzerda (WebView) kirishni bloklaydi — tashqi brauzerda ochamiz.
+        if (tg && tg.openLink) tg.openLink(url); else window.open(url, '_blank', 'noopener');
+        toast("Brauzerda ruxsat bering, so'ng shu yerga qayting");
+      }) }, "Google'ni ulash"),
+    ];
+  return h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Google'), status), body);
+}
+
 async function viewAccount(view) {
   put(view, h('h1', {}, 'Hisob'));
   const b = state.me.billing || {};
   if (b.enabled) put(view, subscriptionCard(b));
+  const g = state.me.google || {};
+  if (g.enabled) put(view, googleCard(g));
+  const dev = deviceCard();
+  if (dev) put(view, dev);
+  put(view, hookCard());
 
   put(view, h('h2', {}, 'Oxirgi faollik'));
   const act = h('div', { class: 'card' }, h('div', { class: 'skeleton' }));
@@ -610,6 +797,7 @@ async function viewAccount(view) {
       h('p', { class: 'muted small' }, "Telegram sessiyasi tugatiladi, sozlamalar va qoralamalar o'chadi, obuna yangilanishi to'xtatiladi."),
       h('button', { class: 'btn danger block', onclick: busy(async () => {
         if (!(await confirmBox("Hamma narsa o'chiriladi. Bu amalni ortga qaytarib bo'lmaydi. Davom etasizmi?"))) return;
+        await bioGate("Akkauntni o'chirish");
         await api('DELETE', '/account', { confirm: 'DELETE' });
         toast("O'chirildi");
         setTimeout(() => { if (tg) tg.close(); }, 800);
@@ -656,6 +844,9 @@ function subscriptionCard(b) {
       b.on_trial && b.trial_daily_limit ? h('p', { class: 'muted small' }, `Sinovda kuniga ${b.trial_daily_limit} tagacha javob tayyorlanadi.`) : null,
       h('button', { class: 'btn block', onclick: busy(pay) }, `Obuna bo'lish · ${b.price} ⭐`),
       h('p', { class: 'muted small center' }, "To'lov Telegram Stars orqali — karta ma'lumotlari bizga kelmaydi."),
+      h('p', { class: 'muted small center' }, "Maslahat: Stars ilova do'koni (App Store / Google Play) orqali qimmatroq. ",
+        h('a', { href: '#', onclick: (e) => { e.preventDefault(); if (tg && tg.openTelegramLink) tg.openTelegramLink('https://t.me/PremiumBot'); } }, '@PremiumBot'),
+        " orqali odatda arzonroq."),
     ];
   }
   const card = h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Obuna'), status), body);

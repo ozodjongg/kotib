@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -16,12 +17,76 @@ import (
 	"github.com/ozodjongg/secretar_ai_agent/internal/billing"
 )
 
+func TestCallbackAnsweredAndEdited(t *testing.T) {
+	updates := `[
+	 {"update_id":1,"callback_query":{"id":"cb1","from":{"id":5},"data":"act:1:y","message":{"message_id":9,"text":"x","chat":{"id":5,"type":"private"}}}},
+	 {"update_id":2,"callback_query":{"id":"cb2","from":{"id":6},"data":"act:1:y","message":{"message_id":3,"text":"x","chat":{"id":-100,"type":"group"}}}}
+	]`
+	srv, calls, mu := fakeAPI(t, updates)
+	h := &recHandler{}
+	b := New("TOKEN", "https://app.example/", slog.Default())
+	b.BaseURL, b.Handler = srv.URL, h
+	runBriefly(b)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(h.callbacks) != 1 || h.callbacks[0] != "5|act:1:y" {
+		t.Fatalf("faqat shaxsiy chatdagi tugma: %v", h.callbacks)
+	}
+	var answers, edits int
+	for _, c := range *calls {
+		switch c["_method"] {
+		case "answerCallbackQuery":
+			answers++
+		case "editMessageText":
+			edits++
+			if c["message_id"] != float64(9) || c["text"] != "yangi matn" || !strings.Contains(fmt.Sprint(c["reply_markup"]), "a.ics") {
+				t.Fatalf("edit: %v", c)
+			}
+		}
+	}
+	if answers != 2 || edits != 1 {
+		t.Fatalf("answers=%d edits=%d", answers, edits)
+	}
+}
+
 type recHandler struct {
 	mu        sync.Mutex
 	cmds      []string
 	paid      []billing.PaymentInfo
 	refunded  []string
 	rejectPre bool
+	callbacks []string
+	replies   []string
+}
+
+func TestReplyToBotMessage(t *testing.T) {
+	updates := `[
+	 {"update_id":1,"message":{"text":"Ertaga gaplashamiz","from":{"id":5},"chat":{"id":5,"type":"private"},
+	   "reply_to_message":{"message_id":42,"from":{"id":1},"reply_markup":{"inline_keyboard":[[{"text":"Yuborish","callback_data":"d:7:s"}]]}}}},
+	 {"update_id":2,"message":{"text":"oddiy matn","from":{"id":5},"chat":{"id":5,"type":"private"}}}
+	]`
+	srv, calls, mu := fakeAPI(t, updates)
+	h := &recHandler{}
+	b := New("TOKEN", "https://app.example/", slog.Default())
+	b.BaseURL, b.Handler = srv.URL, h
+	runBriefly(b)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(h.replies) != 1 || h.replies[0] != "5|d:7:s|Ertaga gaplashamiz" {
+		t.Fatalf("replies: %v", h.replies)
+	}
+	var edited, sent bool
+	for _, c := range *calls {
+		if c["_method"] == "editMessageText" && c["message_id"] == float64(42) {
+			edited = true
+		}
+		if c["_method"] == "sendMessage" && c["text"] == "Yuborildi" {
+			sent = true
+		}
+	}
+	if !edited || !sent {
+		t.Fatalf("edited=%v sent=%v", edited, sent)
+	}
 }
 
 func (h *recHandler) Command(_ context.Context, _ int64, cmd, args string) Reply {
@@ -41,6 +106,20 @@ func (h *recHandler) Paid(_ context.Context, _ int64, p billing.PaymentInfo) {
 	defer h.mu.Unlock()
 	h.paid = append(h.paid, p)
 }
+func (h *recHandler) Callback(_ context.Context, from int64, data string) Answer {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.callbacks = append(h.callbacks, fmt.Sprintf("%d|%s", from, data))
+	return Answer{Toast: "OK", Edit: "yangi matn", URL: "https://x.example/a.ics", URLText: "Taqvim"}
+}
+
+func (h *recHandler) ReplyTo(_ context.Context, from int64, data, text string) (Reply, string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.replies = append(h.replies, fmt.Sprintf("%d|%s|%s", from, data, text))
+	return Reply{Text: "Yuborildi"}, "eski karta"
+}
+
 func (h *recHandler) Refunded(_ context.Context, _ int64, id string) {
 	h.refunded = append(h.refunded, id)
 }

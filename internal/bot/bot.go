@@ -88,6 +88,7 @@ type inlineBtn struct {
 	Text   string      `json:"text"`
 	WebApp *webAppInfo `json:"web_app,omitempty"`
 	URL    string      `json:"url,omitempty"`
+	Data   string      `json:"callback_data,omitempty"`
 }
 type webAppInfo struct {
 	URL string `json:"url"`
@@ -122,6 +123,28 @@ func (b *Bot) send(ctx context.Context, chatID int64, r Reply) error {
 	return b.call(ctx, "sendMessage", p, nil)
 }
 
+// Answer — tugma bosilishiga javob. Edit bo'sh bo'lsa xabar o'zgarmaydi (tugmalar qoladi);
+// aks holda tugmalar olib tashlanadi, URL berilsa o'rniga havola tugmasi qo'yiladi.
+type Answer struct {
+	Toast, Edit  string
+	URL, URLText string
+}
+
+// Button — callback tugmasi (Data ≤ 64 bayt).
+type Button struct{ Text, Data string }
+
+// Ask mijozga tugmali xabar yuboradi (masalan, "Taqvimga qo'shaymi?").
+func (b *Bot) Ask(ctx context.Context, chatID int64, text string, buttons []Button) error {
+	row := make([]inlineBtn, 0, len(buttons))
+	for _, btn := range buttons {
+		row = append(row, inlineBtn{Text: btn.Text, Data: btn.Data})
+	}
+	return b.call(ctx, "sendMessage", map[string]any{
+		"chat_id": chatID, "text": text,
+		"reply_markup": map[string]any{"inline_keyboard": [][]inlineBtn{row}},
+	}, nil)
+}
+
 // ---- Telegram Stars (billing.API) ----
 
 var _ billing.API = (*Bot)(nil)
@@ -151,6 +174,15 @@ func (b *Bot) RefundStarPayment(ctx context.Context, userID int64, chargeID stri
 	}, nil)
 }
 
+// Username botning @username'ini qaytaradi (getMe).
+func (b *Bot) Username(ctx context.Context) (string, error) {
+	var me struct {
+		Username string `json:"username"`
+	}
+	err := b.call(ctx, "getMe", map[string]any{}, &me)
+	return me.Username, err
+}
+
 // Command — bot menyusidagi buyruq.
 type Command struct {
 	Name, Description string
@@ -176,6 +208,12 @@ type Handler interface {
 	PreCheckout(ctx context.Context, from int64, currency string, amount int, payload string) error
 	Paid(ctx context.Context, from int64, p billing.PaymentInfo)
 	Refunded(ctx context.Context, from int64, chargeID string)
+	// ReplyTo — foydalanuvchi bot xabariga javob yozdi. data — o'sha xabardagi birinchi
+	// tugmaning callback_data'si (qaysi qoralama ekanini bildiradi); edit — asl xabarning
+	// yangi matni (bo'sh — o'zgarmaydi).
+	ReplyTo(ctx context.Context, from int64, data, text string) (r Reply, edit string)
+	// Callback tugma bosilganda: qisqa javob, xabarning yangi matni va ixtiyoriy havola tugmasi.
+	Callback(ctx context.Context, from int64, data string) Answer
 }
 
 type user struct {
@@ -199,8 +237,17 @@ type refundedPayment struct {
 type update struct {
 	UpdateID int `json:"update_id"`
 	Message  *struct {
-		Text string `json:"text"`
-		From *user  `json:"from"`
+		Text           string `json:"text"`
+		From           *user  `json:"from"`
+		ReplyToMessage *struct {
+			MessageID int   `json:"message_id"`
+			From      *user `json:"from"`
+			Markup    *struct {
+				Keyboard [][]struct {
+					Data string `json:"callback_data"`
+				} `json:"inline_keyboard"`
+			} `json:"reply_markup"`
+		} `json:"reply_to_message"`
 		Chat struct {
 			ID   int64  `json:"id"`
 			Type string `json:"type"`
@@ -208,6 +255,19 @@ type update struct {
 		SuccessfulPayment *successfulPayment `json:"successful_payment"`
 		RefundedPayment   *refundedPayment   `json:"refunded_payment"`
 	} `json:"message"`
+	CallbackQuery *struct {
+		ID      string `json:"id"`
+		From    user   `json:"from"`
+		Data    string `json:"data"`
+		Message *struct {
+			MessageID int    `json:"message_id"`
+			Text      string `json:"text"`
+			Chat      struct {
+				ID   int64  `json:"id"`
+				Type string `json:"type"`
+			} `json:"chat"`
+		} `json:"message"`
+	} `json:"callback_query"`
 	PreCheckoutQuery *struct {
 		ID             string `json:"id"`
 		From           user   `json:"from"`
@@ -224,7 +284,7 @@ func (b *Bot) Run(ctx context.Context) {
 	for ctx.Err() == nil {
 		var ups []update
 		err := b.call(ctx, "getUpdates", map[string]any{
-			"offset": offset, "timeout": 30, "allowed_updates": []string{"message", "pre_checkout_query"},
+			"offset": offset, "timeout": 30, "allowed_updates": []string{"message", "pre_checkout_query", "callback_query"},
 		}, &ups)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -250,6 +310,10 @@ func (b *Bot) Run(ctx context.Context) {
 }
 
 func (b *Bot) dispatch(ctx context.Context, u update) {
+	if q := u.CallbackQuery; q != nil {
+		b.callback(ctx, u)
+		return
+	}
 	if q := u.PreCheckoutQuery; q != nil {
 		// Telegram 10 soniya ichida javob kutadi — sinxron javob beramiz.
 		ans := map[string]any{"pre_checkout_query_id": q.ID, "ok": true}
@@ -285,6 +349,7 @@ func (b *Bot) dispatch(ctx context.Context, u update) {
 	}
 	cmd, args, ok := parseCommand(m.Text)
 	if !ok {
+		b.replyTo(ctx, u)
 		return
 	}
 	var r Reply
@@ -298,6 +363,51 @@ func (b *Bot) dispatch(ctx context.Context, u update) {
 	}
 	if err := b.send(ctx, m.Chat.ID, r); err != nil {
 		b.Log.Warn("bot reply", "cmd", cmd, "err", err)
+	}
+}
+
+func (b *Bot) callback(ctx context.Context, u update) {
+	q := u.CallbackQuery
+	var a Answer
+	// Faqat shaxsiy chatdagi o'z xabarimiz: from — Telegram tasdiqlagan foydalanuvchi.
+	if b.Handler != nil && len(q.Data) <= 64 && (q.Message == nil || q.Message.Chat.Type == "private") {
+		a = b.Handler.Callback(ctx, q.From.ID, q.Data)
+	}
+	if err := b.call(ctx, "answerCallbackQuery", map[string]any{"callback_query_id": q.ID, "text": a.Toast}, nil); err != nil {
+		b.Log.Warn("answerCallbackQuery", "err", err)
+	}
+	if a.Edit != "" && q.Message != nil {
+		// Tugmalar olib tashlanadi — qayta bosib bo'lmasin.
+		p := map[string]any{"chat_id": q.Message.Chat.ID, "message_id": q.Message.MessageID, "text": a.Edit}
+		if a.URL != "" {
+			p["reply_markup"] = map[string]any{"inline_keyboard": [][]inlineBtn{{{Text: a.URLText, URL: a.URL}}}}
+		}
+		if err := b.call(ctx, "editMessageText", p, nil); err != nil {
+			b.Log.Warn("editMessageText", "err", err)
+		}
+	}
+}
+
+// replyTo — bot xabariga (masalan, qoralama kartasiga) matnli javob.
+func (b *Bot) replyTo(ctx context.Context, u update) {
+	m := u.Message
+	rt := m.ReplyToMessage
+	if b.Handler == nil || rt == nil || rt.Markup == nil || len(rt.Markup.Keyboard) == 0 ||
+		len(rt.Markup.Keyboard[0]) == 0 || strings.TrimSpace(m.Text) == "" {
+		return
+	}
+	r, edit := b.Handler.ReplyTo(ctx, m.From.ID, rt.Markup.Keyboard[0][0].Data, m.Text)
+	if edit != "" {
+		if err := b.call(ctx, "editMessageText", map[string]any{
+			"chat_id": m.Chat.ID, "message_id": rt.MessageID, "text": edit,
+		}, nil); err != nil {
+			b.Log.Warn("editMessageText", "err", err)
+		}
+	}
+	if r.Text != "" {
+		if err := b.send(ctx, m.Chat.ID, r); err != nil {
+			b.Log.Warn("bot reply", "err", err)
+		}
 	}
 }
 

@@ -3,6 +3,7 @@ package userbot
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -265,5 +266,200 @@ func TestBotIgnoredByDefault(t *testing.T) {
 	e.p.Handle(context.Background(), Incoming{ChatID: 50, MsgID: 1, Text: "salom", Contact: config.Contact{UserID: 50, IsBot: true}})
 	if e.llm.calls != 0 || len(e.drafts()) != 0 {
 		t.Fatal("default holatda botga hech narsa qilinmasligi kerak")
+	}
+}
+
+// fakeAssistant — Assist'ni qo'llaydigan model.
+type fakeAssistant struct {
+	fakeLLM
+	resp    llm.Response
+	assists int
+}
+
+func (f *fakeAssistant) Assist(_ context.Context, r llm.Request) (llm.Response, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.assists++
+	f.last = r
+	return f.resp, nil
+}
+
+type fakeGoogle struct{ connected bool }
+
+func (g *fakeGoogle) Connected(context.Context, int64) bool { return g.connected }
+func (g *fakeGoogle) Busy(_ context.Context, _ int64, from, _ time.Time) ([]llm.Interval, error) {
+	return []llm.Interval{{Start: from.Add(time.Hour), End: from.Add(2 * time.Hour)}}, nil
+}
+func (g *fakeGoogle) Contact(context.Context, int64, int64, string, string) (string, string) {
+	return "Aziz Karimov", "hamkor"
+}
+
+func TestGoogleAssistProposesActions(t *testing.T) {
+	e := newEnv(t, nil)
+	_ = e.st.UpsertAccount(context.Background(), store.Account{OwnerID: owner, Status: store.StatusActive})
+	loc, _ := time.LoadLocation("Asia/Tashkent")
+	fa := &fakeAssistant{resp: llm.Response{
+		Text:  "Maqul, aniqlab yozaman",
+		Event: &llm.Event{Title: "Aziz bilan uchrashuv", Start: time.Date(2026, 10, 14, 15, 0, 0, 0, loc), Duration: time.Hour},
+		Task:  &llm.Task{Title: "Hujjatni yuborish"},
+	}}
+	e.p.LLM = fa
+	e.p.Google = &fakeGoogle{connected: true}
+	var proposed []string
+	var ids []int64
+	e.p.Propose = func(_ context.Context, o, id int64, text string) {
+		if o != owner {
+			t.Fatal("boshqa egaga")
+		}
+		ids = append(ids, id)
+		proposed = append(proposed, text)
+	}
+	e.p.Handle(context.Background(), in("ertaga 15:00 da uchrashamizmi?", true))
+	if fa.assists != 1 || fa.calls != 0 {
+		t.Fatalf("assist chaqirilishi kerak: assists=%d calls=%d", fa.assists, fa.calls)
+	}
+	a := fa.last.Assist
+	if a == nil || a.ContactName != "Aziz Karimov" || len(a.Busy) != 1 || a.Loc.String() != "Asia/Tashkent" {
+		t.Fatalf("assist konteksti: %+v", a)
+	}
+	if len(proposed) != 2 || !strings.Contains(proposed[0], "Aziz bilan uchrashuv") || !strings.Contains(proposed[1], "Hujjatni yuborish") {
+		t.Fatalf("takliflar: %q", proposed)
+	}
+	if act, err := e.st.GetAction(context.Background(), owner, ids[0]); err != nil || act.Status != store.ActionPending {
+		t.Fatalf("amal saqlanmadi: %+v %v", act, err)
+	}
+	if d := e.drafts(); len(d) != 1 || d[0].Reply != "Maqul, aniqlab yozaman" {
+		t.Fatalf("javob qoralamasi: %+v", d)
+	}
+}
+
+func TestCalendarFallbackWithoutGoogle(t *testing.T) {
+	e := newEnv(t, nil)
+	_ = e.st.UpsertAccount(context.Background(), store.Account{OwnerID: owner, Status: store.StatusActive})
+	loc, _ := time.LoadLocation("Asia/Tashkent")
+	fa := &fakeAssistant{resp: llm.Response{
+		Text:  "Maqul",
+		Event: &llm.Event{Title: "Uchrashuv", Start: time.Date(2026, 10, 14, 15, 0, 0, 0, loc), Duration: time.Hour},
+		Task:  &llm.Task{Title: "Vazifa"},
+	}}
+	e.p.LLM, e.p.Google, e.p.CalendarFallback = fa, &fakeGoogle{connected: false}, true
+	var proposed []string
+	e.p.Propose = func(_ context.Context, _, _ int64, text string) { proposed = append(proposed, text) }
+	e.p.Handle(context.Background(), in("ertaga 15:00?", true))
+	if fa.assists != 1 || fa.last.Assist.Google || len(fa.last.Assist.Busy) != 0 {
+		t.Fatalf("assist: %d %+v", fa.assists, fa.last.Assist)
+	}
+	if len(proposed) != 1 || !strings.Contains(proposed[0], "Uchrashuv") {
+		t.Fatalf("faqat uchrashuv taklif qilinishi kerak: %q", proposed)
+	}
+	// Sozlamada o'chirilsa — oddiy javob.
+	e2 := newEnv(t, func(s *config.Settings) { s.NoSuggest = true })
+	fa2 := &fakeAssistant{fakeLLM: fakeLLM{reply: "x"}}
+	e2.p.LLM, e2.p.CalendarFallback = fa2, true
+	e2.p.Propose = func(context.Context, int64, int64, string) {}
+	e2.p.Handle(context.Background(), in("salom", true))
+	if fa2.assists != 0 || fa2.calls != 1 {
+		t.Fatal("takliflar o'chiq bo'lsa Assist chaqirilmasligi kerak")
+	}
+}
+
+func TestGoogleNotConnectedUsesPlainReply(t *testing.T) {
+	e := newEnv(t, nil)
+	fa := &fakeAssistant{fakeLLM: fakeLLM{reply: "Salom"}}
+	e.p.LLM = fa
+	e.p.Google = &fakeGoogle{connected: false}
+	e.p.Propose = func(context.Context, int64, int64, string) { t.Fatal("taklif bo'lmasligi kerak") }
+	e.p.Handle(context.Background(), in("salom", true))
+	if fa.assists != 0 || fa.calls != 1 {
+		t.Fatalf("assists=%d calls=%d", fa.assists, fa.calls)
+	}
+}
+
+func TestProposalsGuardedAndLimited(t *testing.T) {
+	e := newEnv(t, nil)
+	_ = e.st.UpsertAccount(context.Background(), store.Account{OwnerID: owner, Status: store.StatusActive})
+	fa := &fakeAssistant{resp: llm.Response{Text: "ok", Task: &llm.Task{Title: "https://evil.example ga kiring"}}}
+	e.p.LLM, e.p.Google = fa, &fakeGoogle{connected: true}
+	n := 0
+	e.p.Propose = func(context.Context, int64, int64, string) { n++ }
+	e.p.Handle(context.Background(), in("salom", true))
+	if n != 0 {
+		t.Fatal("havolali nom taklif qilinmasligi kerak")
+	}
+	fa.resp.Task = &llm.Task{Title: "Qo'ng'iroq qilish"}
+	for i := 0; i < 8; i++ {
+		e.p.Handle(context.Background(), in("salom", true))
+	}
+	if n != 5 {
+		t.Fatalf("takliflar cheklanishi kerak: %d", n)
+	}
+}
+
+func TestDraftCardInBot(t *testing.T) {
+	e := newEnv(t, func(s *config.Settings) { s.DraftsInBot = true })
+	var cards []store.Draft
+	notified := 0
+	e.p.Notify = func(context.Context, int64, string, bool) { notified++ }
+	e.p.DraftCard = func(_ context.Context, d store.Draft, _ string) error { cards = append(cards, d); return nil }
+	e.p.Handle(context.Background(), in("qalaysan?", true))
+	if len(cards) != 1 || cards[0].ID == 0 || cards[0].Reply != "Yaxshi, rahmat!" || notified != 0 {
+		t.Fatalf("karta: %+v notified=%d", cards, notified)
+	}
+	// Sozlama o'chiq bo'lsa — oddiy bildirishnoma.
+	e2 := newEnv(t, nil)
+	e2.p.Notify = func(context.Context, int64, string, bool) { notified++ }
+	e2.p.DraftCard = func(context.Context, store.Draft, string) error { t.Fatal("karta yuborilmasligi kerak"); return nil }
+	e2.p.Handle(context.Background(), in("qalaysan?", true))
+	if notified != 1 {
+		t.Fatal("bildirishnoma kerak")
+	}
+}
+
+func voiceIn(text string, loaded *int) Incoming {
+	i := in(text, true)
+	i.Voice = &Voice{Duration: 5, Load: func(context.Context) ([]byte, error) { *loaded++; return []byte("OGG"), nil }}
+	return i
+}
+
+func TestVoiceMessages(t *testing.T) {
+	// O'chiq: faqat ovoz — o'tkazib yuboriladi, fayl yuklanmaydi.
+	e := newEnv(t, auto)
+	loaded := 0
+	e.p.Handle(context.Background(), voiceIn(VoiceText, &loaded))
+	if e.llm.calls != 0 || loaded != 0 {
+		t.Fatal("ovozga javob o'chiq bo'lsa model chaqirilmasligi kerak")
+	}
+	// O'chiq, lekin matn ham bor — matnga javob, audio yo'q.
+	e.p.Handle(context.Background(), voiceIn(VoiceText+"\nsalom", &loaded))
+	if e.llm.calls != 1 || e.llm.last.Audio != nil || e.llm.last.Incoming != "salom" || loaded != 0 {
+		t.Fatalf("matn qismi: calls=%d %+v", e.llm.calls, e.llm.last)
+	}
+
+	// Yoqilgan: audio modelga boradi, avto rejimda ham faqat qoralama.
+	e = newEnv(t, func(s *config.Settings) { s.Mode = config.ModeAuto; s.ReplyVoice = true })
+	e.p.Handle(context.Background(), voiceIn(VoiceText, &loaded))
+	if loaded != 1 || e.llm.last.Audio == nil || string(e.llm.last.Audio.Data) != "OGG" {
+		t.Fatalf("audio: %+v", e.llm.last.Audio)
+	}
+	if e.tg.sentCount() != 0 || len(e.drafts()) != 1 || !strings.Contains(e.drafts()[0].Reason, "ovozli") {
+		t.Fatalf("ovozga javob faqat qoralama: sent=%d drafts=%+v", e.tg.sentCount(), e.drafts())
+	}
+	// Juda uzun ovoz yuborilmaydi.
+	long := voiceIn(VoiceText, &loaded)
+	long.Voice.Duration = 600
+	e.p.Handle(context.Background(), long)
+	if loaded != 1 {
+		t.Fatal("uzun ovoz yuklanmasligi kerak")
+	}
+}
+
+func TestVoiceMergedByDebounce(t *testing.T) {
+	e := newEnv(t, func(s *config.Settings) { s.ReplyVoice = true })
+	loaded := 0
+	e.p.Submit(context.Background(), in("salom", true))
+	e.p.Submit(context.Background(), voiceIn(VoiceText, &loaded))
+	e.p.Wait()
+	if e.llm.calls != 1 || e.llm.last.Audio == nil || !strings.Contains(e.llm.last.Incoming, "salom") {
+		t.Fatalf("birlashtirish: calls=%d %+v", e.llm.calls, e.llm.last)
 	}
 }
