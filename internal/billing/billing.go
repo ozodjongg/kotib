@@ -124,6 +124,11 @@ func (s *Service) Status(ctx context.Context, owner int64) (Status, error) {
 	if !s.Enabled() {
 		return Status{Active: true}, nil
 	}
+	if p, linked := s.payer(ctx, owner); linked {
+		st, err := s.Status(ctx, p)
+		st.Active = st.Active && st.HasPro // qo'shimcha akkaunt — Pro funksiyasi
+		return st, err
+	}
 	st := Status{Enabled: true, Price: s.Price, ProPrice: s.PriceOf(TierPro), TrialDays: s.TrialDays, TrialDaily: s.TrialDailyLimit}
 	if s.Exempt[owner] {
 		st.Active, st.Exempt, st.Tier, st.HasPro = true, true, TierPro, true
@@ -161,6 +166,9 @@ func (s *Service) Entitled(ctx context.Context, owner int64) bool {
 	if !s.Enabled() || s.Exempt[owner] {
 		return true
 	}
+	if p, linked := s.payer(ctx, owner); linked {
+		return s.HasPro(ctx, p) && s.Entitled(ctx, p)
+	}
 	sub, err := s.subscription(ctx, owner)
 	if err != nil {
 		if !errors.Is(err, store.ErrNotFound) {
@@ -184,6 +192,9 @@ func (s *Service) HistoryLimit(ctx context.Context, owner int64) int {
 	if !s.Enabled() || s.Exempt[owner] {
 		return HistoryPaid
 	}
+	if p, linked := s.payer(ctx, owner); linked {
+		return s.HistoryLimit(ctx, p)
+	}
 	sub, err := s.Store.GetSubscription(ctx, owner)
 	if err == nil && sub.Premium(s.now()) {
 		if s.Tiered() && tierOf(sub) == TierPro {
@@ -201,6 +212,9 @@ func (s *Service) HistoryLimit(ctx context.Context, owner int64) int {
 func (s *Service) UseQuota(ctx context.Context, owner int64) bool {
 	if !s.Enabled() || s.TrialDailyLimit <= 0 || s.Exempt[owner] {
 		return true
+	}
+	if p, linked := s.payer(ctx, owner); linked {
+		return s.UseQuota(ctx, p) // sinov limiti barcha akkauntlar uchun umumiy
 	}
 	sub, err := s.subscription(ctx, owner)
 	if err != nil {
@@ -244,6 +258,9 @@ func (s *Service) subscription(ctx context.Context, owner int64) (store.Subscrip
 func (s *Service) StartTrial(ctx context.Context, owner int64) error {
 	if !s.Enabled() {
 		return nil
+	}
+	if _, linked := s.payer(ctx, owner); linked {
+		return nil // qo'shimcha akkauntning o'z sinovi yo'q
 	}
 	if _, err := s.Store.GetSubscription(ctx, owner); err == nil {
 		return nil

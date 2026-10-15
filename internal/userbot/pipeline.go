@@ -458,7 +458,7 @@ func (p *Pipeline) makeDraft(ctx context.Context, in Incoming, reply, reason str
 		p.Log.Error("create draft", "owner", p.Owner, "err", err)
 		return
 	}
-	p.Store.Audit(ctx, p.Owner, "draft_created", fmt.Sprintf("id=%d", id))
+	p.Store.Audit(ctx, p.Owner, "draft_created", fmt.Sprintf("id=%d chat=%d", id, in.ChatID))
 	if p.DraftCard != nil {
 		if st, err := p.Store.GetSettings(ctx, p.Owner); err == nil && st.DraftsInBot {
 			d := store.Draft{ID: id, OwnerID: p.Owner, ChatID: in.ChatID, Incoming: in.Text, Reply: reply, Reason: reason}

@@ -70,6 +70,8 @@ type Settings struct {
 	ReplyVoice bool `json:"reply_voice,omitempty"`
 	// NoDigest — kechki xulosani o'chirish (default yoqiq).
 	NoDigest bool `json:"no_digest,omitempty"`
+	// NoWeekly — haftalik hisobotni (Pro, dushanba 9:00) o'chirish (default yoqiq).
+	NoWeekly bool `json:"no_weekly,omitempty"`
 	// NoFollowups — "keyinroq yozaman" va'dalari eslatmasini o'chirish (default yoqiq).
 	NoFollowups    bool       `json:"no_followups,omitempty"`
 	DefaultPersona string     `json:"default_persona"` // preset kaliti

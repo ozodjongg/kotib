@@ -27,6 +27,8 @@ type Memory struct {
 	follow   map[[2]int64]Followup
 	refCodes map[int64]string // owner → kod
 	refs     map[int64]Referral
+	links    map[int64]Link
+	ltokens  map[string]LinkToken
 }
 
 type usageKey struct {
@@ -55,6 +57,8 @@ func NewMemory() *Memory {
 		follow:   map[[2]int64]Followup{},
 		refCodes: map[int64]string{},
 		refs:     map[int64]Referral{},
+		links:    map[int64]Link{},
+		ltokens:  map[string]LinkToken{},
 	}
 }
 
@@ -685,4 +689,95 @@ func (m *Memory) PruneFollowups(_ context.Context, before time.Time) (int64, err
 		}
 	}
 	return n, nil
+}
+
+func (m *Memory) SaveLinkToken(_ context.Context, hash []byte, t LinkToken) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ltokens[string(hash)] = t
+	return nil
+}
+
+func (m *Memory) GetLinkToken(_ context.Context, hash []byte) (LinkToken, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t, ok := m.ltokens[string(hash)]
+	if !ok {
+		return LinkToken{}, ErrNotFound
+	}
+	return t, nil
+}
+
+func (m *Memory) DeleteLinkToken(_ context.Context, hash []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.ltokens, string(hash))
+	return nil
+}
+
+func (m *Memory) AddLink(_ context.Context, l Link) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.links[l.ChildID]; ok || l.ChildID == l.ParentID {
+		return false, nil
+	}
+	if l.CreatedAt.IsZero() {
+		l.CreatedAt = time.Now()
+	}
+	m.links[l.ChildID] = l
+	return true, nil
+}
+
+func (m *Memory) GetLink(_ context.Context, child int64) (Link, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	l, ok := m.links[child]
+	if !ok {
+		return Link{}, ErrNotFound
+	}
+	return l, nil
+}
+
+func (m *Memory) ListLinks(_ context.Context, parent int64) ([]Link, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []Link
+	for _, l := range m.links {
+		if l.ParentID == parent {
+			out = append(out, l)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].ChildID < out[j].ChildID
+	})
+	return out, nil
+}
+
+func (m *Memory) DeleteLink(_ context.Context, child int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.links, child)
+	return nil
+}
+
+func (m *Memory) ListAuditSince(_ context.Context, owner int64, events []string, since time.Time, limit int) ([]AuditEntry, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	want := map[string]bool{}
+	for _, e := range events {
+		want[e] = true
+	}
+	var out []AuditEntry
+	for _, r := range m.audit {
+		if r.Owner == owner && want[r.Event] && !r.At.Before(since) {
+			out = append(out, AuditEntry{At: r.At, Event: r.Event, Detail: r.Detail})
+			if limit > 0 && len(out) >= limit {
+				break
+			}
+		}
+	}
+	return out, nil
 }

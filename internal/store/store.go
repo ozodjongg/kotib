@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"time"
 
@@ -105,6 +106,27 @@ type Followup struct {
 	CreatedAt time.Time
 }
 
+// Link — asosiy akkauntga bog'langan qo'shimcha Telegram akkaunt.
+type Link struct {
+	ChildID   int64
+	ParentID  int64
+	Label     string // "Ish", "Do'kon" — bot xabarlari va Mini App'da ko'rinadi
+	CreatedAt time.Time
+}
+
+// TokenHash — maxfiy tokenlarning bazadagi ko'rinishi (token o'zi saqlanmaydi).
+func TokenHash(token string) []byte {
+	h := sha256.Sum256([]byte(token))
+	return h[:]
+}
+
+// LinkToken — bog'lash havolasi (faqat xesh saqlanadi).
+type LinkToken struct {
+	ParentID  int64
+	Label     string
+	ExpiresAt time.Time
+}
+
 type Store interface {
 	// Account
 	UpsertAccount(ctx context.Context, a Account) error
@@ -191,6 +213,20 @@ type Store interface {
 	ListOpenFollowups(ctx context.Context, owner int64) ([]Followup, error)
 	SetFollowupStatus(ctx context.Context, owner, chatID int64, st FollowupStatus) error
 	PruneFollowups(ctx context.Context, before time.Time) (int64, error)
+
+	// Bir nechta akkaunt (DeleteAccount bularni o'chirmaydi — chaqiruvchi DeleteLink qiladi)
+	SaveLinkToken(ctx context.Context, hash []byte, t LinkToken) error
+	GetLinkToken(ctx context.Context, hash []byte) (LinkToken, error)
+	DeleteLinkToken(ctx context.Context, hash []byte) error
+	// AddLink child'ni parent'ga bog'laydi; child avval bog'langan bo'lsa false.
+	AddLink(ctx context.Context, l Link) (bool, error)
+	// GetLink child akkauntning bog'lanishi (bog'lanmagan bo'lsa ErrNotFound).
+	GetLink(ctx context.Context, child int64) (Link, error)
+	ListLinks(ctx context.Context, parent int64) ([]Link, error)
+	DeleteLink(ctx context.Context, child int64) error
+
+	// ListAuditSince — egasining since'dan keyingi berilgan hodisalari (eskidan yangiga, ko'pi bilan limit ta).
+	ListAuditSince(ctx context.Context, owner int64, events []string, since time.Time, limit int) ([]AuditEntry, error)
 
 	// Avtomatlashtirish havolasi: faqat token xeshi saqlanadi.
 	SetHook(ctx context.Context, owner int64, tokenHash []byte) error

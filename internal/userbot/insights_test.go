@@ -195,3 +195,47 @@ func TestDigestDisabled(t *testing.T) {
 		t.Fatal("o'chirilgan xulosa yuborilmasligi kerak")
 	}
 }
+
+func TestSendWeeklyReports(t *testing.T) {
+	m, st, notes := runningManager(t, &histTG{})
+	ctx := context.Background()
+	loc, _ := time.LoadLocation("Asia/Tashkent")
+	// Audit vaqti — haqiqiy hozir; hisobot — keyingi dushanba 9:10 (o'tgan hafta hozirni o'z ichiga oladi).
+	n := time.Now().In(loc)
+	monday := time.Date(n.Year(), n.Month(), n.Day(), 9, 10, 0, 0, loc).AddDate(0, 0, 1)
+	for monday.Weekday() != time.Monday {
+		monday = monday.AddDate(0, 0, 1)
+	}
+	m.SendWeeklyReports(ctx, monday)
+	if len(*notes) != 0 {
+		t.Fatalf("faoliyatsiz hisobot: %v", *notes)
+	}
+	st.Audit(ctx, owner, "draft_created", "id=1 chat=100")
+	st.Audit(ctx, owner, "draft_sent", "1")
+	st.Audit(ctx, owner, "auto_sent", "chat=100")
+
+	m.SendWeeklyReports(ctx, monday.Add(3*time.Hour)) // soat 9 emas
+	m.SendWeeklyReports(ctx, monday.AddDate(0, 0, 1)) // dushanba emas
+	if len(*notes) != 0 {
+		t.Fatal("faqat dushanba 9:00 da")
+	}
+	m.Pro = func(context.Context, int64) bool { return false }
+	m.SendWeeklyReports(ctx, monday)
+	if len(*notes) != 0 {
+		t.Fatal("Pro'siz hisobot yuborilmasligi kerak")
+	}
+	m.Pro = nil
+	m.SendWeeklyReports(ctx, monday)
+	if len(*notes) != 1 {
+		t.Fatalf("hisobot: %v", *notes)
+	}
+	for _, want := range []string{"Haftalik hisobot", "Tayyorlangan javoblar: 2", "Yuborilgan: 2", "tasdiqlash: 100%", "Shovkat aka (2)"} {
+		if !strings.Contains((*notes)[0], want) {
+			t.Errorf("hisobotda %q yo'q:\n%s", want, (*notes)[0])
+		}
+	}
+	m.SendWeeklyReports(ctx, monday.Add(30*time.Minute))
+	if len(*notes) != 1 {
+		t.Fatal("haftasiga bir marta")
+	}
+}

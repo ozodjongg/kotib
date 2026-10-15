@@ -80,6 +80,8 @@ type Billing interface {
 	InvoiceLink(ctx context.Context, owner int64, tier billing.Tier) (string, error)
 	// HasPro — Pro funksiyalari (ovoz, Google, avtomatika) ochiqmi.
 	HasPro(ctx context.Context, owner int64) bool
+	// CanLink — asosiy akkaunt yana qo'shimcha akkaunt ulay oladimi (Pro va chegara).
+	CanLink(ctx context.Context, parent int64, existing int) bool
 	Cancel(ctx context.Context, owner int64) error
 	Renew(ctx context.Context, owner int64) error
 	Referral(ctx context.Context, owner int64) (billing.ReferralInfo, error)
@@ -127,7 +129,7 @@ type ctxKey struct{}
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/me", s.auth(s.handleMe))
-	mux.HandleFunc("POST /api/consent", s.auth(s.handleConsent))
+	mux.HandleFunc("POST /api/consent", s.authMain(s.handleConsent))
 	mux.HandleFunc("GET /api/settings", s.auth(s.handleGetSettings))
 	mux.HandleFunc("PUT /api/settings", s.auth(s.handlePutSettings))
 	mux.HandleFunc("POST /api/login/phone", s.auth(s.handleLoginPhone))
@@ -144,12 +146,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/drafts/{id}/reject", s.auth(s.handleRejectDraft))
 	mux.HandleFunc("DELETE /api/account", s.auth(s.handleDeleteAccount))
 	mux.HandleFunc("GET /api/activity", s.auth(s.handleActivity))
-	mux.HandleFunc("GET /api/billing", s.auth(s.handleBilling))
-	mux.HandleFunc("POST /api/billing/invoice", s.auth(s.handleInvoice))
-	mux.HandleFunc("POST /api/billing/cancel", s.auth(s.handleBillingCancel))
-	mux.HandleFunc("POST /api/billing/renew", s.auth(s.handleBillingRenew))
-	mux.HandleFunc("GET /api/referral", s.auth(s.handleReferral))
+	mux.HandleFunc("GET /api/billing", s.authMain(s.handleBilling))
+	mux.HandleFunc("POST /api/billing/invoice", s.authMain(s.handleInvoice))
+	mux.HandleFunc("POST /api/billing/cancel", s.authMain(s.handleBillingCancel))
+	mux.HandleFunc("POST /api/billing/renew", s.authMain(s.handleBillingRenew))
+	mux.HandleFunc("GET /api/referral", s.authMain(s.handleReferral))
 	mux.HandleFunc("POST /api/away", s.auth(s.handleAway))
+	mux.HandleFunc("GET /api/stats", s.auth(s.handleStats))
+	mux.HandleFunc("GET /api/accounts", s.authMain(s.handleAccounts))
+	mux.HandleFunc("POST /api/accounts/link", s.authMain(s.handleAccountLink))
+	mux.HandleFunc("DELETE /api/accounts/{id}", s.authMain(s.handleAccountUnlink))
 	mux.HandleFunc("POST /api/google/connect", s.auth(s.handleGoogleConnect))
 	mux.HandleFunc("POST /api/google/disconnect", s.auth(s.handleGoogleDisconnect))
 	mux.HandleFunc("GET /oauth/google/callback", s.handleGoogleCallback)
@@ -208,8 +214,19 @@ func secureHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// auth: "Authorization: tma <initData>" sarlavhasini tekshiradi, egasini kontekstga qo'yadi.
+// auth: "Authorization: tma <initData>" sarlavhasini tekshiradi. Handler'ga tanlangan akkaunt
+// (X-Kotib-Account — asosiy yoki unga bog'langan qo'shimcha akkaunt) beriladi; asosiy akkaunt
+// kontekstda (mainOwner).
 func (s *Server) auth(next func(http.ResponseWriter, *http.Request, int64)) http.HandlerFunc {
+	return s.authWith(next, false)
+}
+
+// authMain — har doim asosiy akkaunt (obuna, referal, akkauntlar ro'yxati, rozilik).
+func (s *Server) authMain(next func(http.ResponseWriter, *http.Request, int64)) http.HandlerFunc {
+	return s.authWith(next, true)
+}
+
+func (s *Server) authWith(next func(http.ResponseWriter, *http.Request, int64), mainOnly bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		const pfx = "tma "
 		hdr := r.Header.Get("Authorization")
@@ -236,8 +253,39 @@ func (s *Server) auth(next func(http.ResponseWriter, *http.Request, int64)) http
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 256<<10)
-		next(w, r, u.ID)
+		// Qo'shimcha akkaunt Mini App'ni o'zi ochsa — boshqaruv asosiy akkauntda.
+		if _, err := s.Store.GetLink(r.Context(), u.ID); err == nil {
+			httpErr(w, http.StatusForbidden, "bu akkaunt asosiy akkauntingizdagi Kotib orqali boshqariladi")
+			return
+		}
+		owner := u.ID
+		if v := r.Header.Get(AccountHeader); v != "" && !mainOnly {
+			id, err := strconv.ParseInt(v, 10, 64)
+			if err != nil {
+				httpErr(w, 400, "akkaunt noto'g'ri")
+				return
+			}
+			if id != u.ID {
+				if l, err := s.Store.GetLink(r.Context(), id); err != nil || l.ParentID != u.ID {
+					httpErr(w, http.StatusForbidden, "bu akkaunt sizga tegishli emas")
+					return
+				}
+				owner = id
+			}
+		}
+		next(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, u.ID)), owner)
 	}
+}
+
+// AccountHeader — Mini App tanlagan akkaunt (bo'sh — asosiy).
+const AccountHeader = "X-Kotib-Account"
+
+// mainOwner — so'rov egasining asosiy akkaunti (auth qo'yadi).
+func mainOwner(r *http.Request, fallback int64) int64 {
+	if v, ok := r.Context().Value(ctxKey{}).(int64); ok {
+		return v
+	}
+	return fallback
 }
 
 // allowAuthFailure — yaroqsiz initData'li so'rovlar uchun umumiy chegara
@@ -330,6 +378,12 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request, owner int64) {
 		out["stats"] = map[string]any{"month_sent": n, "month_saved_min": int(saved / time.Minute), "month_saved": store.FormatSaved(saved)}
 	}
 	out["bot_username"] = s.BotUsername
+	// Bir nechta akkaunt: tanlangan akkaunt va ro'yxat (almashtirgich uchun).
+	main := mainOwner(r, owner)
+	list, _ := s.accountList(r.Context(), main)
+	out["accounts"] = list
+	out["account_id"] = owner
+	out["main_id"] = main
 	writeJSON(w, 200, out)
 }
 
@@ -634,6 +688,22 @@ func (s *Server) handleDeleteAccount(w http.ResponseWriter, r *http.Request, own
 	if !readJSON(w, r, &in) || in.Confirm != "DELETE" {
 		httpErr(w, 400, `tasdiqlash uchun "DELETE" yuboring`)
 		return
+	}
+	if main := mainOwner(r, owner); main != owner {
+		// Qo'shimcha akkaunt tanlangan: faqat o'sha akkaunt uziladi, asosiysi tegilmaydi.
+		if err := s.unlink(r.Context(), main, owner); err != nil {
+			httpErr(w, 500, "o'chirishda xatolik")
+			return
+		}
+		writeJSON(w, 200, map[string]bool{"ok": true})
+		return
+	}
+	if ls, err := s.Store.ListLinks(r.Context(), owner); err == nil {
+		for _, l := range ls {
+			if err := s.unlink(r.Context(), owner, l.ChildID); err != nil {
+				s.logger().Warn("unlink on delete", "owner", owner, "child", l.ChildID, "err", err)
+			}
+		}
 	}
 	if s.Billing != nil {
 		// Akkaunt o'chirilsa, keyingi oy pul yechilmasin.

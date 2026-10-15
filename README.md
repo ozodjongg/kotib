@@ -137,6 +137,8 @@ Ikkala bildirishnoma Sozlamalarda o'chiriladi. Tekshiruv har 5 daqiqada, faqat b
 | 🎤 Ovozli xabarlarga javob | — | ✅ |
 | 📅 Google Calendar / Contacts / Tasks | — | ✅ |
 | 📱 Telefon avtomatikasi (Shortcuts / MacroDroid havolasi) | — | ✅ |
+| 👥 Bir nechta Telegram akkaunt (+2 ta) | — | ✅ |
+| 📊 Kengaytirilgan statistika va haftalik hisobot | — | ✅ |
 
 - **Sinov** davrida Pro funksiyalari ochiq (kunlik limit va 8 xabarlik kontekst bilan) — mijoz tatib ko'rib tanlaydi.
 - **Tarif almashtirish** (Advanced ↔ Pro): Mini App → Hisob yoki `/obuna`. Yangi tarif to'langach eski obunaning avtomatik
@@ -165,6 +167,33 @@ To'lov xavfsizligi:
 - Payload tasodifiy nonce bilan; har `telegram_payment_charge_id` bir marta hisoblanadi (takroriy update'dan himoya).
 - Faol obunada ikkinchi to'lov havolasi berilmaydi (ikki marta yechilmasin).
 - `payments`/`subscriptions` akkaunt o'chirilganda ham saqlanadi (faqat ID, sana, summa — xabar matni yo'q).
+
+## Bir nechta Telegram akkaunt (Pro)
+
+Asosiy akkauntga yana **2 tagacha** Telegram akkaunt (ish, do'kon) ulanadi. Har biri o'z sessiyasi, sozlamasi,
+qoidalari va qoralamalari bilan ishlaydi; obuna va boshqaruv — asosiy akkauntda.
+
+Ulash (begona akkauntni "ulab olish"dan himoya — qo'shiladigan akkaunt egasi o'zi rozilik beradi):
+1. Mini App → Hisob → Akkauntlar → «Akkaunt qo'shish»: nom va `t.me/<bot>?start=link_<token>` havola (30 daqiqa, bir martalik; bazada faqat xeshi).
+2. Havolani **qo'shiladigan akkauntdan** ochish → bot rozilik matnini ko'rsatadi → «Roziman».
+3. Mini App'da shu akkauntni tanlab Telegram'ga ulash (login faqat aynan shu akkaunt tasdiqlasa o'tadi).
+
+- Mini App yuqorisida akkaunt almashtirgich; tanlangan akkaunt `X-Kotib-Account` sarlavhasi bilan yuboriladi va server uning asosiy akkauntga bog'langanini tekshiradi.
+  Obuna, referal va akkauntlar ro'yxati har doim asosiy akkaunt bo'yicha.
+- Qo'shimcha akkauntning bot xabarlari (qoralama kartalari, xulosa, eslatmalar) asosiy akkaunt chatiga «👤 nom» bilan keladi; tugmalar u yerdan ishlaydi.
+  `/pause` va `/resume` barcha akkauntlarga, `/status` ularni ham ko'rsatadi.
+- Qo'shimcha akkaunt faqat asosiysi Pro (yoki sinov) bo'lsa ishlaydi; sinovdagi kunlik limit umumiy.
+  Kotib'da alohida ishlatilayotgan akkauntni qo'shib bo'lmaydi; qo'shimcha akkaunt Mini App'ni o'zi ocholmaydi.
+- Uzish: Hisob → Akkauntlar → «Uzish» (sessiya tugatiladi, ma'lumotlari o'chadi). Asosiy akkaunt o'chirilsa, qo'shimchalari ham uziladi.
+
+## Kengaytirilgan statistika (Pro)
+
+Mini App → «📊 Batafsil statistika» (`GET /api/stats?days=7|30`): tayyorlangan va yuborilgan javoblar (o'tgan davrga
+nisbatan o'zgarish bilan), tejalgan vaqt, qoralamalarni tasdiqlash ulushi, kunlik grafik, kontaktlar qaysi soatda
+ko'p yozishi, ko'p yozgan kontaktlar, javobsiz qoldirilganlar. Hammasi audit hodisalaridan — xabar matnisiz
+(`draft_created` va `auto_sent` detail'ida faqat suhbatdosh ID'si).
+
+**Haftalik hisobot** — har dushanba 9:00 da (egasining vaqt zonasi) bot o'tgan hafta xulosasini yuboradi; Sozlamalarda o'chiriladi.
 
 ## Do'stni taklif qilish (referal)
 

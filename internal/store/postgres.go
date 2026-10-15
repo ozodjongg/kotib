@@ -438,6 +438,103 @@ func affected(res sql.Result, err error) error {
 	return nil
 }
 
+// ---- Bir nechta akkaunt ----
+
+func (p *Postgres) SaveLinkToken(ctx context.Context, hash []byte, t LinkToken) error {
+	_, err := p.DB.ExecContext(ctx, `
+		INSERT INTO link_tokens (token_hash, parent_id, label, expires_at) VALUES ($1, $2, $3, $4)
+		ON CONFLICT (token_hash) DO UPDATE SET parent_id = EXCLUDED.parent_id, label = EXCLUDED.label,
+			expires_at = EXCLUDED.expires_at`, hash, t.ParentID, t.Label, t.ExpiresAt)
+	return err
+}
+
+func (p *Postgres) GetLinkToken(ctx context.Context, hash []byte) (LinkToken, error) {
+	var t LinkToken
+	err := p.DB.QueryRowContext(ctx, `SELECT parent_id, label, expires_at FROM link_tokens WHERE token_hash = $1`, hash).
+		Scan(&t.ParentID, &t.Label, &t.ExpiresAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return LinkToken{}, ErrNotFound
+	}
+	return t, err
+}
+
+func (p *Postgres) DeleteLinkToken(ctx context.Context, hash []byte) error {
+	// Eskirgan tokenlar ham shu yerda tozalanadi (jadval o'smasin).
+	_, err := p.DB.ExecContext(ctx, `DELETE FROM link_tokens WHERE token_hash = $1 OR expires_at < now() - interval '1 day'`, hash)
+	return err
+}
+
+func (p *Postgres) AddLink(ctx context.Context, l Link) (bool, error) {
+	if l.ChildID == l.ParentID {
+		return false, nil
+	}
+	res, err := p.DB.ExecContext(ctx, `
+		INSERT INTO linked_accounts (child_id, parent_id, label) VALUES ($1, $2, $3)
+		ON CONFLICT (child_id) DO NOTHING`, l.ChildID, l.ParentID, l.Label)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+func (p *Postgres) GetLink(ctx context.Context, child int64) (Link, error) {
+	var l Link
+	err := p.DB.QueryRowContext(ctx, `SELECT child_id, parent_id, label, created_at FROM linked_accounts WHERE child_id = $1`, child).
+		Scan(&l.ChildID, &l.ParentID, &l.Label, &l.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Link{}, ErrNotFound
+	}
+	return l, err
+}
+
+func (p *Postgres) ListLinks(ctx context.Context, parent int64) ([]Link, error) {
+	rows, err := p.DB.QueryContext(ctx, `
+		SELECT child_id, parent_id, label, created_at FROM linked_accounts WHERE parent_id = $1
+		ORDER BY created_at, child_id`, parent)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Link
+	for rows.Next() {
+		var l Link
+		if err := rows.Scan(&l.ChildID, &l.ParentID, &l.Label, &l.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) DeleteLink(ctx context.Context, child int64) error {
+	_, err := p.DB.ExecContext(ctx, `DELETE FROM linked_accounts WHERE child_id = $1`, child)
+	return err
+}
+
+func (p *Postgres) ListAuditSince(ctx context.Context, owner int64, events []string, since time.Time, limit int) ([]AuditEntry, error) {
+	if limit <= 0 {
+		limit = 50000
+	}
+	rows, err := p.DB.QueryContext(ctx, `
+		SELECT at, event, detail FROM audit
+		WHERE owner_id = $1 AND event = ANY($2) AND at >= $3
+		ORDER BY at, id LIMIT $4`, owner, events, since, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AuditEntry
+	for rows.Next() {
+		var e AuditEntry
+		if err := rows.Scan(&e.At, &e.Event, &e.Detail); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 var _ Store = (*Postgres)(nil)
 var _ Store = (*Memory)(nil)
 
