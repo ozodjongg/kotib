@@ -106,3 +106,9 @@ func CheckOutput(reply string, allowLinks bool) (ok bool, reason string) {
 	}
 	return true, ""
 }
+
+// Shoshilinch xabar belgilari (uz/ru/en). Topilsa egasiga darhol bildiriladi — tinch soatlarda ham.
+var urgent = regexp.MustCompile(`(?i)(shoshilinch|zudlik\s*bilan|tezroq\s*(javob|qo'ng'iroq|qo‘ng‘iroq|tel)|juda\s*muhim|favqulodda|avariya|kasalxona|tez\s*yordam|sos\b|срочно|экстренн|авари|больниц|скорая|urgent|emergency|\basap\b|hospital|accident|❗{2,}|‼️)`)
+
+// IsUrgent — xabar shoshilinch ko'rinadimi (birinchi qatlam: kalit so'zlar).
+func IsUrgent(text string) bool { return urgent.MatchString(text) }

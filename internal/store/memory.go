@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -29,6 +30,9 @@ type Memory struct {
 	refs     map[int64]Referral
 	links    map[int64]Link
 	ltokens  map[string]LinkToken
+	chats    map[[2]int64]ChatActivity
+	samples  []StyleSample
+	sampleID int64
 }
 
 type usageKey struct {
@@ -58,6 +62,7 @@ func NewMemory() *Memory {
 		refCodes: map[int64]string{},
 		refs:     map[int64]Referral{},
 		links:    map[int64]Link{},
+		chats:    map[[2]int64]ChatActivity{},
 		ltokens:  map[string]LinkToken{},
 	}
 }
@@ -128,6 +133,12 @@ func (m *Memory) DeleteAccount(_ context.Context, owner int64) error {
 			delete(m.follow, k)
 		}
 	}
+	for k := range m.chats {
+		if k[0] == owner {
+			delete(m.chats, k)
+		}
+	}
+	m.samples = slices.DeleteFunc(m.samples, func(x StyleSample) bool { return x.OwnerID == owner })
 	for id, a := range m.actions {
 		if a.OwnerID == owner {
 			delete(m.actions, id)

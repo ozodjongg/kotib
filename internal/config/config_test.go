@@ -184,3 +184,92 @@ func TestAwayExpiry(t *testing.T) {
 		t.Fatal("tozalash")
 	}
 }
+
+func TestPersonaMine(t *testing.T) {
+	s := Default()
+	s.DefaultPersona = PersonaMine
+	if err := s.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	c := Contact{UserID: 1, IsContact: true}
+	// Profil hali yo'q — neytral uslub.
+	if d := s.Resolve(c, noon()); d.Persona != Presets["neutral"] {
+		t.Fatalf("profilsiz: %q", d.Persona)
+	}
+	s.StyleProfile = "Juda qisqa yozadi, \"xop\" deydi."
+	if d := s.Resolve(c, noon()); !strings.Contains(d.Persona, "xop") {
+		t.Fatalf("profil: %q", d.Persona)
+	}
+	s.Rules = []Rule{{ID: "r", Match: Match{UserIDs: []int64{2}}, Persona: PersonaMine}}
+	if err := s.Validate(); err != nil {
+		t.Fatalf("qoidada mine: %v", err)
+	}
+}
+
+func TestValidateNewFields(t *testing.T) {
+	ok := Default()
+	ok.ContactNotes = map[int64]string{5: "  onam  ", 6: "   "}
+	ok.Knowledge = strings.Repeat("a", MaxKnowledge)
+	future := time.Now().AddDate(0, 0, 7)
+	ok.ShadowUntil = &future
+	if err := ok.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if ok.ContactNotes[5] != "onam" {
+		t.Fatalf("eslatma tozalanmadi: %q", ok.ContactNotes[5])
+	}
+	if _, has := ok.ContactNotes[6]; has {
+		t.Fatal("bo'sh eslatma o'chirilishi kerak")
+	}
+	far := time.Now().AddDate(0, 1, 0)
+	bad := []func(*Settings){
+		func(s *Settings) { s.Knowledge = strings.Repeat("a", MaxKnowledge+1) },
+		func(s *Settings) { s.StyleProfile = strings.Repeat("a", MaxStyleProfile+1) },
+		func(s *Settings) { s.ContactNotes = map[int64]string{-1: "x"} },
+		func(s *Settings) { s.ContactNotes = map[int64]string{1: strings.Repeat("a", MaxContactNote+1)} },
+		func(s *Settings) { s.UnansweredHours = 49 },
+		func(s *Settings) { s.StyleScore = 101 },
+		func(s *Settings) { s.ShadowUntil = &far },
+		func(s *Settings) { s.DefaultPersona = "boshqa" },
+	}
+	for i, f := range bad {
+		s := Default()
+		f(&s)
+		if s.Validate() == nil {
+			t.Errorf("#%d: xato kutilgan edi", i)
+		}
+	}
+}
+
+func TestShadowAndUnanswered(t *testing.T) {
+	s := Default()
+	now := noon()
+	if s.ShadowActive(now) {
+		t.Fatal("default soya rejimi o'chiq")
+	}
+	until := now.Add(time.Hour)
+	s.ShadowUntil = &until
+	if !s.ShadowActive(now) || s.ShadowActive(until) {
+		t.Fatal("soya rejimi muddati")
+	}
+	if s.Unanswered() != 4*time.Hour {
+		t.Fatalf("default: %v", s.Unanswered())
+	}
+	s.UnansweredHours = 2
+	if s.Unanswered() != 2*time.Hour {
+		t.Fatal("2 soat")
+	}
+	s.NoUnanswered = true
+	if s.Unanswered() != 0 {
+		t.Fatal("o'chiq")
+	}
+}
+
+func TestQuietReason(t *testing.T) {
+	s := Default()
+	loc, _ := time.LoadLocation("Asia/Tashkent")
+	d := s.Resolve(Contact{UserID: 1, IsContact: true}, time.Date(2026, 10, 13, 23, 30, 0, 0, loc))
+	if d.Reply || d.Reason != ReasonQuiet {
+		t.Fatalf("%+v", d)
+	}
+}

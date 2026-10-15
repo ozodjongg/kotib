@@ -114,6 +114,44 @@ type Link struct {
 	CreatedAt time.Time
 }
 
+// ChatActivity — chatdagi oxirgi faollik (xabar matnisiz): bugun kim yozgani (AI xulosa)
+// va javobsiz qolgan chatlar (eslatma). Nol vaqt — hali bo'lmagan.
+type ChatActivity struct {
+	OwnerID int64
+	ChatID  int64
+	Name    string // kontakt ismi (Telegram)
+	// Private — egasi kotibni bu chatdan chetlatgan (qoida, kontaktda yo'q): AI xulosa va
+	// eslatmalarga kirmaydi.
+	Private    bool
+	LastIn     time.Time // kontaktning oxirgi xabari
+	LastOut    time.Time // egasining (yoki kotibning) oxirgi xabari
+	RemindedAt time.Time // "javobsiz qoldi" eslatmasi yuborilgan vaqt
+}
+
+// Unanswered — kontakt yozgan, lekin hali javob berilmagan.
+func (a ChatActivity) Unanswered() bool { return !a.LastIn.IsZero() && a.LastIn.After(a.LastOut) }
+
+type SampleKind string
+
+const (
+	SampleShadow SampleKind = "shadow" // soya rejimi: kotib jim tayyorlagan javob va egasi yozgani
+	SampleEdit   SampleKind = "edit"   // egasi qoralamani o'zgartirib yubordi
+)
+
+// MaxStyleSamples — bitta egada saqlanadigan juftliklar chegarasi (ortig'i yozilmaydi).
+const MaxStyleSamples = 200
+
+// StyleSample — o'qitish rejimi uchun juftlik: kotib taxmini va egasi haqiqatda yozgan javob.
+type StyleSample struct {
+	ID        int64
+	OwnerID   int64
+	Kind      SampleKind
+	Incoming  string // kontakt xabari (kontekst)
+	Predicted string
+	Actual    string
+	CreatedAt time.Time
+}
+
 // TokenHash — maxfiy tokenlarning bazadagi ko'rinishi (token o'zi saqlanmaydi).
 func TokenHash(token string) []byte {
 	h := sha256.Sum256([]byte(token))
@@ -227,6 +265,28 @@ type Store interface {
 
 	// ListAuditSince — egasining since'dan keyingi berilgan hodisalari (eskidan yangiga, ko'pi bilan limit ta).
 	ListAuditSince(ctx context.Context, owner int64, events []string, since time.Time, limit int) ([]AuditEntry, error)
+
+	// Chat faolligi (xabar matnisiz; DeleteAccount o'chiradi)
+	// ChatIn kontakt xabarini qayd etadi: LastIn, Name, Private yangilanadi.
+	ChatIn(ctx context.Context, a ChatActivity) error
+	// ChatOut egasining (kotibning) xabarini qayd etadi.
+	ChatOut(ctx context.Context, owner, chatID int64, at time.Time) error
+	// ListChats — since'dan keyin faol bo'lgan chatlar (oxirgi kiruvchi xabar bo'yicha yangidan eskiga, ko'pi bilan 200).
+	ListChats(ctx context.Context, owner int64, since time.Time) ([]ChatActivity, error)
+	// ListUnanswered — barcha egalar bo'yicha: kontakt before'gacha yozgan, javob berilmagan,
+	// shu xabar uchun hali eslatilmagan va Private bo'lmagan chatlar.
+	ListUnanswered(ctx context.Context, before time.Time, limit int) ([]ChatActivity, error)
+	MarkChatReminded(ctx context.Context, owner, chatID int64, at time.Time) error
+	// PruneChats before'dan beri faolligi yo'q chatlarni o'chiradi.
+	PruneChats(ctx context.Context, before time.Time) (int64, error)
+
+	// O'qitish rejimi juftliklari (egasida MaxStyleSamples tadan ortig'i yozilmaydi)
+	AddStyleSample(ctx context.Context, s StyleSample) error
+	// ListStyleSamples — eskidan yangiga, ko'pi bilan limit ta.
+	ListStyleSamples(ctx context.Context, owner int64, limit int) ([]StyleSample, error)
+	// DeleteStyleSamples egasining ID'si upTo'gacha (shu jumladan) bo'lgan juftliklarini o'chiradi.
+	DeleteStyleSamples(ctx context.Context, owner, upTo int64) error
+	PruneStyleSamples(ctx context.Context, before time.Time) (int64, error)
 
 	// Avtomatlashtirish havolasi: faqat token xeshi saqlanadi.
 	SetHook(ctx context.Context, owner int64, tokenHash []byte) error

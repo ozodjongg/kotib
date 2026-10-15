@@ -35,7 +35,7 @@ func TestStoreContract(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if _, err := db.Exec(`TRUNCATE accounts, subscriptions, payments, usage_daily, google_links, actions, hooks, followups, referral_codes, referrals, linked_accounts, link_tokens CASCADE`); err != nil {
+		if _, err := db.Exec(`TRUNCATE accounts, subscriptions, payments, usage_daily, google_links, actions, hooks, followups, referral_codes, referrals, linked_accounts, link_tokens, chat_activity, style_samples CASCADE`); err != nil {
 			t.Fatal(err)
 		}
 		contract(t, store.NewPostgres(db))
@@ -292,6 +292,97 @@ func contract(t *testing.T, s store.Store) {
 	}
 	referralContract(t, s)
 	linkContract(t, s)
+	activityContract(t, s)
+}
+
+func activityContract(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	now := time.Now().Truncate(time.Second)
+	if err := s.UpsertAccount(ctx, store.Account{OwnerID: 30, Status: store.StatusActive, ConsentAt: &now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ChatIn(ctx, store.ChatActivity{OwnerID: 999, ChatID: 1, LastIn: now}); err == nil {
+		t.Fatal("akkauntsiz faollik yozilmasligi kerak")
+	}
+	h := func(n int) time.Time { return now.Add(time.Duration(n) * time.Hour) }
+	_ = s.ChatIn(ctx, store.ChatActivity{OwnerID: 30, ChatID: 100, Name: "Aziz", LastIn: h(-5)})
+	_ = s.ChatIn(ctx, store.ChatActivity{OwnerID: 30, ChatID: 101, Name: "Vali", LastIn: h(-6)})
+	_ = s.ChatOut(ctx, 30, 101, h(-5)) // Valiga javob berilgan
+	_ = s.ChatIn(ctx, store.ChatActivity{OwnerID: 30, ChatID: 102, Name: "Sir", Private: true, LastIn: h(-7)})
+	_ = s.ChatIn(ctx, store.ChatActivity{OwnerID: 30, ChatID: 103, LastIn: h(-1)}) // yangi — hali erta
+	_ = s.ChatOut(ctx, 30, 104, h(-48))                                            // faqat chiquvchi, eski
+
+	un, err := s.ListUnanswered(ctx, h(-4), 10)
+	if err != nil || len(un) != 1 || un[0].ChatID != 100 || un[0].Name != "Aziz" || !un[0].LastIn.Equal(h(-5)) {
+		t.Fatalf("javobsizlar: %+v %v", un, err)
+	}
+	if err := s.MarkChatReminded(ctx, 30, 100, h(-4)); err != nil {
+		t.Fatal(err)
+	}
+	if un, _ := s.ListUnanswered(ctx, h(0), 10); len(un) != 1 || un[0].ChatID != 103 {
+		t.Fatalf("eslatilgan chat qaytmasligi kerak: %+v", un)
+	}
+	// Kontakt yana yozdi — yangi xabar uchun yana eslatiladi; ism bo'sh bo'lsa eskisi saqlanadi.
+	_ = s.ChatIn(ctx, store.ChatActivity{OwnerID: 30, ChatID: 100, LastIn: h(-3)})
+	if un, _ := s.ListUnanswered(ctx, h(0), 10); len(un) != 2 || un[0].ChatID != 100 || un[0].Name != "Aziz" {
+		t.Fatalf("yangi xabar: %+v", un)
+	}
+	if err := s.MarkChatReminded(ctx, 30, 555, now); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("yo'q chat: %v", err)
+	}
+
+	cs, err := s.ListChats(ctx, 30, h(-24))
+	if err != nil || len(cs) != 4 || cs[0].ChatID != 103 {
+		t.Fatalf("chatlar: %+v %v", cs, err)
+	}
+	for _, c := range cs {
+		if c.ChatID == 102 && !c.Private {
+			t.Fatal("private saqlanishi kerak")
+		}
+		if c.ChatID == 101 && (!c.LastOut.Equal(h(-5)) || c.Unanswered()) {
+			t.Fatalf("chiquvchi: %+v", c)
+		}
+	}
+	if n, err := s.PruneChats(ctx, h(-24)); err != nil || n != 1 {
+		t.Fatalf("prune: %d %v", n, err)
+	}
+
+	// O'qitish juftliklari
+	for i := 0; i < 3; i++ {
+		if err := s.AddStyleSample(ctx, store.StyleSample{OwnerID: 30, Kind: store.SampleEdit, Incoming: "salom", Predicted: "Assalomu alaykum", Actual: "salom"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = s.AddStyleSample(ctx, store.StyleSample{OwnerID: 30, Kind: store.SampleShadow, Predicted: "ok", Actual: "xop"})
+	ss, err := s.ListStyleSamples(ctx, 30, 2)
+	if err != nil || len(ss) != 2 || ss[0].Kind != store.SampleEdit || ss[0].Actual != "salom" || ss[0].ID >= ss[1].ID {
+		t.Fatalf("juftliklar: %+v %v", ss, err)
+	}
+	if err := s.DeleteStyleSamples(ctx, 30, ss[1].ID); err != nil {
+		t.Fatal(err)
+	}
+	if ss, _ := s.ListStyleSamples(ctx, 30, 0); len(ss) != 2 || ss[1].Kind != store.SampleShadow {
+		t.Fatalf("o'chirilgandan keyin: %+v", ss)
+	}
+	if n, err := s.PruneStyleSamples(ctx, time.Now().Add(time.Minute)); err != nil || n != 2 {
+		t.Fatalf("prune juftliklar: %d %v", n, err)
+	}
+	for i := 0; i < store.MaxStyleSamples+3; i++ {
+		_ = s.AddStyleSample(ctx, store.StyleSample{OwnerID: 30, Kind: store.SampleEdit, Predicted: "a", Actual: "b"})
+	}
+	if ss, _ := s.ListStyleSamples(ctx, 30, 0); len(ss) != store.MaxStyleSamples {
+		t.Fatalf("chegara: %d", len(ss))
+	}
+
+	if err := s.DeleteAccount(ctx, 30); err != nil {
+		t.Fatal(err)
+	}
+	if cs, _ := s.ListChats(ctx, 30, time.Time{}); len(cs) != 0 {
+		t.Fatal("faollik akkaunt bilan o'chirilishi kerak")
+	}
+	if ss, _ := s.ListStyleSamples(ctx, 30, 0); len(ss) != 0 {
+		t.Fatal("juftliklar akkaunt bilan o'chirilishi kerak")
+	}
 }
 
 func referralContract(t *testing.T, s store.Store) {

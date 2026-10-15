@@ -73,15 +73,90 @@ type Settings struct {
 	// NoWeekly — haftalik hisobotni (Pro, dushanba 9:00) o'chirish (default yoqiq).
 	NoWeekly bool `json:"no_weekly,omitempty"`
 	// NoFollowups — "keyinroq yozaman" va'dalari eslatmasini o'chirish (default yoqiq).
-	NoFollowups    bool       `json:"no_followups,omitempty"`
-	DefaultPersona string     `json:"default_persona"` // preset kaliti
-	DefaultCustom  string     `json:"default_custom,omitempty"`
-	OwnerName      string     `json:"owner_name"` // mijoz ismi — "men X man" kontekst uchun
-	Language       string     `json:"language"`   // "uz", "ru", "auto"
-	Quiet          QuietHours `json:"quiet_hours"`
-	Rules          []Rule     `json:"rules"`
+	NoFollowups bool `json:"no_followups,omitempty"`
+	// SmartDigest — kechki xulosaga AI mazmun xulosasi ham qo'shiladi (Pro, default o'chiq):
+	// bugungi yozishmalar Gemini'ga yuboriladi, natija faqat bot chatiga keladi va saqlanmaydi.
+	SmartDigest bool `json:"smart_digest,omitempty"`
+	// MorningBrief — har kuni 8:00 da ertalabki brifing: tunda kim yozdi, kutayotgan qoralamalar,
+	// bugungi taqvim (default o'chiq). SmartDigest yoqiq bo'lsa — tungi xabarlar AI xulosasi bilan.
+	MorningBrief bool `json:"morning_brief,omitempty"`
+	// NoUrgent — shoshilinch xabar ogohlantirishini o'chirish (default yoqiq; tinch soatlarda ham ishlaydi).
+	NoUrgent bool `json:"no_urgent,omitempty"`
+	// NoUnanswered — "javobsiz qoldi" eslatmasini o'chirish (default yoqiq).
+	NoUnanswered bool `json:"no_unanswered,omitempty"`
+	// UnansweredHours — kontakt yozganiga shuncha soat bo'lib javob berilmasa eslatiladi (0 → 4).
+	UnansweredHours int `json:"unanswered_hours,omitempty"`
+	// TranscribeVoice — kontaktning ovozli xabari matnga o'girilib bot chatiga yuboriladi (Pro, default o'chiq).
+	TranscribeVoice bool `json:"transcribe_voice,omitempty"`
+	// ReplyPhotos — rasmli xabarlarga ham javob tayyorlash (Pro, default o'chiq). Rasm matn
+	// filtridan o'tolmaydi, shuning uchun javob har doim faqat qoralama.
+	ReplyPhotos bool `json:"reply_photos,omitempty"`
+	// NoBirthdays — Google Contacts'dagi tug'ilgan kunlarda tabrik qoralamasini taklif qilmaslik.
+	NoBirthdays bool `json:"no_birthdays,omitempty"`
+	// Learn — o'qitish rejimi: tahrirlangan qoralamalar va soya rejimi javoblaridan uslub
+	// profili har kuni yangilanadi (default o'chiq).
+	Learn bool `json:"learn,omitempty"`
+	// StyleProfile — egasining yozish uslubi ("O'zimdek" personasi, kalit "mine").
+	// O'qitish rejimi yaratadi, egasi Mini App'da ko'radi va tahrirlay oladi.
+	StyleProfile string `json:"style_profile,omitempty"`
+	// StyleUpdatedAt, StyleScore — profil oxirgi yangilangan vaqt va kotib javoblarining
+	// egasinikiga oxirgi moslik bahosi (0–100; 0 — hali baholanmagan). Faqat server yozadi.
+	StyleUpdatedAt *time.Time `json:"style_updated_at,omitempty"`
+	StyleScore     int        `json:"style_score,omitempty"`
+	// ShadowUntil — soya rejimi shu vaqtgacha: kotib javobni jim tayyorlaydi, hech narsa
+	// yubormaydi va bildirmaydi; egasi o'zi yozgach, ikkalasi o'qitish uchun solishtiriladi.
+	ShadowUntil *time.Time `json:"shadow_until,omitempty"`
+	// Knowledge — bilim bazasi (narxlar, ish vaqti, xizmatlar...): kotib javobda shundan foydalanadi.
+	Knowledge string `json:"knowledge,omitempty"`
+	// ContactNotes: userID → egasining kontakt haqidagi eslatmasi ("onam", "loyiha X bo'yicha hamkor").
+	ContactNotes   map[int64]string `json:"contact_notes,omitempty"`
+	DefaultPersona string           `json:"default_persona"` // preset kaliti
+	DefaultCustom  string           `json:"default_custom,omitempty"`
+	OwnerName      string           `json:"owner_name"` // mijoz ismi — "men X man" kontekst uchun
+	Language       string           `json:"language"`   // "uz", "ru", "auto"
+	Quiet          QuietHours       `json:"quiet_hours"`
+	Rules          []Rule           `json:"rules"`
 	// ContactTags: userID → teglar. Mini App kontaktlarga teg beradi.
 	ContactTags map[int64][]string `json:"contact_tags,omitempty"`
+}
+
+// Uzunlik chegaralari (Mini App'dan keladigan matnlar).
+const (
+	MaxStyleProfile = 2000
+	MaxKnowledge    = 4000
+	MaxContactNote  = 300
+	maxNotes        = 1000
+	// MaxShadowDays — soya rejimini bir martada shuncha kungacha yoqish mumkin.
+	MaxShadowDays = 14
+	// DefaultUnansweredHours — UnansweredHours berilmaganda.
+	DefaultUnansweredHours = 4
+)
+
+// PersonaMine — egasining o'z uslubi (StyleProfile).
+const PersonaMine = "mine"
+
+// Resolve sabablari: tinch soatlar (shoshilinch ogohlantirish shunda ham ishlaydi) va
+// kotib umuman o'chirilgan.
+const (
+	ReasonQuiet = "tinch soatlar"
+	ReasonOff   = "o'chirilgan"
+)
+
+// ShadowActive — soya rejimi now paytida yoqiqmi.
+func (s *Settings) ShadowActive(now time.Time) bool {
+	return s.ShadowUntil != nil && now.Before(*s.ShadowUntil)
+}
+
+// Unanswered — "javobsiz qoldi" eslatmasi muddati; 0 — o'chiq.
+func (s *Settings) Unanswered() time.Duration {
+	if s.NoUnanswered {
+		return 0
+	}
+	h := s.UnansweredHours
+	if h <= 0 {
+		h = DefaultUnansweredHours
+	}
+	return time.Duration(h) * time.Hour
 }
 
 // MaxAway — Settings.Away uzunligi chegarasi.
@@ -148,7 +223,7 @@ func (s *Settings) Validate() error {
 	if !s.Mode.Valid() {
 		return fmt.Errorf("noto'g'ri mode: %q", s.Mode)
 	}
-	if _, ok := Presets[s.DefaultPersona]; !ok && s.DefaultPersona != "custom" {
+	if !validPersona(s.DefaultPersona) {
 		return fmt.Errorf("noma'lum default_persona: %q", s.DefaultPersona)
 	}
 	if utf8.RuneCountInString(s.DefaultCustom) > maxCustomLen {
@@ -159,6 +234,35 @@ func (s *Settings) Validate() error {
 	}
 	if utf8.RuneCountInString(s.Away) > MaxAway || strings.ContainsAny(s.Away, "\r\n") {
 		return errors.New("away juda uzun yoki ko'p qatorli")
+	}
+	if utf8.RuneCountInString(s.StyleProfile) > MaxStyleProfile {
+		return errors.New("style_profile juda uzun")
+	}
+	if utf8.RuneCountInString(s.Knowledge) > MaxKnowledge {
+		return errors.New("knowledge juda uzun")
+	}
+	if s.UnansweredHours < 0 || s.UnansweredHours > 48 {
+		return errors.New("unanswered_hours 0–48 bo'lishi kerak")
+	}
+	if s.StyleScore < 0 || s.StyleScore > 100 {
+		return errors.New("style_score 0–100 bo'lishi kerak")
+	}
+	if s.ShadowUntil != nil && s.ShadowUntil.After(time.Now().AddDate(0, 0, MaxShadowDays+1)) {
+		return fmt.Errorf("soya rejimi %d kundan oshmasligi kerak", MaxShadowDays)
+	}
+	if len(s.ContactNotes) > maxNotes {
+		return errors.New("contact_notes juda ko'p")
+	}
+	for uid, n := range s.ContactNotes {
+		n = strings.TrimSpace(n)
+		if uid <= 0 || utf8.RuneCountInString(n) > MaxContactNote {
+			return errors.New("kontakt eslatmasi noto'g'ri yoki juda uzun")
+		}
+		if n == "" {
+			delete(s.ContactNotes, uid)
+			continue
+		}
+		s.ContactNotes[uid] = n
 	}
 	switch s.Language {
 	case "uz", "ru", "en", "auto":
@@ -192,10 +296,8 @@ func (s *Settings) Validate() error {
 		if r.Mode != nil && !r.Mode.Valid() {
 			return fmt.Errorf("qoida %s: noto'g'ri mode", r.ID)
 		}
-		if r.Persona != "" && r.Persona != "custom" {
-			if _, ok := Presets[r.Persona]; !ok {
-				return fmt.Errorf("qoida %s: noma'lum persona", r.ID)
-			}
+		if r.Persona != "" && !validPersona(r.Persona) {
+			return fmt.Errorf("qoida %s: noma'lum persona", r.ID)
 		}
 		if utf8.RuneCountInString(r.Custom) > maxCustomLen {
 			return fmt.Errorf("qoida %s: custom juda uzun", r.ID)
@@ -280,7 +382,7 @@ func (s *Settings) Resolve(c Contact, now time.Time) Decision {
 	no := func(why string) Decision { return Decision{Reply: false, Mode: ModeOff, Reason: why} }
 
 	if s.Mode == ModeOff {
-		return no("o'chirilgan")
+		return no(ReasonOff)
 	}
 	if IsTelegramService(c.UserID) {
 		return no("Telegram xizmati")
@@ -299,7 +401,7 @@ func (s *Settings) Resolve(c Contact, now time.Time) Decision {
 		return no("kontaktda yo'q")
 	}
 	if s.inQuiet(now) {
-		return no("tinch soatlar")
+		return no(ReasonQuiet)
 	}
 
 	d := Decision{Reply: true, Mode: s.Mode, Persona: s.personaText(s.DefaultPersona, s.DefaultCustom)}
@@ -331,9 +433,27 @@ func (s *Settings) Resolve(c Contact, now time.Time) Decision {
 	return d
 }
 
+// ResolveIgnoringQuiet — Resolve, tinch soatlarsiz: egasining o'z so'rovlari (/sor, uslub
+// o'rganish, tabrik) uchun chat kotibga ochiqmi va qaysi uslub.
+func (s *Settings) ResolveIgnoringQuiet(c Contact) Decision {
+	cp := *s
+	cp.Quiet.Enabled = false
+	return cp.Resolve(c, time.Now())
+}
+
+func validPersona(key string) bool {
+	_, ok := Presets[key]
+	return ok || key == "custom" || key == PersonaMine
+}
+
 func (s *Settings) personaText(key, custom string) string {
 	if key == "custom" {
 		return strings.TrimSpace(custom)
+	}
+	if key == PersonaMine {
+		if p := strings.TrimSpace(s.StyleProfile); p != "" {
+			return "Egasining o'z yozish uslubiga to'liq moslash (uning haqiqiy yozishmalaridan olingan):\n" + p
+		}
 	}
 	if t, ok := Presets[key]; ok {
 		return t
@@ -388,6 +508,9 @@ func (s *Settings) Location() *time.Location {
 	}
 	return time.FixedZone("Asia/Tashkent", 5*60*60)
 }
+
+// InQuiet — now tinch soatlarga to'g'ri keladimi.
+func (s *Settings) InQuiet(now time.Time) bool { return s.inQuiet(now) }
 
 func (s *Settings) inQuiet(now time.Time) bool {
 	if !s.Quiet.Enabled {

@@ -53,6 +53,8 @@ type LoginState struct {
 type ContactInfo struct {
 	ID   int64  `json:"id"`
 	Name string `json:"name"`
+	// Phone — faqat raqamlar (tug'ilgan kunni Google kontakti bilan moslash uchun); Mini App'ga berilmaydi.
+	Phone string `json:"-"`
 }
 
 // Controller — Mini App userbot menejeriga murojaat qiladigan interfeys.
@@ -71,6 +73,9 @@ type Controller interface {
 	SendDraft(ctx context.Context, owner int64, d store.Draft) error
 	// Contacts mijozning Telegram kontaktlari (qoidalarda kontakt tanlash uchun).
 	Contacts(ctx context.Context, owner int64) ([]ContactInfo, error)
+	// StartLearnStyle oxirgi yozishmalardan uslub profilini fonda yaratadi (natija bot orqali).
+	// Xato matni foydalanuvchiga ko'rsatiladi.
+	StartLearnStyle(ctx context.Context, owner int64) error
 }
 
 // Billing — Telegram Stars obunasi (billing.Service). nil → to'lov o'chiq.
@@ -152,6 +157,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/billing/renew", s.authMain(s.handleBillingRenew))
 	mux.HandleFunc("GET /api/referral", s.authMain(s.handleReferral))
 	mux.HandleFunc("POST /api/away", s.auth(s.handleAway))
+	mux.HandleFunc("POST /api/style/learn", s.auth(s.handleStyleLearn))
+	mux.HandleFunc("POST /api/style/shadow", s.auth(s.handleStyleShadow))
 	mux.HandleFunc("GET /api/stats", s.auth(s.handleStats))
 	mux.HandleFunc("GET /api/accounts", s.authMain(s.handleAccounts))
 	mux.HandleFunc("POST /api/accounts/link", s.authMain(s.handleAccountLink))
@@ -433,6 +440,10 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request, owner
 	var st config.Settings
 	if !readJSON(w, r, &st) {
 		return
+	}
+	// Faqat server yozadigan maydonlar: Mini App'dagi eski nusxa ularni bosib ketmasin.
+	if old, err := s.Store.GetSettings(r.Context(), owner); err == nil {
+		st.StyleUpdatedAt, st.StyleScore, st.ShadowUntil = old.StyleUpdatedAt, old.StyleScore, old.ShadowUntil
 	}
 	if err := st.Validate(); err != nil {
 		httpErr(w, 400, err.Error())
