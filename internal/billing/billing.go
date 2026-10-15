@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/ozodjongg/secretar_ai_agent/internal/store"
@@ -56,9 +55,11 @@ type API interface {
 type Notifier func(ctx context.Context, owner int64, text string, openApp bool)
 
 type Service struct {
-	Store     store.Store
-	API       API
-	Price     int // oyiga Stars; 0 → to'lov o'chiq, xizmat hammaga bepul
+	Store store.Store
+	API   API
+	Price int // Advanced tarif, oyiga Stars; 0 → to'lov o'chiq, xizmat hammaga bepul
+	// ProPrice — Pro tarif, oyiga Stars; 0 → bitta tarif (obunada hamma funksiya ochiq).
+	ProPrice  int
 	TrialDays int
 	Exempt    map[int64]bool // to'lovdan ozod (ADMIN_IDS) — o'z botingizni bepul ishlatish/sinash uchun
 	// TrialDailyLimit — sinovdagi mijozga kuniga ko'pi bilan shuncha javob tayyorlanadi
@@ -92,7 +93,10 @@ func (s *Service) log() *slog.Logger {
 // Status — Mini App'ga ko'rsatiladigan obuna holati.
 type Status struct {
 	Enabled    bool       `json:"enabled"`
-	Price      int        `json:"price"`
+	Price      int        `json:"price"`     // Advanced
+	ProPrice   int        `json:"pro_price"` // 0 — bitta tarif
+	Tier       Tier       `json:"tier"`      // hozirgi tarif: trial/advanced/pro yoki bo'sh
+	HasPro     bool       `json:"has_pro"`   // Pro funksiyalari ochiq
 	TrialDays  int        `json:"trial_days"`
 	Active     bool       `json:"active"`      // hozir xizmatdan foydalanish mumkinmi
 	Exempt     bool       `json:"exempt"`      // admin: to'lovdan ozod
@@ -120,9 +124,9 @@ func (s *Service) Status(ctx context.Context, owner int64) (Status, error) {
 	if !s.Enabled() {
 		return Status{Active: true}, nil
 	}
-	st := Status{Enabled: true, Price: s.Price, TrialDays: s.TrialDays, TrialDaily: s.TrialDailyLimit}
+	st := Status{Enabled: true, Price: s.Price, ProPrice: s.PriceOf(TierPro), TrialDays: s.TrialDays, TrialDaily: s.TrialDailyLimit}
 	if s.Exempt[owner] {
-		st.Active, st.Exempt = true, true
+		st.Active, st.Exempt, st.Tier, st.HasPro = true, true, TierPro, true
 		return st, nil
 	}
 	sub, err := s.subscription(ctx, owner)
@@ -143,6 +147,8 @@ func (s *Service) Status(ctx context.Context, owner int64) (Status, error) {
 	st.OnTrial = st.Active && !st.Paid && !st.Bonus
 	st.Canceled = sub.Canceled
 	st.Renewable = st.Paid && sub.Canceled && sub.ChargeID != ""
+	st.Tier = s.tierAt(sub, now)
+	st.HasPro = st.Tier == TierPro || st.Tier == TierTrial || (st.Tier == TierAdvanced && !s.Tiered())
 	if st.Active {
 		st.DaysLeft = int((sub.Until().Sub(now) + 24*time.Hour - time.Second) / (24 * time.Hour))
 	}
@@ -172,14 +178,17 @@ const (
 	HistoryTrial = 8
 )
 
-// HistoryLimit egasi uchun kontekst uzunligi: to'langan obuna (yoki bonus), admin yoki to'lov o'chiq — HistoryPaid,
-// sinov (yoki holat noma'lum) — HistoryTrial.
+// HistoryLimit egasi uchun kontekst uzunligi: Pro tarif — HistoryPro; to'langan obuna (yoki bonus),
+// admin yoki to'lov o'chiq — HistoryPaid; sinov (yoki holat noma'lum) — HistoryTrial.
 func (s *Service) HistoryLimit(ctx context.Context, owner int64) int {
 	if !s.Enabled() || s.Exempt[owner] {
 		return HistoryPaid
 	}
 	sub, err := s.Store.GetSubscription(ctx, owner)
 	if err == nil && sub.Premium(s.now()) {
+		if s.Tiered() && tierOf(sub) == TierPro {
+			return HistoryPro
+		}
 		return HistoryPaid
 	}
 	return HistoryTrial
@@ -256,47 +265,47 @@ func (s *Service) StartTrial(ctx context.Context, owner int64) error {
 	return nil
 }
 
-func newPayload(owner int64) (string, error) {
-	b := make([]byte, 8)
+func randomHex(n int) (string, error) {
+	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
-	return payloadPrefix + strconv.FormatInt(owner, 10) + ":" + hex.EncodeToString(b), nil
+	return hex.EncodeToString(b), nil
 }
 
-// payloadOwner payload'dan egani ajratadi ("sub:<owner>:<nonce>").
-func payloadOwner(payload string) (int64, bool) {
-	rest, ok := strings.CutPrefix(payload, payloadPrefix)
-	if !ok {
-		return 0, false
-	}
-	idStr, nonce, ok := strings.Cut(rest, ":")
-	if !ok || len(nonce) != 16 {
-		return 0, false
-	}
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	return id, err == nil && id > 0
-}
-
-// InvoiceLink obuna uchun to'lov havolasini yaratadi (Mini App: Telegram.WebApp.openInvoice).
-func (s *Service) InvoiceLink(ctx context.Context, owner int64) (string, error) {
+// InvoiceLink tanlangan tarif uchun to'lov havolasini yaratadi (Mini App: Telegram.WebApp.openInvoice).
+// Bitta tarif rejimida (ProPrice = 0) faqat TierAdvanced. Faol obunada shu tarifni qayta sotib
+// olib bo'lmaydi (ikki marta to'lov), boshqa tarifga o'tish mumkin — qolgan kunlar o'tkaziladi.
+func (s *Service) InvoiceLink(ctx context.Context, owner int64, tier Tier) (string, error) {
 	if !s.Enabled() {
 		return "", ErrDisabled
 	}
+	price := s.PriceOf(tier)
+	if price <= 0 {
+		return "", ErrUnknownTier
+	}
 	if sub, err := s.Store.GetSubscription(ctx, owner); err == nil &&
-		sub.PaidUntil.After(s.now()) && !sub.Canceled {
+		sub.PaidUntil.After(s.now()) && !sub.Canceled && (!s.Tiered() || tierOf(sub) == tier) {
 		return "", ErrAlreadySubscribed // ikki parallel obuna (ikki marta to'lov) bo'lmasin
 	}
-	payload, err := newPayload(owner)
+	payload, err := newPayload(owner, tier)
 	if err != nil {
 		return "", err
 	}
+	title, desc := "Kotib — oylik obuna", "AI kotib: shaxsiy xabarlaringizga javob qoralamalari. Har 30 kunda avtomatik yangilanadi, istalgan payt bekor qilish mumkin."
+	if s.Tiered() {
+		if tier == TierPro {
+			title, desc = "Kotib Pro — oylik obuna", "Advanced'dagi hammasi + ovozli xabarlarga javob, Google Calendar/Contacts/Tasks, telefon avtomatikasi, eng uzun suhbat konteksti. Har 30 kunda avtomatik yangilanadi."
+		} else {
+			title = "Kotib Advanced — oylik obuna"
+		}
+	}
 	return s.API.CreateInvoiceLink(ctx, InvoiceLink{
-		Title:              "Kotib — oylik obuna",
-		Description:        "AI kotib: shaxsiy xabarlaringizga javob qoralamalari. Har 30 kunda avtomatik yangilanadi, istalgan payt bekor qilish mumkin.",
+		Title:              title,
+		Description:        desc,
 		Payload:            payload,
 		Label:              "30 kun",
-		Amount:             s.Price,
+		Amount:             price,
 		SubscriptionPeriod: PeriodSeconds,
 	})
 }
@@ -307,11 +316,15 @@ func (s *Service) PreCheckout(ctx context.Context, from int64, currency string, 
 	if !s.Enabled() {
 		return ErrDisabled
 	}
-	owner, ok := payloadOwner(payload)
+	owner, tier, ok := parsePayload(payload)
 	if !ok || owner != from {
 		return errors.New("bu to'lov havolasi sizga tegishli emas")
 	}
-	if currency != Currency || amount != s.Price {
+	want := s.Price // eski (tarifsiz) payload — Advanced narxi
+	if tier != TierNone {
+		want = s.PriceOf(tier)
+	}
+	if currency != Currency || want <= 0 || amount != want {
 		return errors.New("narx o'zgargan — ilovani qayta ochib urinib ko'ring")
 	}
 	if _, err := s.Store.GetAccount(ctx, owner); err != nil {
@@ -356,7 +369,12 @@ func (s *Service) PaymentReceived(ctx context.Context, from int64, p PaymentInfo
 	}
 	sub.OwnerID = from
 	now := s.now()
-	oldPaid := sub.PaidUntil
+	oldPaid, oldCharge, oldCanceled := sub.PaidUntil, sub.ChargeID, sub.Canceled
+	// Yangi obuna (oylik yangilanish emas), eski to'langan muddat hali tugamagan — tarif almashtirildi.
+	switching := !(p.Recurring && !p.FirstRecurring) && oldPaid.After(now) && oldCharge != "" && oldCharge != p.ChargeID
+	if _, tier, ok := parsePayload(p.Payload); ok && tier != TierNone {
+		sub.Tier = string(tier)
+	}
 	if !p.ExpiresAt.IsZero() {
 		sub.PaidUntil = p.ExpiresAt
 	} else {
@@ -369,6 +387,21 @@ func (s *Service) PaymentReceived(ctx context.Context, from int64, p PaymentInfo
 	// Bonus kunlar to'langan davr bilan ustma-ust kelmasin: qolgan qismi yangi davrdan keyinga suriladi
 	// (Telegram har 30 kunda pul yechadi — aks holda bonus bekorga "yonib" ketardi).
 	sub.BonusUntil = shiftBonus(sub.BonusUntil, laterOf(now, oldPaid), sub.PaidUntil)
+	if switching {
+		// Eski obunaning qolgan muddati narx nisbatida bonus kunlarga aylanadi (yangi davrdan keyin)
+		// va uning avtomatik yangilanishi o'chiriladi — ikki obuna parallel pul yechmasin.
+		credit := oldPaid.Sub(now)
+		if old, err := s.Store.GetPayment(ctx, oldCharge); err == nil && old.Amount > 0 {
+			credit = time.Duration(float64(credit) * float64(old.Amount) / float64(p.Amount))
+		}
+		sub.BonusUntil = laterOf(sub.BonusUntil, sub.PaidUntil).Add(credit.Truncate(time.Minute))
+		if !oldCanceled {
+			if err := s.API.EditUserStarSubscription(ctx, from, oldCharge, true); err != nil {
+				s.log().Error("eski obunani bekor qilib bo'lmadi", "owner", from, "charge", oldCharge, "err", err)
+			}
+		}
+		s.Store.Audit(ctx, from, "tier_switched", sub.Tier)
+	}
 	sub.ChargeID, sub.Canceled = p.ChargeID, false
 	if err := s.Store.SaveSubscription(ctx, sub); err != nil {
 		return err

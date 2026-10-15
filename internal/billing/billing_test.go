@@ -51,7 +51,7 @@ func TestDisabledMeansFree(t *testing.T) {
 	if !s.Entitled(context.Background(), 1) {
 		t.Fatal("narx 0 bo'lsa xizmat bepul bo'lishi kerak")
 	}
-	if _, err := s.InvoiceLink(context.Background(), 1); !errors.Is(err, ErrDisabled) {
+	if _, err := s.InvoiceLink(context.Background(), 1, TierAdvanced); !errors.Is(err, ErrDisabled) {
 		t.Fatal(err)
 	}
 }
@@ -81,7 +81,7 @@ func TestTrialOnceAndExpiry(t *testing.T) {
 func TestPayloadAndPreCheckout(t *testing.T) {
 	s, _, api, _ := newSvc(t)
 	ctx := context.Background()
-	if _, err := s.InvoiceLink(ctx, 1); err != nil {
+	if _, err := s.InvoiceLink(ctx, 1, TierAdvanced); err != nil {
 		t.Fatal(err)
 	}
 	inv := api.invoices[0]
@@ -138,11 +138,11 @@ func TestNoDoubleSubscription(t *testing.T) {
 	s, _, _, _ := newSvc(t)
 	ctx := context.Background()
 	_ = s.PaymentReceived(ctx, 1, PaymentInfo{Currency: Currency, Amount: 100, ChargeID: "ch1"})
-	if _, err := s.InvoiceLink(ctx, 1); !errors.Is(err, ErrAlreadySubscribed) {
+	if _, err := s.InvoiceLink(ctx, 1, TierAdvanced); !errors.Is(err, ErrAlreadySubscribed) {
 		t.Fatalf("faol obunada yangi invoice bo'lmasligi kerak: %v", err)
 	}
 	_ = s.Cancel(ctx, 1)
-	if _, err := s.InvoiceLink(ctx, 1); err != nil {
+	if _, err := s.InvoiceLink(ctx, 1, TierAdvanced); err != nil {
 		t.Fatalf("bekor qilingandan keyin qayta obuna bo'lish mumkin: %v", err)
 	}
 }

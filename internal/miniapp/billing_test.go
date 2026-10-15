@@ -126,3 +126,41 @@ func TestReferralEndpoint(t *testing.T) {
 		t.Fatalf("o'chiq: %v", m)
 	}
 }
+
+func TestProFeaturesGated(t *testing.T) {
+	st := store.NewMemory()
+	api := &fakeStarsAPI{}
+	bill := &billing.Service{Store: st, API: api, Price: 150, ProPrice: 250, TrialDays: 7}
+	srv := newTestServer(t, &Server{BotToken: tok, Store: st, Ctl: &fakeCtl{}, Billing: bill, Google: &fakeGoogle{}})
+	a := userAuth("50")
+	do(t, "POST", srv.URL+"/api/consent", a, `{"accepted":true}`)
+	ctx := context.Background()
+
+	// Sinovda Pro funksiyalari ochiq.
+	if r, _ := do(t, "POST", srv.URL+"/api/hook", a, ""); r.StatusCode != 200 {
+		t.Fatalf("sinovda avtomatika: %d", r.StatusCode)
+	}
+	_, me := do(t, "GET", srv.URL+"/api/me", a, "")
+	if b := me["billing"].(map[string]any); b["has_pro"] != true || b["tier"] != "trial" || b["pro_price"] != float64(250) {
+		t.Fatalf("me: %v", b)
+	}
+
+	// Advanced to'langan — Pro funksiyalari yopiq (402).
+	_ = bill.PaymentReceived(ctx, 50, billing.PaymentInfo{Currency: "XTR", Amount: 150, Payload: "sub:50:advanced:0123456789abcdef",
+		ChargeID: "a1", ExpiresAt: time.Now().Add(30 * 24 * time.Hour)})
+	for _, p := range []string{"/api/hook", "/api/google/connect"} {
+		if r, m := do(t, "POST", srv.URL+p, a, ""); r.StatusCode != 402 || m["error"] != errNeedPro {
+			t.Fatalf("%s: %d %v", p, r.StatusCode, m)
+		}
+	}
+	// Tarif tanlab to'lov havolasi: Pro'ga o'tish mumkin, Advanced qayta — yo'q.
+	if r, m := do(t, "POST", srv.URL+"/api/billing/invoice", a, `{"tier":"pro"}`); r.StatusCode != 200 || m["link"] == nil {
+		t.Fatalf("pro invoice: %d %v", r.StatusCode, m)
+	}
+	if r, _ := do(t, "POST", srv.URL+"/api/billing/invoice", a, `{"tier":"advanced"}`); r.StatusCode != 409 {
+		t.Fatalf("advanced qayta: %d", r.StatusCode)
+	}
+	if r, _ := do(t, "POST", srv.URL+"/api/billing/invoice", a, `{"tier":"gold"}`); r.StatusCode != 400 {
+		t.Fatalf("noma'lum tarif: %d", r.StatusCode)
+	}
+}

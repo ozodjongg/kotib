@@ -548,3 +548,20 @@ func TestAwayPassedUntilExpiry(t *testing.T) {
 		t.Fatalf("muddati o'tgan holat berilmasligi kerak: %q", e2.llm.last.Away)
 	}
 }
+
+func TestVoiceAndGoogleNeedPro(t *testing.T) {
+	e := newEnv(t, func(s *config.Settings) { s.ReplyVoice = true })
+	e.p.Pro = func(context.Context, int64) bool { return false }
+	msg := in(VoiceText, true)
+	msg.Voice = &Voice{Duration: 5, Load: func(context.Context) ([]byte, error) { return []byte("ogg"), nil }}
+	e.p.Handle(context.Background(), msg)
+	if e.llm.calls != 0 {
+		t.Fatal("Pro'siz ovozli xabar modelga yuborilmasligi kerak")
+	}
+	e2 := newEnv(t, func(s *config.Settings) { s.ReplyVoice = true })
+	e2.p.Pro = func(context.Context, int64) bool { return true }
+	e2.p.Handle(context.Background(), msg)
+	if e2.llm.calls != 1 || e2.llm.last.Audio == nil {
+		t.Fatalf("Pro'da ovozli xabarga javob tayyorlanishi kerak: calls=%d", e2.llm.calls)
+	}
+}

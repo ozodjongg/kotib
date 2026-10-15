@@ -250,12 +250,12 @@ func (p *Postgres) ListAudit(ctx context.Context, owner int64, limit int) ([]Aud
 
 func nullTime(t time.Time) sql.NullTime { return sql.NullTime{Time: t, Valid: !t.IsZero()} }
 
-const subCols = `owner_id, trial_until, paid_until, charge_id, canceled, reminded_for, bonus_until`
+const subCols = `owner_id, trial_until, paid_until, charge_id, canceled, reminded_for, bonus_until, tier`
 
 func scanSub(sc interface{ Scan(...any) error }) (Subscription, error) {
 	var s Subscription
 	var trial, paid, reminded, bonus sql.NullTime
-	err := sc.Scan(&s.OwnerID, &trial, &paid, &s.ChargeID, &s.Canceled, &reminded, &bonus)
+	err := sc.Scan(&s.OwnerID, &trial, &paid, &s.ChargeID, &s.Canceled, &reminded, &bonus, &s.Tier)
 	s.TrialUntil, s.PaidUntil, s.RemindedFor, s.BonusUntil = trial.Time, paid.Time, reminded.Time, bonus.Time
 	return s, err
 }
@@ -270,13 +270,14 @@ func (p *Postgres) GetSubscription(ctx context.Context, owner int64) (Subscripti
 
 func (p *Postgres) SaveSubscription(ctx context.Context, s Subscription) error {
 	_, err := p.DB.ExecContext(ctx, `
-		INSERT INTO subscriptions (`+subCols+`, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+		INSERT INTO subscriptions (`+subCols+`, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
 		ON CONFLICT (owner_id) DO UPDATE SET
 			trial_until = EXCLUDED.trial_until, paid_until = EXCLUDED.paid_until,
 			charge_id = EXCLUDED.charge_id, canceled = EXCLUDED.canceled,
-			reminded_for = EXCLUDED.reminded_for, bonus_until = EXCLUDED.bonus_until, updated_at = now()`,
+			reminded_for = EXCLUDED.reminded_for, bonus_until = EXCLUDED.bonus_until, tier = EXCLUDED.tier,
+			updated_at = now()`,
 		s.OwnerID, nullTime(s.TrialUntil), nullTime(s.PaidUntil), s.ChargeID, s.Canceled, nullTime(s.RemindedFor),
-		nullTime(s.BonusUntil))
+		nullTime(s.BonusUntil), s.Tier)
 	return err
 }
 

@@ -468,9 +468,38 @@ function statusBadge() {
   return h('span', { class: 'badge ' + cls }, label);
 }
 
+// ---------- Tariflar ----------
+const TIER_NAMES = { advanced: 'Advanced', pro: 'Pro', trial: 'Sinov' };
+const PLANS = [
+  ['advanced', '⭐ Advanced', [
+    'Cheksiz javob qoralamalari',
+    'Uzun suhbat konteksti (20 xabar)',
+    'Avto rejim, qoidalar va holatlar',
+    "Kechki xulosa, va'dalar, taqvimga .ics",
+  ]],
+  ['pro', '🚀 Pro', [
+    "Advanced'dagi hammasi",
+    '🎤 Ovozli xabarlarga javob',
+    '📅 Google Calendar, Contacts, Tasks',
+    '📱 Telefon avtomatikasi (Shortcuts / MacroDroid)',
+    'Eng uzun kontekst (40 xabar)',
+  ]],
+];
+function tiered(b) { return b && b.enabled && b.pro_price > 0; }
+function tierLabel(b) { return tiered(b) && TIER_NAMES[b.tier] && b.tier !== 'trial' ? ` ${TIER_NAMES[b.tier]}` : ''; }
+function needsPro() { const b = state.me.billing || {}; return b.enabled && !b.has_pro; }
+
+// Pro funksiyasi yopiq bo'lsa — kartaning o'rniga taklif.
+function proLock(title, text) {
+  return h('div', { class: 'card' },
+    h('div', { class: 'card-head' }, h('h3', {}, title), h('span', { class: 'badge accent' }, 'Pro')),
+    h('p', { class: 'muted small' }, text),
+    h('button', { class: 'btn ghost block', onclick: () => { go('account'); } }, `Pro tarifga o'tish · ${state.me.billing.pro_price} ⭐`));
+}
+
 function billingLine(b) {
   if (!b || !b.enabled || b.exempt) return null;
-  if (b.paid) return b.canceled ? `Obuna ${fmtDate(b.paid_until)} gacha (yangilanmaydi)` : `Obuna faol · keyingi to'lov ${fmtDate(b.paid_until)}`;
+  if (b.paid) return b.canceled ? `Obuna${tierLabel(b)} ${fmtDate(b.paid_until)} gacha (yangilanmaydi)` : `Obuna${tierLabel(b)} faol · keyingi to'lov ${fmtDate(b.paid_until)}`;
   if (b.bonus) return `🎁 Bonus · ${b.days_left} kun qoldi`;
   if (b.on_trial) return `Bepul sinov · ${b.days_left} kun qoldi`;
   return 'Obuna faol emas';
@@ -660,7 +689,7 @@ function viewSettings(view) {
     h('h2', {}, 'Kimga javob beriladi'),
     h('div', { class: 'card' },
       switchRow("Kontaktda yo'qlarga ham", 'Tavsiya etilmaydi: spam va firibgarlar ko\'p', s.reply_unknown, (v) => { s.reply_unknown = v; }),
-      switchRow('Ovozli xabarlarga ham', "Kotib ovozli xabarni tinglab, javob qoralamasini tayyorlaydi (2 daqiqagacha). Ovozga javob doim faqat qoralama — avtomatik yuborilmaydi.", s.reply_voice, (v) => { s.reply_voice = v; }),
+      switchRow('Ovozli xabarlarga ham' + (needsPro() ? ' · Pro' : ''), (needsPro() ? 'Pro tarifda ishlaydi. ' : '') + "Kotib ovozli xabarni tinglab, javob qoralamasini tayyorlaydi (2 daqiqagacha). Ovozga javob doim faqat qoralama — avtomatik yuborilmaydi.", s.reply_voice, (v) => { s.reply_voice = v; }),
       switchRow('Botlarga ham', "Faqat qoralama: bot bilan cheksiz yozishma bo'lmasligi uchun avtomatik yuborilmaydi", s.reply_bots, (v) => { s.reply_bots = v; }),
       switchRow('Javobda havolalar', "O'chiq bo'lsa, havolali javoblar qoralamada qoladi", s.allow_links, (v) => { s.allow_links = v; }),
       switchRow('Uchrashuvlarni taqvimga taklif qilish', "Suhbatda aniq vaqtli uchrashuv chiqsa, bot «Taqvimga qo'shaymi?» deb so'raydi. Google ulanmagan bo'lsa ham ishlaydi (iPhone/Android taqvimi).", !s.no_suggest, (v) => { s.no_suggest = !v; }),
@@ -1008,10 +1037,10 @@ async function viewAccount(view) {
   if (b.enabled) put(view, subscriptionCard(b));
   if (b.enabled && !b.exempt) put(view, referralCard());
   const g = state.me.google || {};
-  if (g.enabled) put(view, googleCard(g));
+  if (g.enabled) put(view, needsPro() && !g.connected ? proLock('Google', "Kotib taqvimingizdagi band vaqtlarni biladi, uchrashuv va vazifalarni Google Calendar/Tasks'ga qo'shadi.") : googleCard(g));
   const dev = deviceCard();
   if (dev) put(view, dev);
-  put(view, hookCard());
+  put(view, needsPro() ? proLock('Avtomatlashtirish', "Telefon rejimiga qarab (Focus, Bezovta qilmang, mashina Bluetooth'i) kotib holati o'zi o'zgaradi.") : hookCard());
 
   put(view, h('h2', {}, 'Oxirgi faollik'));
   const act = h('div', { class: 'card' }, h('div', { class: 'skeleton' }));
@@ -1044,6 +1073,23 @@ async function viewAccount(view) {
     : h('p', { class: 'muted' }, "Hozircha faollik yo'q."));
 }
 
+function planCard(b, tier, title, perks, opts) {
+  const price = tier === 'pro' ? b.pro_price : b.price;
+  const current = b.paid && b.tier === tier;
+  return h('div', { class: 'plan' + (tier === 'pro' ? ' pro' : '') + (current ? ' current' : '') },
+    h('div', { class: 'card-head' }, h('h3', {}, title), current ? h('span', { class: 'badge ok' }, 'Hozirgi') : (tier === 'pro' ? h('span', { class: 'badge accent' }, 'Tavsiya') : null)),
+    h('div', { class: 'price' }, String(price) + ' ⭐ ', h('small', {}, '/ 30 kun')),
+    h('ul', { class: 'perks' }, perks.map((p) => h('li', {}, p))),
+    current ? null : h('button', { class: 'btn block' + (tier === 'pro' ? '' : ' ghost'), onclick: busy(async () => {
+      if (opts.switching && !(await confirmBox(`${TIER_NAMES[tier]} tarifiga o'tasizmi? Hozirgi obunangiz yangilanmaydi, qolgan kunlari narx nisbatida yangi tarifga bonus kun sifatida qo'shiladi.`))) return;
+      await pay(tier);
+    }) }, opts.switching ? `${TIER_NAMES[tier]}'ga o'tish · ${price} ⭐` : `${TIER_NAMES[tier]} · ${price} ⭐`));
+}
+
+function plansBlock(b, switching) {
+  return h('div', { class: 'plans' }, PLANS.map(([tier, title, perks]) => planCard(b, tier, title, perks, { switching })));
+}
+
 function subscriptionCard(b) {
   if (b.exempt) {
     return h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Obuna'), h('span', { class: 'badge ok' }, 'Admin')),
@@ -1053,9 +1099,9 @@ function subscriptionCard(b) {
   const pct = Math.max(0, Math.min(100, (b.days_left / total) * 100));
   let status, body;
   if (b.paid) {
-    status = h('span', { class: 'badge ' + (b.canceled ? 'warn' : 'ok') }, b.canceled ? 'Yangilanmaydi' : 'Faol');
+    status = h('span', { class: 'badge ' + (b.canceled ? 'warn' : 'ok') }, (b.canceled ? 'Yangilanmaydi' : 'Faol') + tierLabel(b));
     body = [
-      h('p', { class: 'muted small' }, b.canceled ? `${fmtDate(b.paid_until)} gacha amal qiladi, keyin to'xtaydi.` : `Keyingi to'lov: ${fmtDate(b.paid_until)} · ${b.price} ⭐`),
+      h('p', { class: 'muted small' }, b.canceled ? `${fmtDate(b.paid_until)} gacha amal qiladi, keyin to'xtaydi.` : `Keyingi to'lov: ${fmtDate(b.paid_until)} · ${b.tier === 'pro' && b.pro_price ? b.pro_price : b.price} ⭐`),
       h('div', { class: 'progress' }, h('i', { style: null, 'data-w': pct })),
       b.bonus_until ? h('p', { class: 'muted small' }, `🎁 Bonus kunlaringiz to'langan muddatdan keyin ishlatiladi (${fmtDate(b.bonus_until)} gacha). Obuna yangilansa, ular keyinga suriladi — yo'qolmaydi.`) : null,
       b.renewable
@@ -1064,6 +1110,7 @@ function subscriptionCard(b) {
           if (!(await confirmBox(`Obuna ${fmtDate(b.paid_until)} gacha ishlaydi, keyin yangilanmaydi. Bekor qilinsinmi?`))) return;
           await api('POST', '/billing/cancel'); await refreshMe(); toast('Obuna bekor qilindi'); renderMain();
         }) }, 'Obunani bekor qilish'),
+      ...(tiered(b) ? [h('p', { class: 'small' }, b.tier === 'pro' ? 'Tariflar' : "🚀 Pro'da ovozli xabarlar, Google va telefon avtomatikasi bor:"), plansBlock(b, true)] : []),
     ];
   } else {
     status = b.bonus
@@ -1071,6 +1118,11 @@ function subscriptionCard(b) {
       : h('span', { class: 'badge ' + (b.on_trial ? 'accent' : 'bad') }, b.on_trial ? `Sinov · ${b.days_left} kun` : 'Faol emas');
     body = [
       b.bonus ? h('p', { class: 'small' }, `🎁 Do'st taklifi uchun bonus: ${fmtDate(b.bonus_until)} gacha cheklovsiz ishlaydi. Keyin davom ettirish uchun obuna bo'ling.`) : null,
+      b.on_trial && tiered(b) ? h('p', { class: 'small muted' }, "Sinov davrida Pro funksiyalari ham ochiq. Tugagach, tarifni tanlang:") : null,
+      ...(tiered(b) ? [
+        b.on_trial ? h('div', { class: 'progress' }, h('i', { 'data-w': pct })) : null,
+        b.on_trial && b.trial_daily_limit ? h('p', { class: 'muted small' }, `Sinovda kuniga ${b.trial_daily_limit} tagacha javob tayyorlanadi.`) : null,
+        plansBlock(b, false)] : [
       h('div', { class: 'price' }, String(b.price) + ' ⭐ ', h('small', {}, '/ 30 kun')),
       h('ul', { class: 'perks' },
         h('li', {}, 'Cheksiz javob qoralamalari'),
@@ -1078,7 +1130,7 @@ function subscriptionCard(b) {
         h('li', {}, 'Har oy avtomatik yangilanadi, istalgan payt bekor qilinadi')),
       b.on_trial ? h('div', { class: 'progress' }, h('i', { 'data-w': pct })) : null,
       b.on_trial && b.trial_daily_limit ? h('p', { class: 'muted small' }, `Sinovda kuniga ${b.trial_daily_limit} tagacha javob tayyorlanadi.`) : null,
-      h('button', { class: 'btn block', onclick: busy(pay) }, `Obuna bo'lish · ${b.price} ⭐`),
+      h('button', { class: 'btn block', onclick: busy(() => pay('advanced')) }, `Obuna bo'lish · ${b.price} ⭐`)]),
       h('p', { class: 'muted small center' }, "To'lov Telegram Stars orqali — karta ma'lumotlari bizga kelmaydi."),
       h('p', { class: 'muted small center' }, "Maslahat: Stars ilova do'koni (App Store / Google Play) orqali qimmatroq. ",
         h('a', { href: '#', onclick: (e) => { e.preventDefault(); if (tg && tg.openTelegramLink) tg.openTelegramLink('https://t.me/PremiumBot'); } }, '@PremiumBot'),
@@ -1123,8 +1175,8 @@ function referralCard() {
   return card;
 }
 
-async function pay() {
-  const { link } = await api('POST', '/billing/invoice');
+async function pay(tier) {
+  const { link } = await api('POST', '/billing/invoice', { tier: tier || 'advanced' });
   if (!tg || !tg.openInvoice) { if (tg && tg.openTelegramLink) tg.openTelegramLink(link); return; }
   tg.openInvoice(link, async (status) => {
     if (status === 'paid') {
@@ -1133,7 +1185,7 @@ async function pay() {
       for (let i = 0; i < 10; i++) {
         await new Promise((r) => setTimeout(r, 1500));
         try { await refreshMe(); } catch (_) { /* */ }
-        if (state.me.billing && state.me.billing.paid) break;
+        if (state.me.billing && state.me.billing.paid && (!tier || state.me.billing.tier === tier)) break;
       }
       renderMain();
     } else if (status === 'failed') {

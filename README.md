@@ -93,7 +93,8 @@ Wordmark shrifti — Source Serif 4 (SIL Open Font License), matn vektor konturg
 | `MASTER_KEY` | `openssl rand -base64 32` — session shifrlash kaliti. **Bazada saqlanmaydi** |
 | `DATABASE_URL` | Postgres; sxema ishga tushganda avtomatik yaratiladi/yangilanadi |
 | `TG_PROXY` | ixtiyoriy `socks5://...` — barqaror IP |
-| `PRICE_STARS` | oylik obuna narxi (Telegram Stars, 1–10000). Bo'sh/0 — to'lov o'chiq, xizmat bepul |
+| `PRICE_STARS` | **Advanced** tarif oylik narxi (Telegram Stars, 1–10000), masalan `150`. Bo'sh/0 — to'lov o'chiq, xizmat bepul |
+| `PRICE_PRO_STARS` | **Pro** tarif oylik narxi, masalan `250` (`PRICE_STARS`dan katta). Bo'sh/0 — bitta tarif: obunada hamma funksiya ochiq |
 | `TRIAL_DAYS` | bepul sinov kunlari (default 7) |
 | `TRIAL_DAILY_LIMIT` | sinovda kuniga ko'pi bilan nechta javob tayyorlanadi (default 50; 0 — cheksiz). To'langan obunada cheklov yo'q |
 | `ADMIN_IDS` | admin Telegram ID'lari, vergul bilan: `/stats`, `/refund`; adminlar uchun kotib bepul |
@@ -125,6 +126,24 @@ qayta ishlanadi: keyingi javob oldingisi yuborilgandan keyin tayyorlanadi va uni
 Ikkala bildirishnoma Sozlamalarda o'chiriladi. Tekshiruv har 5 daqiqada, faqat bitta nusxada (gate).
 
 ## To'lov: Telegram Stars obunasi
+
+### Tariflar
+
+| | Advanced (`PRICE_STARS`) | Pro (`PRICE_PRO_STARS`) |
+|---|---|---|
+| Javob qoralamalari | cheksiz | cheksiz |
+| Suhbat konteksti | 20 xabar | 40 xabar |
+| Avto rejim, qoidalar, holatlar, kechki xulosa, va'dalar, .ics taqvim | ✅ | ✅ |
+| 🎤 Ovozli xabarlarga javob | — | ✅ |
+| 📅 Google Calendar / Contacts / Tasks | — | ✅ |
+| 📱 Telefon avtomatikasi (Shortcuts / MacroDroid havolasi) | — | ✅ |
+
+- **Sinov** davrida Pro funksiyalari ochiq (kunlik limit va 8 xabarlik kontekst bilan) — mijoz tatib ko'rib tanlaydi.
+- **Tarif almashtirish** (Advanced ↔ Pro): Mini App → Hisob yoki `/obuna`. Yangi tarif to'langach eski obunaning avtomatik
+  yangilanishi o'chiriladi, qolgan kunlari narx nisbatida (masalan, Advanced'ning 20 kuni → Pro'da 12 kun) bonus kun sifatida
+  yangi davrdan keyin qo'shiladi. Pro funksiyalari yopiq bo'lsa API `402` qaytaradi.
+- **Eski obunachilar** (tariflar yoqilishidan oldin to'laganlar) Pro sifatida qoladi — funksiyalarini yo'qotmaydi; oylik
+  yangilanishi eski narxda davom etadi. Referal bonus kunlari oxirgi to'langan tarif bo'yicha (hech to'lamagan — Advanced).
 
 `PRICE_STARS` berilsa, to'lov yoqiladi:
 
@@ -251,7 +270,7 @@ Masalan: `https://<domen>/hook/<token>?mode=auto&away=Hozir%20rulda`. GET ham, P
 | `/start`, `/help` | hamma | Mini App'ni ochish, yordam (`/start pause`, `/start resume`, `/start ref_<kod>` — deep link) |
 | `/status` | hamma | holat, kutilayotgan qoralamalar, obuna |
 | `/pause`, `/resume` | hamma | kotibni darhol to'xtatish / davom ettirish |
-| `/obuna` | hamma | Stars bilan obuna bo'lish |
+| `/obuna` | hamma | tariflar va to'lov havolalari (Advanced / Pro), tarifni almashtirish |
 | `/taklif` | hamma | do'stni taklif qilish havolasi va natijalar (bonus kunlar) |
 | `/stats` | `ADMIN_IDS` | akkauntlar, faol obunalar, tushum |
 | `/refund <charge_id>` | `ADMIN_IDS` | to'lovni qaytarish |

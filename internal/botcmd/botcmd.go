@@ -181,9 +181,9 @@ func (h *Handler) subscriptionLine(ctx context.Context, owner int64) string {
 	case err != nil:
 		return ""
 	case st.Paid && st.Canceled:
-		return fmt.Sprintf("Obuna: %s gacha (yangilanmaydi)\n", h.date(*st.PaidUntil))
+		return fmt.Sprintf("Obuna%s: %s gacha (yangilanmaydi)\n", h.tierLabel(st), h.date(*st.PaidUntil))
 	case st.Paid:
-		return fmt.Sprintf("Obuna: faol, keyingi to'lov %s\n", h.date(*st.PaidUntil))
+		return fmt.Sprintf("Obuna%s: faol, keyingi to'lov %s\n", h.tierLabel(st), h.date(*st.PaidUntil))
 	case st.Bonus:
 		return fmt.Sprintf("🎁 Bonus kunlar: %s gacha (%d kun qoldi)\n", h.date(*st.BonusUntil), st.DaysLeft)
 	case st.OnTrial:
@@ -191,6 +191,14 @@ func (h *Handler) subscriptionLine(ctx context.Context, owner int64) string {
 	default:
 		return "Obuna: faol emas — /obuna\n"
 	}
+}
+
+// tierLabel — " (Pro)" kabi; bitta tarif rejimida bo'sh.
+func (h *Handler) tierLabel(st billing.Status) string {
+	if !h.Billing.Tiered() || tierNames[st.Tier] == "" {
+		return ""
+	}
+	return " (" + tierNames[st.Tier] + ")"
 }
 
 func (h *Handler) pause(ctx context.Context, owner int64) bot.Reply {
@@ -227,19 +235,56 @@ func (h *Handler) subscribe(ctx context.Context, owner int64) bot.Reply {
 	if _, err := h.Store.GetAccount(ctx, owner); err != nil {
 		return bot.Reply{Text: "Avval ilovada ro'yxatdan o'ting.", OpenApp: true}
 	}
-	link, err := h.Billing.InvoiceLink(ctx, owner)
-	if errors.Is(err, billing.ErrAlreadySubscribed) {
-		return bot.Reply{Text: "Obunangiz allaqachon faol.\n" + h.subscriptionLine(ctx, owner), OpenApp: true}
+	if !h.Billing.Tiered() {
+		link, err := h.Billing.InvoiceLink(ctx, owner, billing.TierAdvanced)
+		if errors.Is(err, billing.ErrAlreadySubscribed) {
+			return bot.Reply{Text: "Obunangiz allaqachon faol.\n" + h.subscriptionLine(ctx, owner), OpenApp: true}
+		}
+		if err != nil {
+			h.log().Warn("invoice link", "owner", owner, "err", err)
+			return bot.Reply{Text: "To'lov havolasini yaratib bo'lmadi, keyinroq urinib ko'ring."}
+		}
+		return bot.Reply{
+			Text:      fmt.Sprintf("Oylik obuna: %d ⭐ / 30 kun. Har oy avtomatik yangilanadi, istalgan payt bekor qilish mumkin.", h.Billing.Price),
+			ButtonURL: link, Button: fmt.Sprintf("⭐ %d — to'lash", h.Billing.Price),
+		}
 	}
-	if err != nil {
-		h.log().Warn("invoice link", "owner", owner, "err", err)
-		return bot.Reply{Text: "To'lov havolasini yaratib bo'lmadi, keyinroq urinib ko'ring."}
+	// Ikki tarif: hozirgi faol tarifdan boshqasi uchun to'lov havolasi (tarifni almashtirish ham shu).
+	var links []bot.Link
+	for _, t := range []billing.Tier{billing.TierAdvanced, billing.TierPro} {
+		link, err := h.Billing.InvoiceLink(ctx, owner, t)
+		if errors.Is(err, billing.ErrAlreadySubscribed) {
+			continue
+		}
+		if err != nil {
+			h.log().Warn("invoice link", "owner", owner, "tier", t, "err", err)
+			return bot.Reply{Text: "To'lov havolasini yaratib bo'lmadi, keyinroq urinib ko'ring."}
+		}
+		links = append(links, bot.Link{Text: fmt.Sprintf("⭐ %s — %d", tierNames[t], h.Billing.PriceOf(t)), URL: link})
 	}
-	return bot.Reply{
-		Text:      fmt.Sprintf("Oylik obuna: %d ⭐ / 30 kun. Har oy avtomatik yangilanadi, istalgan payt bekor qilish mumkin.", h.Billing.Price),
-		ButtonURL: link, Button: fmt.Sprintf("⭐ %d — to'lash", h.Billing.Price),
+	text := fmt.Sprintf(tiersText, h.Billing.PriceOf(billing.TierAdvanced), h.Billing.PriceOf(billing.TierPro))
+	if line := h.subscriptionLine(ctx, owner); h.Billing.Tier(ctx, owner) == billing.TierAdvanced || h.Billing.Tier(ctx, owner) == billing.TierPro {
+		text += "\n\n" + line + "Boshqa tarifga o'tsangiz, qolgan kunlaringiz narx nisbatida yangi tarifga o'tkaziladi."
 	}
+	return bot.Reply{Text: text, Links: links, OpenApp: true}
 }
+
+var tierNames = map[billing.Tier]string{billing.TierAdvanced: "Advanced", billing.TierPro: "Pro", billing.TierTrial: "Sinov"}
+
+const tiersText = `Tariflar (30 kun, har oy avtomatik yangilanadi, istalgan payt bekor qilish mumkin):
+
+⭐ Advanced — %d ⭐
+• cheksiz javob qoralamalari
+• uzun suhbat konteksti (20 xabar)
+• avto rejim, qoidalar, holatlar
+• kechki xulosa, va'dalar, taqvimga .ics
+
+🚀 Pro — %d ⭐
+• Advanced'dagi hammasi
+• 🎤 ovozli xabarlarga javob
+• 📅 Google Calendar, Contacts, Tasks
+• 📱 telefon avtomatikasi (Shortcuts / MacroDroid)
+• eng uzun kontekst (40 xabar)`
 
 func (h *Handler) stats(ctx context.Context) bot.Reply {
 	st, err := h.Store.Stats(ctx, time.Now())

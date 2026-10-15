@@ -77,7 +77,9 @@ type Controller interface {
 type Billing interface {
 	Status(ctx context.Context, owner int64) (billing.Status, error)
 	StartTrial(ctx context.Context, owner int64) error
-	InvoiceLink(ctx context.Context, owner int64) (string, error)
+	InvoiceLink(ctx context.Context, owner int64, tier billing.Tier) (string, error)
+	// HasPro — Pro funksiyalari (ovoz, Google, avtomatika) ochiqmi.
+	HasPro(ctx context.Context, owner int64) bool
 	Cancel(ctx context.Context, owner int64) error
 	Renew(ctx context.Context, owner int64) error
 	Referral(ctx context.Context, owner int64) (billing.ReferralInfo, error)
@@ -751,8 +753,18 @@ func (s *Server) handleInvoice(w http.ResponseWriter, r *http.Request, owner int
 	if !s.requireConsent(w, r, owner) {
 		return
 	}
-	link, err := s.Billing.InvoiceLink(r.Context(), owner)
+	in := struct {
+		Tier billing.Tier `json:"tier"`
+	}{Tier: billing.TierAdvanced} // eski klient (tanasiz so'rov) — Advanced
+	if err := readJSONOptional(r, &in); err != nil {
+		httpErr(w, 400, "JSON noto'g'ri")
+		return
+	}
+	link, err := s.Billing.InvoiceLink(r.Context(), owner, in.Tier)
 	switch {
+	case errors.Is(err, billing.ErrUnknownTier):
+		httpErr(w, 400, "bunday tarif yo'q")
+		return
 	case errors.Is(err, billing.ErrAlreadySubscribed):
 		httpErr(w, 409, "obunangiz allaqachon faol")
 		return
@@ -829,9 +841,21 @@ func readJSONOptional(r *http.Request, v any) error {
 	return dec.Decode(v)
 }
 
+// errNeedPro — Pro funksiyasi tarifda yo'q (402 Payment Required).
+const errNeedPro = "bu funksiya Pro tarifda"
+
+// hasPro — to'lov o'chiq bo'lsa hamma funksiya ochiq.
+func (s *Server) hasPro(ctx context.Context, owner int64) bool {
+	return s.Billing == nil || s.Billing.HasPro(ctx, owner)
+}
+
 func (s *Server) handleGoogleConnect(w http.ResponseWriter, r *http.Request, owner int64) {
 	if s.Google == nil {
 		httpErr(w, 404, "Google integratsiyasi yoqilmagan")
+		return
+	}
+	if !s.hasPro(r.Context(), owner) {
+		httpErr(w, http.StatusPaymentRequired, errNeedPro)
 		return
 	}
 	acc, err := s.Store.GetAccount(r.Context(), owner)
@@ -937,6 +961,10 @@ func (s *Server) handleHookCreate(w http.ResponseWriter, r *http.Request, owner 
 	if !s.requireConsent(w, r, owner) {
 		return
 	}
+	if !s.hasPro(r.Context(), owner) {
+		httpErr(w, http.StatusPaymentRequired, errNeedPro)
+		return
+	}
 	b := make([]byte, 24)
 	if _, err := rand.Read(b); err != nil {
 		httpErr(w, 500, "xatolik")
@@ -976,6 +1004,10 @@ func (s *Server) handleHook(w http.ResponseWriter, r *http.Request) {
 	}
 	if !s.allow(owner) {
 		httpErr(w, http.StatusTooManyRequests, "juda tez-tez so'rov")
+		return
+	}
+	if !s.hasPro(r.Context(), owner) {
+		httpErr(w, http.StatusPaymentRequired, errNeedPro)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)

@@ -141,6 +141,8 @@ type Pipeline struct {
 	// DraftCard — qoralamani bot chatiga tugmalar bilan yuboradi (Settings.DraftsInBot).
 	DraftCard func(ctx context.Context, d store.Draft, contactName string) error
 	Debounce  time.Duration // ketma-ket xabarlarni birlashtirish oynasi (default 4s)
+	// Pro — Pro tarif funksiyalari (ovozli xabarlar, Google) ochiqmi; nil → ochiq.
+	Pro func(ctx context.Context, owner int64) bool
 
 	// testda almashtiriladi
 	Now   func() time.Time
@@ -295,8 +297,9 @@ func (p *Pipeline) Handle(ctx context.Context, in Incoming) {
 		return
 	}
 
-	if in.Voice != nil && (!st.ReplyVoice || in.Voice.Duration > maxVoiceSeconds) {
-		// Ovozga javob o'chiq (yoki juda uzun): faqat matnli qismi bilan davom etamiz.
+	pro := p.Pro == nil || p.Pro(ctx, p.Owner)
+	if in.Voice != nil && (!st.ReplyVoice || !pro || in.Voice.Duration > maxVoiceSeconds) {
+		// Ovozga javob o'chiq, Pro tarifda emas (yoki juda uzun): faqat matnli qismi bilan davom etamiz.
 		in.Voice = nil
 		in.Text = strings.TrimSpace(strings.ReplaceAll(in.Text, VoiceText, ""))
 		if in.Text == "" {
@@ -368,7 +371,7 @@ func (p *Pipeline) Handle(ctx context.Context, in Incoming) {
 		History: hist, Incoming: in.Text, Away: st.CurrentAway(p.Now()), Audio: audio,
 	}
 	var resp llm.Response
-	connected := p.Google != nil && p.Google.Connected(ctx, p.Owner)
+	connected := pro && p.Google != nil && p.Google.Connected(ctx, p.Owner) // Google — Pro funksiyasi
 	if asst, ok := p.LLM.(llm.Assistant); ok && p.Propose != nil && !st.NoSuggest && (connected || p.CalendarFallback) {
 		req.Assist = p.assistContext(lctx, &st, in, connected)
 		resp, err = asst.Assist(lctx, req)
