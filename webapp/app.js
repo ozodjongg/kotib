@@ -30,7 +30,8 @@ const EVENTS = {
   google_connected: 'Google ulandi', google_disconnected: 'Google uzildi', google_revoked: "Google ruxsati bekor qilindi",
   action_proposed: 'Taklif yuborildi (taqvim/vazifa)', action_done: "Google'ga qo'shildi",
   action_rejected: 'Taklif rad etildi', action_failed: "Google'ga qo'shib bo'lmadi",
-  referral_bonus: "Do'st taklifi uchun bonus kunlar", away_set: "Holat o'zgartirildi",
+  referral_bonus: "Do'st taklifi uchun bonus kunlar", account_linked: "Qo'shimcha akkaunt rozilik berdi",
+  account_unlinked: "Qo'shimcha akkaunt uzildi", weekly_sent: 'Haftalik hisobot yuborildi', link_created: 'Akkaunt ulash havolasi yaratildi', away_set: "Holat o'zgartirildi",
 };
 
 const state = {
@@ -76,9 +77,11 @@ function icon(name) {
 }
 
 async function api(method, path, body) {
+  const headers = { 'Authorization': 'tma ' + (tg ? tg.initData : ''), 'Content-Type': 'application/json' };
+  if (state.account) headers['X-Kotib-Account'] = String(state.account); // tanlangan qo'shimcha akkaunt
   const res = await fetch('/api' + path, {
     method,
-    headers: { 'Authorization': 'tma ' + (tg ? tg.initData : ''), 'Content-Type': 'application/json' },
+    headers,
     body: body === undefined ? undefined : JSON.stringify(body),
     cache: 'no-store',
   });
@@ -229,12 +232,13 @@ async function boot() {
       h('p', { class: 'muted' }, 'Kotib faqat Telegram bot orqali ishlaydi: botga /start yozing va «Ochish» tugmasini bosing.')));
     return;
   }
+  try { state.account = +localStorage.getItem(ACC_KEY) || null; } catch (_) { /* */ }
   try {
-    await refreshMe();
-    state.settings = await api('GET', '/settings');
-    if (!Array.isArray(state.settings.rules)) state.settings.rules = [];
-    state.savedMode = state.settings.mode;
-    if (!state.settings.quiet_hours) state.settings.quiet_hours = { enabled: false, start: '23:00', end: '07:00', tz: 'Asia/Tashkent' };
+    try { await loadAccountData(); } catch (e) {
+      if (!state.account) throw e;
+      state.account = null; saveAccount(); // tanlangan akkaunt uzilgan bo'lishi mumkin — asosiyga qaytamiz
+      await loadAccountData();
+    }
   } catch (e) {
     swap(root, h('div', { class: 'empty' },
       h('div', { class: 'big' }, 'Ochilmadi'),
@@ -249,6 +253,92 @@ async function boot() {
 }
 
 async function refreshMe() { state.me = await api('GET', '/me'); }
+
+// ---------- Bir nechta akkaunt ----------
+const ACC_KEY = 'kotib.account';
+function saveAccount() { try { if (state.account) localStorage.setItem(ACC_KEY, String(state.account)); else localStorage.removeItem(ACC_KEY); } catch (_) { /* */ } }
+function isChild() { return !!state.me && state.me.account_id !== state.me.main_id; }
+function accountLabel() {
+  const a = (state.me.accounts || []).find((x) => x.id === state.me.account_id);
+  return a ? a.label : '';
+}
+
+async function loadAccountData() {
+  await refreshMe();
+  state.settings = await api('GET', '/settings');
+  if (!Array.isArray(state.settings.rules)) state.settings.rules = [];
+  state.savedMode = state.settings.mode;
+  if (!state.settings.quiet_hours) state.settings.quiet_hours = { enabled: false, start: '23:00', end: '07:00', tz: 'Asia/Tashkent' };
+}
+
+async function switchAccount(id) {
+  state.account = id === state.me.main_id ? null : id;
+  saveAccount();
+  Object.assign(state, { login: { step: 'idle' }, drafts: null, contacts: null, activity: null, dirty: false, hookURL: null, tab: 'home' });
+  await loadAccountData();
+  if (state.me.consented && needsConnect()) await resumeLogin();
+  haptic('success');
+  render();
+}
+
+// Akkaunt almashtirgich (2+ akkaunt bo'lsa).
+function accountBar() {
+  const list = state.me.accounts || [];
+  if (list.length < 2) return null;
+  return h('div', { class: 'acc-bar' }, list.map((a) => {
+    const on = a.id === state.me.account_id;
+    const dot = a.status === 'active' ? 'ok' : a.status === 'paused' ? 'warn' : 'bad';
+    return h('button', { class: 'chip-btn' + (on ? ' on' : ''), onclick: on ? null : busy(() => switchAccount(a.id)) },
+      h('i', { class: 'dot ' + dot }), (a.main ? '🏠 ' : '👤 ') + a.label);
+  }));
+}
+
+function accountsCard() {
+  if (needsPro()) {
+    return proLock("Bir nechta akkaunt", "Ish, do'kon yoki boshqa Telegram akkauntlaringizni ham ulang — hammasi bitta joydan boshqariladi, qoralamalar shu botga keladi.");
+  }
+  const card = h('div', { class: 'card' });
+  let linkRes = null, adding = false;
+  const draw = async () => {
+    let info;
+    try { info = await api('GET', '/accounts'); } catch (e) { swap(card, h('p', { class: 'err small' }, e.message)); return; }
+    const kids = [h('div', { class: 'card-head' }, h('h3', {}, 'Akkauntlar'), h('span', { class: 'badge' }, `${info.accounts.length - 1}/${info.max} qo'shimcha`))];
+    kids.push(h('p', { class: 'muted small' }, "Boshqa Telegram akkauntlaringiz (ish, do'kon) ham kotibga ulanadi. Qoralamalar va xabarlar shu botga «👤 nom» bilan keladi."));
+    kids.push(h('ul', { class: 'acc-list' }, info.accounts.map((a) => h('li', {},
+      h('div', {}, h('b', {}, (a.main ? '🏠 ' : '👤 ') + a.label), h('div', { class: 'muted small' }, (STATUS[a.status] || [a.status])[0])),
+      a.main ? null : h('div', { class: 'row' },
+        h('button', { class: 'btn ghost sm', onclick: busy(() => switchAccount(a.id)) }, a.status === 'pending' ? 'Ulash' : 'Ochish'),
+        h('button', { class: 'btn ghost sm', onclick: busy(async () => {
+          if (!(await confirmBox(`«${a.label}» uziladi: Telegram sessiyasi tugatiladi, uning sozlama va qoralamalari o'chadi. Davom etasizmi?`))) return;
+          await api('DELETE', '/accounts/' + a.id); await refreshMe(); toast('Uzildi'); draw();
+        }) }, 'Uzish'))))));
+    if (linkRes) {
+      kids.push(h('div', { class: 'card accent' },
+        h('p', { class: 'small' }, h('b', {}, '2-qadam: '), "havolani QO'SHILADIGAN akkauntdan oching va botda «Roziman»ni bosing (30 daqiqa amal qiladi)."),
+        h('ol', { class: 'small muted' },
+          h('li', {}, "Havoladan nusxa oling."),
+          h('li', {}, "Telegram'da qo'shiladigan akkauntga o'ting (Sozlamalar → akkaunt almashtirish)."),
+          h('li', {}, "Havolani o'sha akkauntning «Saqlangan xabarlar»iga yuborib, bosing → «Roziman»."),
+          h('li', {}, "Shu yerga qayting: akkaunt ro'yxatda paydo bo'ladi — «Ulash»ni bosing.")),
+        h('div', { class: 'hook-list' },
+          h('button', { class: 'btn block', onclick: () => copyText(linkRes.link) }, 'Havoladan nusxa olish'),
+          h('button', { class: 'btn ghost block', onclick: busy(async () => { await refreshMe(); linkRes = null; draw(); }) }, "Tayyor — ro'yxatni yangilash"))));
+    } else if (adding) {
+      const label = h('input', { type: 'text', maxlength: 32, placeholder: "Nomi, masalan: Ish yoki Do'kon" });
+      kids.push(h('div', { class: 'stack' }, label,
+        h('button', { class: 'btn block', onclick: busy(async () => {
+          linkRes = await api('POST', '/accounts/link', { label: label.value }); adding = false; draw();
+        }) }, 'Havola olish')));
+      setTimeout(() => label.focus(), 50);
+    } else if (info.can_add) {
+      kids.push(h('button', { class: 'btn block', onclick: () => { adding = true; draw(); } }, '+ Akkaunt qo\'shish'));
+    }
+    swap(card, kids);
+  };
+  put(card, h('div', { class: 'skeleton' }));
+  draw();
+  return card;
+}
 
 async function backgroundRefresh() {
   if (document.hidden || !state.me || !state.me.consented || needsConnect()) return;
@@ -273,7 +363,16 @@ async function resumeLogin() {
 
 function render() {
   if (!state.me.consented) return renderConsent();
-  if (needsConnect()) return renderConnect();
+  if (needsConnect()) {
+    renderConnect();
+    if (isChild()) {
+      root.prepend(h('div', { class: 'card accent' },
+        h('p', { class: 'small' }, h('b', {}, `👤 «${accountLabel()}» akkauntini ulayapsiz. `),
+          "Tasdiqlash yoki kodni shu akkauntda qiling: Telegram'da avval shu akkauntga o'ting. Boshqa akkaunt tasdiqlasa, ulanish bekor qilinadi."),
+        h('button', { class: 'btn ghost sm', onclick: busy(() => switchAccount(state.me.main_id)) }, '← Asosiy akkauntga qaytish')));
+    }
+    return;
+  }
   renderMain();
 }
 
@@ -456,7 +555,9 @@ function renderMain() {
   try { if (tg && tg.BackButton) { if (state.tab === 'home') tg.BackButton.hide(); else tg.BackButton.show(); } } catch (_) { /* */ }
   const view = h('div', {});
   swap(root, view);
-  ({ home: viewHome, drafts: viewDrafts, rules: viewRules, settings: viewSettings, account: viewAccount })[state.tab](view);
+  const bar = accountBar();
+  if (bar) put(view, bar);
+  ({ home: viewHome, drafts: viewDrafts, rules: viewRules, settings: viewSettings, account: viewAccount, stats: viewStats })[state.tab](view);
 }
 
 const STATUS = {
@@ -549,6 +650,7 @@ function viewHome(view) {
     me.stats && me.stats.month_sent > 0 ? h('div', { class: 'card accent' },
       h('p', {}, h('b', {}, `⏱ Bu oy ~${me.stats.month_saved} tejaldi`)),
       h('p', { class: 'muted small' }, `Kotib ${me.stats.month_sent} ta javob yubordi — har biri taxminan 1 daqiqa vaqtingiz.`)) : null,
+    h('button', { class: 'btn ghost block', onclick: () => go('stats') }, '📊 Batafsil statistika' + (needsPro() ? ' · Pro' : '')),
     h('h2', {}, 'Maslahatlar'),
     h('div', { class: 'card soft' },
       h('ul', { class: 'perks' },
@@ -694,6 +796,7 @@ function viewSettings(view) {
       switchRow('Javobda havolalar', "O'chiq bo'lsa, havolali javoblar qoralamada qoladi", s.allow_links, (v) => { s.allow_links = v; }),
       switchRow('Uchrashuvlarni taqvimga taklif qilish', "Suhbatda aniq vaqtli uchrashuv chiqsa, bot «Taqvimga qo'shaymi?» deb so'raydi. Google ulanmagan bo'lsa ham ishlaydi (iPhone/Android taqvimi).", !s.no_suggest, (v) => { s.no_suggest = !v; }),
       switchRow('Kechki xulosa', "Har kuni soat 21:00 da: nechta javob tayyorlandi, kim javob kutyapti, qancha vaqt tejaldi.", !s.no_digest, (v) => { s.no_digest = !v; }),
+      switchRow('Haftalik hisobot' + (needsPro() ? ' · Pro' : ''), "Har dushanba 9:00 da: o'tgan hafta statistikasi, o'zgarish, eng faol vaqt va kontaktlar.", !s.no_weekly, (v) => { s.no_weekly = !v; }),
       switchRow("«Keyinroq yozaman» eslatmasi", "Kotib kimgadir «keyinroq yozaman» desa va 3 soat ichida o'zingiz yozmasangiz — bot eslatadi.", !s.no_followups, (v) => { s.no_followups = !v; }),
       switchRow('Qoralamalar bot chatida', "Qoralama botga tugmalar bilan keladi: bir bosishda yuborasiz yoki xabarga javob qilib matnni o'zgartirasiz. Matnlar bot chatida saqlanib qoladi.", s.drafts_in_bot, (v) => { s.drafts_in_bot = v; })),
     h('h2', {}, 'Tinch soatlar'),
@@ -1032,10 +1135,15 @@ function googleCard(g) {
 }
 
 async function viewAccount(view) {
-  put(view, h('h1', {}, 'Hisob'));
+  put(view, h('h1', {}, isChild() ? `Hisob · 👤 ${accountLabel()}` : 'Hisob'));
   const b = state.me.billing || {};
-  if (b.enabled) put(view, subscriptionCard(b));
-  if (b.enabled && !b.exempt) put(view, referralCard());
+  if (isChild()) {
+    put(view, h('div', { class: 'card soft' }, h('p', { class: 'small muted' }, "Bu qo'shimcha akkaunt: obuna va do'st taklifi asosiy akkauntda boshqariladi.")));
+  } else {
+    if (b.enabled) put(view, subscriptionCard(b));
+    put(view, accountsCard());
+    if (b.enabled && !b.exempt) put(view, referralCard());
+  }
   const g = state.me.google || {};
   if (g.enabled) put(view, needsPro() && !g.connected ? proLock('Google', "Kotib taqvimingizdagi band vaqtlarni biladi, uchrashuv va vazifalarni Google Calendar/Tasks'ga qo'shadi.") : googleCard(g));
   const dev = deviceCard();
@@ -1054,15 +1162,18 @@ async function viewAccount(view) {
         h('li', {}, 'Kod va 2FA parol saqlanmaydi, logga yozilmaydi'),
         h('li', {}, "Faollik jurnalida xabar matnlari yo'q — faqat hodisalar"))),
     h('div', { class: 'card danger' },
-      h('h3', {}, "Akkauntni uzish va o'chirish"),
-      h('p', { class: 'muted small' }, "Telegram sessiyasi tugatiladi, sozlamalar va qoralamalar o'chadi, obuna yangilanishi to'xtatiladi."),
+      h('h3', {}, isChild() ? "Bu akkauntni uzish" : "Akkauntni uzish va o'chirish"),
+      h('p', { class: 'muted small' }, isChild()
+        ? "Faqat shu qo'shimcha akkaunt uziladi: Telegram sessiyasi tugatiladi, uning sozlama va qoralamalari o'chadi. Asosiy akkaunt va obuna tegilmaydi."
+        : "Telegram sessiyasi tugatiladi, sozlamalar va qoralamalar o'chadi, obuna yangilanishi to'xtatiladi. Qo'shimcha akkauntlar ham uziladi."),
       h('button', { class: 'btn danger block', onclick: busy(async () => {
-        if (!(await confirmBox("Hamma narsa o'chiriladi. Bu amalni ortga qaytarib bo'lmaydi. Davom etasizmi?"))) return;
+        if (!(await confirmBox(isChild() ? `«${accountLabel()}» uziladi. Davom etasizmi?` : "Hamma narsa o'chiriladi. Bu amalni ortga qaytarib bo'lmaydi. Davom etasizmi?"))) return;
         await bioGate("Akkauntni o'chirish");
         await api('DELETE', '/account', { confirm: 'DELETE' });
-        toast("O'chirildi");
+        toast(isChild() ? 'Uzildi' : "O'chirildi");
+        if (isChild()) { await switchAccount(state.me.main_id); return; }
         setTimeout(() => { if (tg) tg.close(); }, 800);
-      }) }, "Uzish va o'chirish")));
+      }) }, isChild() ? 'Uzish' : "Uzish va o'chirish")));
 
   try { state.activity = await api('GET', '/activity'); } catch (e) { swap(act, h('p', { class: 'err small' }, e.message)); return; }
   swap(act, state.activity.length
@@ -1141,6 +1252,87 @@ function subscriptionCard(b) {
   // progress kengligi: inline style CSP'da taqiqlangan, shuning uchun CSSOM orqali.
   card.querySelectorAll('[data-w]').forEach((el) => { el.style.width = el.getAttribute('data-w') + '%'; });
   return card;
+}
+
+// ---------- Kengaytirilgan statistika (Pro) ----------
+const MONTHS = ['yan', 'fev', 'mar', 'apr', 'may', 'iyun', 'iyul', 'avg', 'sen', 'okt', 'noy', 'dek'];
+function fmtDay(d) { const [, m, day] = d.split('-'); return `${+day}-${MONTHS[+m - 1]}`; }
+
+function kpi(value, label, cur, prev) {
+  let delta = null;
+  if (prev != null && prev > 0) {
+    const pct = Math.round((cur - prev) * 100 / prev);
+    delta = h('div', { class: 'd ' + (pct > 0 ? 'up' : pct < 0 ? 'down' : '') }, `${pct > 0 ? '▲ +' : pct < 0 ? '▼ ' : ''}${pct}% o'tgan davrga nisbatan`);
+  }
+  return h('div', { class: 'kpi' }, h('div', { class: 'v' }, value), h('div', { class: 'l' }, label), delta);
+}
+
+// Bitta seriyali ustunli grafik: bosilganda/ustiga kelganda qiymat yuqorida ko'rinadi.
+function columnChart(points, unit, xLabels) {
+  const max = Math.max(1, ...points.map((p) => p.v));
+  const readout = h('div', { class: 'readout' }, 'Ustunni bosing — qiymat shu yerda');
+  const cols = points.map((p) => {
+    const bar = h('div', { class: 'bar', 'data-h': p.v ? Math.max(3, (p.v / max) * 100) : 0 });
+    const col = h('div', { class: 'col', role: 'img', 'aria-label': `${p.label}: ${p.v} ${unit}`, title: `${p.label}: ${p.v} ${unit}` }, bar);
+    const show = () => { cols.forEach((c) => c.classList.remove('sel')); col.classList.add('sel'); readout.textContent = `${p.label}: ${p.v} ${unit}`; };
+    col.addEventListener('pointerenter', show); col.addEventListener('click', show);
+    return col;
+  });
+  const el = h('div', { class: 'chart' }, readout, h('div', { class: 'ymax' }, String(max)), h('div', { class: 'plot' }, cols),
+    h('div', { class: 'xaxis' }, xLabels.map((x) => h('span', {}, x))));
+  el.querySelectorAll('[data-h]').forEach((b) => { b.style.height = b.getAttribute('data-h') + '%'; });
+  return el;
+}
+
+async function viewStats(view) {
+  put(view, h('h1', {}, 'Statistika'));
+  if (needsPro()) {
+    put(view, proLock('Kengaytirilgan statistika', "Kunlik dinamika, qoralamalarni tasdiqlash ulushi, kontaktlar qachon ko'p yozishi, eng faol suhbatdoshlar va har dushanba haftalik hisobot."));
+    return;
+  }
+  const days = state.statsDays || 7;
+  const seg = h('div', { class: 'segmented' }, [7, 30].map((d) => h('button', { class: d === days ? 'on' : '',
+    onclick: () => { state.statsDays = d; renderMain(); } }, `${d} kun`)));
+  const body = h('div', {}, h('div', { class: 'skeleton' }));
+  put(view, seg, body);
+  let s;
+  try { s = await api('GET', '/stats?days=' + days); } catch (e) { swap(body, h('p', { class: 'err small' }, e.message)); return; }
+  if (!s.prepared && !s.skipped && !s.blocked) {
+    swap(body, h('div', { class: 'card soft' }, h('p', { class: 'muted' }, `Oxirgi ${days} kunda faollik yo'q. Kotib javob tayyorlay boshlagach, statistika shu yerda paydo bo'ladi.`)));
+    return;
+  }
+  const series = s.series || [];
+  const busiest = s.hours.indexOf(Math.max(...s.hours));
+  swap(body,
+    h('div', { class: 'kpis' },
+      kpi(String(s.prepared), 'Tayyorlangan javoblar', s.prepared, s.prev_prepared),
+      kpi(String(s.sent), 'Yuborilgan', s.sent, s.prev_sent),
+      kpi(s.saved_min ? '~' + fmtMinutes(s.saved_min) : '0', 'Tejalgan vaqt'),
+      kpi(s.approval >= 0 ? s.approval + '%' : '—', "Qoralamalarni tasdiqlash")),
+    h('div', { class: 'card' },
+      h('h3', {}, 'Kunlik tayyorlangan javoblar'),
+      columnChart(series.map((d) => ({ label: fmtDay(d.day), v: d.prepared })), 'ta',
+        [fmtDay(series[0].day), fmtDay(series[series.length - 1].day)])),
+    h('div', { class: 'card' },
+      h('h3', {}, 'Kontaktlar qachon yozadi'),
+      h('p', { class: 'muted small' }, busiest >= 0 && s.hours[busiest] ? `Eng faol vaqt: ${String(busiest).padStart(2, '0')}:00–${String((busiest + 1) % 24).padStart(2, '0')}:00` : ''),
+      columnChart(s.hours.map((v, i) => ({ label: `${String(i).padStart(2, '0')}:00`, v })), 'ta', ['00', '06', '12', '18', '23'])),
+    s.top_chats && s.top_chats.length ? h('div', { class: 'card' },
+      h('h3', {}, "Ko'p yozgan kontaktlar"),
+      h('ul', { class: 'top-list' }, s.top_chats.map((c) => h('li', {}, h('span', {}, c.name), h('b', {}, `${c.count} ta`))))) : null,
+    h('div', { class: 'card' },
+      h('h3', {}, 'Tafsilot'),
+      h('ul', { class: 'top-list' },
+        h('li', {}, h('span', {}, '🤖 Avtomatik yuborilgan'), h('b', {}, String(s.auto_sent))),
+        h('li', {}, h('span', {}, '✅ Qoralamadan yuborilgan'), h('b', {}, String(s.draft_sent))),
+        h('li', {}, h('span', {}, '✖️ Rad etilgan qoralamalar'), h('b', {}, String(s.rejected))),
+        h('li', {}, h('span', {}, "⏭ Javobsiz qoldirilgan (qoida, tinch soat, limit)"), h('b', {}, String(s.skipped))),
+        h('li', {}, h('span', {}, '🛡 Xavfsizlik filtri'), h('b', {}, String(s.blocked)))),
+      h('details', {}, h('summary', { class: 'small' }, "Kunlar bo'yicha jadval"),
+        h('table', { class: 'stats-table' },
+          h('thead', {}, h('tr', {}, h('th', {}, 'Kun'), h('th', {}, 'Tayyorlangan'), h('th', {}, 'Yuborilgan'))),
+          h('tbody', {}, series.slice().reverse().map((d) => h('tr', {}, h('td', {}, fmtDay(d.day)), h('td', {}, String(d.prepared)), h('td', {}, String(d.sent)))))))),
+    h('p', { class: 'muted small center' }, "Har dushanba soat 9:00 da haftalik hisobot botga keladi (Sozlamalarda o'chirish mumkin)."));
 }
 
 // ---------- Do'stni taklif qilish ----------

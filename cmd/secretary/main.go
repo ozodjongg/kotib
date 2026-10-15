@@ -134,8 +134,10 @@ func run(log *slog.Logger) error {
 	defer stop()
 
 	ctrlBot := bot.New(env("BOT_TOKEN"), env("MINIAPP_URL"), log)
+	// Qo'shimcha (bog'langan) akkauntlarning bot xabarlari asosiy akkaunt chatiga «👤 nom» bilan boradi.
 	notify := func(ctx context.Context, owner int64, text string, openApp bool) {
-		if err := ctrlBot.Notify(ctx, owner, text, openApp); err != nil {
+		chat, text := botcmd.Route(ctx, st, owner, text)
+		if err := ctrlBot.Notify(ctx, chat, text, openApp); err != nil {
 			log.Warn("bildirishnoma yuborilmadi", "owner", owner, "err", err)
 		}
 	}
@@ -168,7 +170,8 @@ func run(log *slog.Logger) error {
 	}
 	// Tasdiq tugmali takliflar (uchrashuv/vazifa) — Google bo'lsa ham, bo'lmasa ham (.ics).
 	mgr.Propose = func(ctx context.Context, owner, id int64, text string) {
-		if err := ctrlBot.Ask(ctx, owner, text, botcmd.ActionButtons(id)); err != nil {
+		chat, text := botcmd.Route(ctx, st, owner, text)
+		if err := ctrlBot.Ask(ctx, chat, text, botcmd.ActionButtons(id)); err != nil {
 			log.Warn("amal taklifi yuborilmadi", "owner", owner, "err", err)
 		}
 	}
@@ -188,7 +191,8 @@ func run(log *slog.Logger) error {
 
 	mgr.DraftCard = func(ctx context.Context, d store.Draft, name string) error {
 		text, btns := botcmd.DraftCard(d, name)
-		return ctrlBot.Ask(ctx, d.OwnerID, text, btns)
+		chat, text := botcmd.Route(ctx, st, d.OwnerID, text)
+		return ctrlBot.Ask(ctx, chat, text, btns)
 	}
 
 	// ---- Google (ixtiyoriy) ----
@@ -446,6 +450,7 @@ func insights(ctx context.Context, mgr *userbot.Manager, gate <-chan struct{}) {
 		now := time.Now()
 		mgr.CheckFollowups(ctx, now)
 		mgr.SendDigests(ctx, now)
+		mgr.SendWeeklyReports(ctx, now)
 		select {
 		case <-ctx.Done():
 			return

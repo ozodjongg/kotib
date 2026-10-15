@@ -100,6 +100,9 @@ func (h *Handler) Command(ctx context.Context, from int64, cmd, args string) bot
 		case "resume":
 			return h.resume(ctx, from)
 		}
+		if token, ok := strings.CutPrefix(args, LinkStartPrefix); ok {
+			return h.linkStart(ctx, from, token)
+		}
 		trial := h.Billing.TrialDays
 		referred := false
 		if code, ok := strings.CutPrefix(args, billing.ReferralStartPrefix); ok && h.Billing.AttachReferral(ctx, from, code) {
@@ -169,6 +172,16 @@ func (h *Handler) status(ctx context.Context, owner int64) bot.Reply {
 	if n, saved, err := store.ReplyStats(ctx, h.Store, owner, store.MonthStart(time.Now(), loc)); err == nil && n > 0 {
 		fmt.Fprintf(&b, "Bu oy: %d ta javob, ~%s tejaldi\n", n, store.FormatSaved(saved))
 	}
+	if ls, err := h.Store.ListLinks(ctx, owner); err == nil && len(ls) > 0 {
+		b.WriteString("Qo'shimcha akkauntlar:\n")
+		for _, l := range ls {
+			st := "ulanmagan"
+			if acc, err := h.Store.GetAccount(ctx, l.ChildID); err == nil {
+				st = statusNames[acc.Status]
+			}
+			fmt.Fprintf(&b, "  👤 %s — %s\n", l.Label, st)
+		}
+	}
 	if h.Billing.Enabled() {
 		b.WriteString(h.subscriptionLine(ctx, owner))
 	}
@@ -205,9 +218,16 @@ func (h *Handler) pause(ctx context.Context, owner int64) bot.Reply {
 	if _, err := h.Store.GetAccount(ctx, owner); err != nil {
 		return bot.Reply{Text: "Akkaunt ulanmagan.", OpenApp: true}
 	}
-	h.Ctl.Pause(owner)
-	_ = h.Store.SetStatus(ctx, owner, store.StatusPaused, "mijoz to'xtatdi")
-	h.Store.Audit(ctx, owner, "paused", "bot")
+	// Barcha akkauntlar (asosiy va qo'shimcha) birdan to'xtaydi.
+	for _, o := range h.accounts(ctx, owner) {
+		acc, err := h.Store.GetAccount(ctx, o)
+		if err != nil || (o != owner && acc.Status != store.StatusActive) {
+			continue
+		}
+		h.Ctl.Pause(o)
+		_ = h.Store.SetStatus(ctx, o, store.StatusPaused, "mijoz to'xtatdi")
+		h.Store.Audit(ctx, o, "paused", "bot")
+	}
 	return bot.Reply{Text: "Kotib to'xtatildi ⏸. Davom ettirish: /resume"}
 }
 
@@ -221,6 +241,15 @@ func (h *Handler) resume(ctx context.Context, owner int64) bot.Reply {
 	}
 	_ = h.Store.SetStatus(ctx, owner, store.StatusActive, "")
 	h.Store.Audit(ctx, owner, "resumed", "bot")
+	// Qo'shimcha akkauntlar: faqat to'xtatilganlari (uzilgan/xavfsizlik uchun to'xtaganiga tegilmaydi).
+	for _, o := range h.accounts(ctx, owner)[1:] {
+		if acc, err := h.Store.GetAccount(ctx, o); err == nil && acc.Status == store.StatusPaused {
+			if h.Ctl.Resume(context.WithoutCancel(ctx), o) == nil {
+				_ = h.Store.SetStatus(ctx, o, store.StatusActive, "")
+				h.Store.Audit(ctx, o, "resumed", "bot")
+			}
+		}
+	}
 	text := "Kotib yana ishlayapti ✅"
 	if !h.Billing.Entitled(ctx, owner) {
 		text += "\n\nDiqqat: obuna faol emas — qoralamalar tayyorlanmaydi. /obuna"
@@ -378,6 +407,9 @@ func ActionButtons(id int64) []bot.Button {
 // Callback — amalni tasdiqlash/rad etish tugmalari. Amal faqat egasiga tegishli bo'lsa
 // topiladi; holat atomar o'zgaradi — ikki marta bosish ikki tadbir yaratmaydi.
 func (h *Handler) Callback(ctx context.Context, from int64, data string) bot.Answer {
+	if strings.HasPrefix(data, "lnk:") {
+		return h.linkCallback(ctx, from, data)
+	}
 	if strings.HasPrefix(data, "d:") {
 		toast, edit := h.draftCallback(ctx, from, data)
 		return bot.Answer{Toast: toast, Edit: edit}
@@ -391,10 +423,11 @@ func (h *Handler) Callback(ctx context.Context, from int64, data string) bot.Ans
 	if err != nil || (ans != "y" && ans != "n") {
 		return bot.Answer{}
 	}
-	a, err := h.Store.GetAction(ctx, from, id)
+	owner, a, err := h.findAction(ctx, from, id)
 	if err != nil {
 		return bot.Answer{Toast: "Topilmadi yoki eskirgan"}
 	}
+	from = owner // qo'shimcha akkauntning amali — o'sha akkaunt nomidan bajariladi
 	summary, _, _ := strings.Cut(google.Describe(a), "\n\n")
 	if ans == "n" {
 		if err := h.Store.SetActionStatus(ctx, from, id, store.ActionPending, store.ActionRejected); err != nil {
@@ -472,10 +505,11 @@ func (h *Handler) draftCallback(ctx context.Context, from int64, data string) (s
 	if !ok {
 		return "", ""
 	}
-	d, err := h.Store.GetDraft(ctx, from, id)
+	owner, d, err := h.findDraft(ctx, from, id)
 	if err != nil {
 		return "Topilmadi", ""
 	}
+	from = owner
 	if op == "r" {
 		if err := h.Ctl.RejectDraft(ctx, from, id); err != nil {
 			return "Allaqachon hal qilingan", ""
@@ -510,10 +544,11 @@ func (h *Handler) ReplyTo(ctx context.Context, from int64, data, text string) (b
 	if !ok {
 		return bot.Reply{}, ""
 	}
-	d, err := h.Store.GetDraft(ctx, from, id)
+	owner, d, err := h.findDraft(ctx, from, id)
 	if err != nil || d.Status != store.DraftPending {
 		return bot.Reply{Text: "Bu qoralama allaqachon hal qilingan."}, ""
 	}
+	from = owner
 	t := strings.TrimSpace(text)
 	if okWords[strings.ToLower(t)] {
 		t = ""

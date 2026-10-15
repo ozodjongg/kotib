@@ -103,10 +103,11 @@ func (b *Bot) Notify(ctx context.Context, chatID int64, text string, openApp boo
 // Reply — buyruqqa javob.
 type Reply struct {
 	Text      string
-	OpenApp   bool   // "Ochish" (Mini App) tugmasi
-	ButtonURL string // ixtiyoriy havola tugmasi (masalan, to'lov)
-	Button    string // ButtonURL matni
-	Links     []Link // qo'shimcha havola tugmalari, har biri alohida qatorda (masalan, tariflar)
+	OpenApp   bool     // "Ochish" (Mini App) tugmasi
+	ButtonURL string   // ixtiyoriy havola tugmasi (masalan, to'lov)
+	Button    string   // ButtonURL matni
+	Links     []Link   // qo'shimcha havola tugmalari, har biri alohida qatorda (masalan, tariflar)
+	Buttons   []Button // callback tugmalari (bitta qatorda), masalan rozilik
 }
 
 // Link — havola tugmasi.
@@ -122,6 +123,13 @@ func (b *Bot) send(ctx context.Context, chatID int64, r Reply) error {
 		row = append(row, inlineBtn{Text: "Ochish", WebApp: &webAppInfo{URL: b.MiniAppURL}})
 	}
 	var rows [][]inlineBtn
+	if len(r.Buttons) > 0 {
+		cb := make([]inlineBtn, 0, len(r.Buttons))
+		for _, btn := range r.Buttons {
+			cb = append(cb, inlineBtn{Text: btn.Text, Data: btn.Data})
+		}
+		rows = append(rows, cb)
+	}
 	for _, l := range r.Links {
 		rows = append(rows, []inlineBtn{{Text: l.Text, URL: l.URL}})
 	}

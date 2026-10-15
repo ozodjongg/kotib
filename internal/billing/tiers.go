@@ -76,6 +76,9 @@ func (s *Service) Tier(ctx context.Context, owner int64) Tier {
 	if !s.Enabled() || s.Exempt[owner] {
 		return TierPro
 	}
+	if p, linked := s.payer(ctx, owner); linked {
+		return s.Tier(ctx, p)
+	}
 	sub, err := s.subscription(ctx, owner)
 	if err != nil {
 		return TierNone

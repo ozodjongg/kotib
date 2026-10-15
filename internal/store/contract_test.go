@@ -35,7 +35,7 @@ func TestStoreContract(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if _, err := db.Exec(`TRUNCATE accounts, subscriptions, payments, usage_daily, google_links, actions, hooks, followups, referral_codes, referrals CASCADE`); err != nil {
+		if _, err := db.Exec(`TRUNCATE accounts, subscriptions, payments, usage_daily, google_links, actions, hooks, followups, referral_codes, referrals, linked_accounts, link_tokens CASCADE`); err != nil {
 			t.Fatal(err)
 		}
 		contract(t, store.NewPostgres(db))
@@ -291,6 +291,7 @@ func contract(t *testing.T, s store.Store) {
 		t.Fatal("draft o'chirilishi kerak")
 	}
 	referralContract(t, s)
+	linkContract(t, s)
 }
 
 func referralContract(t *testing.T, s store.Store) {
@@ -367,5 +368,66 @@ func referralContract(t *testing.T, s store.Store) {
 	}
 	if st, _ := s.Stats(ctx, now); st.Referrals != 2 || st.RefPaid != 1 {
 		t.Fatalf("admin stats: %+v", st)
+	}
+}
+
+func linkContract(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	h := []byte("0123456789abcdef0123456789abcdef")
+	exp := time.Now().Add(30 * time.Minute).Truncate(time.Second)
+	if err := s.SaveLinkToken(ctx, h, store.LinkToken{ParentID: 200, Label: "Ish", ExpiresAt: exp}); err != nil {
+		t.Fatal(err)
+	}
+	if lt, err := s.GetLinkToken(ctx, h); err != nil || lt.ParentID != 200 || lt.Label != "Ish" || !lt.ExpiresAt.Equal(exp) {
+		t.Fatalf("token: %+v %v", lt, err)
+	}
+	if err := s.DeleteLinkToken(ctx, h); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetLinkToken(ctx, h); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("token o'chirilishi kerak")
+	}
+
+	if ok, err := s.AddLink(ctx, store.Link{ChildID: 201, ParentID: 200, Label: "Ish"}); !ok || err != nil {
+		t.Fatal(ok, err)
+	}
+	if ok, _ := s.AddLink(ctx, store.Link{ChildID: 201, ParentID: 300}); ok {
+		t.Fatal("akkaunt ikki asosiyga bog'lanmasligi kerak")
+	}
+	if ok, _ := s.AddLink(ctx, store.Link{ChildID: 200, ParentID: 200}); ok {
+		t.Fatal("o'ziga bog'lanmaydi")
+	}
+	_, _ = s.AddLink(ctx, store.Link{ChildID: 202, ParentID: 200, Label: "Do'kon"})
+	if l, err := s.GetLink(ctx, 201); err != nil || l.ParentID != 200 || l.Label != "Ish" {
+		t.Fatalf("link: %+v %v", l, err)
+	}
+	if _, err := s.GetLink(ctx, 200); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("asosiy akkaunt bog'lanmagan")
+	}
+	if ls, _ := s.ListLinks(ctx, 200); len(ls) != 2 {
+		t.Fatalf("links: %+v", ls)
+	}
+	_ = s.DeleteLink(ctx, 201)
+	if ls, _ := s.ListLinks(ctx, 200); len(ls) != 1 || ls[0].ChildID != 202 {
+		t.Fatalf("o'chirish: %+v", ls)
+	}
+
+	// ListAuditSince: tartib, filtr, limit
+	now := time.Now()
+	if err := s.UpsertAccount(ctx, store.Account{OwnerID: 210, Status: store.StatusActive, ConsentAt: &now}); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range []string{"auto_sent", "skip", "draft_created", "auto_sent"} {
+		s.Audit(ctx, 210, e, "chat=5")
+	}
+	es, err := s.ListAuditSince(ctx, 210, []string{"auto_sent", "draft_created"}, now.Add(-time.Minute), 0)
+	if err != nil || len(es) != 3 || es[0].Event != "auto_sent" || es[1].Event != "draft_created" || es[0].Detail != "chat=5" {
+		t.Fatalf("audit since: %+v %v", es, err)
+	}
+	if es, _ := s.ListAuditSince(ctx, 210, []string{"auto_sent"}, now.Add(-time.Minute), 1); len(es) != 1 {
+		t.Fatalf("limit: %+v", es)
+	}
+	if es, _ := s.ListAuditSince(ctx, 210, []string{"auto_sent"}, now.Add(time.Hour), 0); len(es) != 0 {
+		t.Fatalf("since: %+v", es)
 	}
 }

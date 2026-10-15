@@ -198,3 +198,83 @@ func (m *Manager) digestText(ctx context.Context, owner int64, st *config.Settin
 	}
 	return b.String(), true
 }
+
+// weeklyHour — haftalik hisobot dushanba kuni egasining mahalliy vaqti bilan shu soatda.
+const weeklyHour = 9
+
+// SendWeeklyReports — Pro egalariga dushanba 9:00–9:59 da o'tgan hafta hisobotini bir marta yuboradi
+// (audit "weekly_sent" bo'yicha takrorlanmaydi). Faoliyat bo'lmagan haftada yuborilmaydi.
+func (m *Manager) SendWeeklyReports(ctx context.Context, now time.Time) {
+	m.init(ctx)
+	if m.Notify == nil {
+		return
+	}
+	owners, err := m.Store.ListActiveOwners(ctx)
+	if err != nil {
+		return
+	}
+	for _, owner := range owners {
+		st, err := m.Store.GetSettings(ctx, owner)
+		if err != nil || st.NoWeekly {
+			continue
+		}
+		local := now.In(st.Location())
+		if local.Weekday() != time.Monday || local.Hour() != weeklyHour {
+			continue
+		}
+		if (m.Entitled != nil && !m.Entitled(ctx, owner)) || (m.Pro != nil && !m.Pro(ctx, owner)) {
+			continue
+		}
+		if n, err := m.Store.CountAudit(ctx, owner, []string{"weekly_sent"}, now.Add(-6*24*time.Hour)); err != nil || n > 0 {
+			continue
+		}
+		// O'tgan hafta: dushanbadan yakshanbagacha (bugun — dushanba — kirmaydi).
+		stats, err := store.ExtendedStats(ctx, m.Store, owner, local.AddDate(0, 0, -1), 7, st.Location())
+		if err != nil || stats.Prepared == 0 {
+			continue
+		}
+		m.Store.Audit(ctx, owner, "weekly_sent", "")
+		m.Notify(ctx, owner, m.weeklyText(ctx, owner, stats), true)
+	}
+}
+
+func (m *Manager) weeklyText(ctx context.Context, owner int64, s store.ExtStats) string {
+	var b strings.Builder
+	b.WriteString("📊 Haftalik hisobot\n\n")
+	fmt.Fprintf(&b, "✍️ Tayyorlangan javoblar: %d%s\n", s.Prepared, trend(s.Prepared, s.PrevPrepared))
+	fmt.Fprintf(&b, "📤 Yuborilgan: %d%s\n", s.Sent, trend(s.Sent, s.PrevSent))
+	if s.Approval >= 0 {
+		fmt.Fprintf(&b, "✅ Qoralamalarni tasdiqlash: %d%%\n", s.Approval)
+	}
+	if s.SavedMin > 0 {
+		fmt.Fprintf(&b, "⏱ Tejalgan vaqt: ~%s\n", store.FormatSaved(time.Duration(s.SavedMin)*time.Minute))
+	}
+	if h := s.BusiestHour(); h >= 0 {
+		fmt.Fprintf(&b, "🔥 Eng ko'p yozishgan vaqt: %02d:00–%02d:00\n", h, (h+1)%24)
+	}
+	if len(s.TopChats) > 0 {
+		names := make([]string, 0, 3)
+		for _, c := range s.TopChats[:min(3, len(s.TopChats))] {
+			names = append(names, fmt.Sprintf("%s (%d)", m.contactName(ctx, owner, c.ChatID), c.Count))
+		}
+		fmt.Fprintf(&b, "👥 Ko'p yozganlar: %s\n", strings.Join(names, ", "))
+	}
+	if s.Skipped+s.Blocked > 0 {
+		fmt.Fprintf(&b, "🛡 Javobsiz qoldirilgan: %d (qoidalar, tinch soatlar, xavfsizlik)\n", s.Skipped+s.Blocked)
+	}
+	b.WriteString("\nBatafsil: ilovada «Statistika».")
+	return b.String()
+}
+
+// trend — o'tgan haftaga nisbatan o'zgarish: " (o'tgan hafta: 10, +20%)".
+func trend(cur, prev int) string {
+	if prev == 0 {
+		return ""
+	}
+	pct := (cur - prev) * 100 / prev
+	sign := "+"
+	if pct < 0 {
+		sign = ""
+	}
+	return fmt.Sprintf(" (o'tgan hafta: %d, %s%d%%)", prev, sign, pct)
+}
