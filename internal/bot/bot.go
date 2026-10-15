@@ -106,7 +106,11 @@ type Reply struct {
 	OpenApp   bool   // "Ochish" (Mini App) tugmasi
 	ButtonURL string // ixtiyoriy havola tugmasi (masalan, to'lov)
 	Button    string // ButtonURL matni
+	Links     []Link // qo'shimcha havola tugmalari, har biri alohida qatorda (masalan, tariflar)
 }
+
+// Link — havola tugmasi.
+type Link struct{ Text, URL string }
 
 func (b *Bot) send(ctx context.Context, chatID int64, r Reply) error {
 	p := map[string]any{"chat_id": chatID, "text": r.Text}
@@ -117,8 +121,15 @@ func (b *Bot) send(ctx context.Context, chatID int64, r Reply) error {
 	if r.OpenApp && b.MiniAppURL != "" {
 		row = append(row, inlineBtn{Text: "Ochish", WebApp: &webAppInfo{URL: b.MiniAppURL}})
 	}
+	var rows [][]inlineBtn
+	for _, l := range r.Links {
+		rows = append(rows, []inlineBtn{{Text: l.Text, URL: l.URL}})
+	}
 	if len(row) > 0 {
-		p["reply_markup"] = map[string]any{"inline_keyboard": [][]inlineBtn{row}}
+		rows = append(rows, row)
+	}
+	if len(rows) > 0 {
+		p["reply_markup"] = map[string]any{"inline_keyboard": rows}
 	}
 	return b.call(ctx, "sendMessage", p, nil)
 }

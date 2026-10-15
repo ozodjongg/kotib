@@ -297,10 +297,10 @@ func referralContract(t *testing.T, s store.Store) {
 	ctx := context.Background()
 	// bonus_until saqlanadi va Until/ListSubscriptionsEnding'da hisobga olinadi
 	bonus := time.Now().Add(30 * time.Minute).Truncate(time.Second)
-	if err := s.SaveSubscription(ctx, store.Subscription{OwnerID: 100, BonusUntil: bonus}); err != nil {
+	if err := s.SaveSubscription(ctx, store.Subscription{OwnerID: 100, BonusUntil: bonus, Tier: "pro"}); err != nil {
 		t.Fatal(err)
 	}
-	if sub, err := s.GetSubscription(ctx, 100); err != nil || !sub.BonusUntil.Equal(bonus) || !sub.Until().Equal(bonus) {
+	if sub, err := s.GetSubscription(ctx, 100); err != nil || !sub.BonusUntil.Equal(bonus) || !sub.Until().Equal(bonus) || sub.Tier != "pro" {
 		t.Fatalf("bonus: %+v %v", sub, err)
 	}
 	found := false

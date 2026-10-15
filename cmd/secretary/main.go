@@ -69,6 +69,14 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	// Ikkinchi tarif (Pro). Bo'sh/0 — bitta tarif: obunada hamma funksiya ochiq.
+	proPrice, err := intEnv("PRICE_PRO_STARS", 0, 0, billing.MaxPrice)
+	if err != nil {
+		return err
+	}
+	if proPrice > 0 && proPrice <= price {
+		return errors.New("PRICE_PRO_STARS PRICE_STARS'dan (Advanced) katta bo'lishi kerak")
+	}
 	trialDays, err := intEnv("TRIAL_DAYS", 7, 0, 90)
 	if err != nil {
 		return err
@@ -140,10 +148,10 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
-	bill := &billing.Service{Store: st, API: ctrlBot, Price: price, TrialDays: trialDays, TrialDailyLimit: trialDaily, Exempt: admins, Log: log,
+	bill := &billing.Service{Store: st, API: ctrlBot, Price: price, ProPrice: proPrice, TrialDays: trialDays, TrialDailyLimit: trialDaily, Exempt: admins, Log: log,
 		Notify: notify}
 	if bill.Enabled() {
-		log.Info("to'lov yoqilgan (Telegram Stars)", "price", price, "trial_days", trialDays, "trial_daily_limit", trialDaily)
+		log.Info("to'lov yoqilgan (Telegram Stars)", "price", price, "pro_price", proPrice, "trial_days", trialDays, "trial_daily_limit", trialDaily)
 	}
 
 	mgr := &userbot.Manager{
@@ -155,6 +163,8 @@ func run(log *slog.Logger) error {
 		HistoryLimit: bill.HistoryLimit,
 		// Taklif qilingan do'st akkauntini ulasa — taklif qiluvchiga bonus kunlar.
 		OnConnected: bill.ReferralActivated,
+		// Ovozli xabarlar va Google — Pro tarif (sinovda ham ochiq).
+		Pro: bill.HasPro,
 	}
 	// Tasdiq tugmali takliflar (uchrashuv/vazifa) — Google bo'lsa ham, bo'lmasa ham (.ics).
 	mgr.Propose = func(ctx context.Context, owner, id int64, text string) {

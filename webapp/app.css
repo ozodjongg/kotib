@@ -243,3 +243,11 @@ a.btn { display: flex; align-items: center; justify-content: center; text-decora
 .status-btn.picked { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 .chip-btn { font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
 .chip-btn.on { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
+
+/* tariflar */
+.plans { display: grid; gap: 10px; margin: 12px 0; }
+.plan { border: 1px solid var(--border); border-radius: 14px; padding: 14px; background: var(--surface); }
+.plan.pro { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent-soft); }
+.plan.current { background: var(--accent-soft); }
+.plan .price { font-size: 30px; margin: 4px 0 8px; }
+.plan .perks { margin-bottom: 12px; }

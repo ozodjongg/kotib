@@ -13,6 +13,8 @@ type Subscription struct {
 	// BonusUntil — referal mukofoti: shu vaqtgacha to'langan obuna kabi to'liq xizmat
 	// (Telegram pul yechmaydi). Avtomatik yangilanadigan obunada to'langan davrdan keyin turadi.
 	BonusUntil time.Time
+	// Tier — to'langan tarif ("advanced" / "pro"); bo'sh — tariflardan oldingi obuna yoki hech to'lamagan.
+	Tier string
 }
 
 // Until — xizmatdan foydalanish mumkin bo'lgan oxirgi vaqt (sinov, to'langan yoki bonus).

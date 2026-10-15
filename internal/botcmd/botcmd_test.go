@@ -280,3 +280,20 @@ func TestReferralStartAndInvite(t *testing.T) {
 		t.Fatal(r.Text)
 	}
 }
+
+func TestSubscribeTiered(t *testing.T) {
+	h, _, _, _ := setup(t)
+	ctx := context.Background()
+	h.Billing.Price, h.Billing.ProPrice = 150, 250
+	r := h.Command(ctx, 1, "obuna", "")
+	if len(r.Links) != 2 || !strings.Contains(r.Links[0].Text, "Advanced — 150") || !strings.Contains(r.Links[1].Text, "Pro — 250") ||
+		!strings.Contains(r.Text, "ovozli") {
+		t.Fatalf("tariflar: %+v", r)
+	}
+	h.Paid(ctx, 1, billing.PaymentInfo{Currency: "XTR", Amount: 150, Payload: "sub:1:advanced:0123456789abcdef", ChargeID: "a1",
+		ExpiresAt: time.Now().Add(30 * 24 * time.Hour)})
+	r = h.Command(ctx, 1, "obuna", "")
+	if len(r.Links) != 1 || !strings.Contains(r.Links[0].Text, "Pro") || !strings.Contains(r.Text, "(Advanced)") {
+		t.Fatalf("faol Advanced'da faqat Pro'ga o'tish: %+v", r)
+	}
+}
