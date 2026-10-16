@@ -9,7 +9,9 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/ozodjongg/secretar_ai_agent/internal/billing"
 	"github.com/ozodjongg/secretar_ai_agent/internal/crypto"
 	"github.com/ozodjongg/secretar_ai_agent/internal/plugin"
 	"github.com/ozodjongg/secretar_ai_agent/internal/schedule"
@@ -178,7 +180,7 @@ func TestSchedulesDisabled(t *testing.T) {
 	}
 }
 
-// doList — JSON massiv qaytaradigan so'rov.
+// doList — {"items": [...]} qaytaradigan so'rov.
 func doList(t *testing.T, method, url, auth string) (int, []map[string]any) {
 	t.Helper()
 	req, _ := http.NewRequest(method, url, nil)
@@ -188,7 +190,93 @@ func doList(t *testing.T, method, url, auth string) (int, []map[string]any) {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	var out []map[string]any
+	var out struct {
+		Items []map[string]any `json:"items"`
+	}
 	_ = json.NewDecoder(resp.Body).Decode(&out)
-	return resp.StatusCode, out
+	return resp.StatusCode, out.Items
+}
+
+// Vazifalar — Advanced (va undan yuqori), plaginlar — faqat Pro.
+func TestTierGates(t *testing.T) {
+	st := store.NewMemory()
+	ctx := context.Background()
+	bill := &billing.Service{Store: st, API: &fakeStarsAPI{}, Price: 150, ProPrice: 250, TrialDays: 7}
+	fs := &fakeSched{}
+	srv := httptest.NewServer((&Server{BotToken: tok, Store: st, Ctl: &fakeCtl{}, Billing: bill, Schedules: fs,
+		Plugins: plugin.Default(plugin.Options{Search: stubSearch{}}), Vault: testVault(t)}).Handler())
+	t.Cleanup(srv.Close)
+	body := `{"prompt":"ob-havo","kind":"daily","at":"07:30"}`
+	setTier := func(id int64, tier string, active bool) {
+		until := time.Now().Add(-time.Hour)
+		if active {
+			until = time.Now().Add(240 * time.Hour)
+		}
+		if err := st.SaveSubscription(ctx, store.Subscription{OwnerID: id, PaidUntil: until, Tier: tier}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	consent := func(id string) string {
+		a := userAuth(id)
+		do(t, "POST", srv.URL+"/api/consent", a, `{"accepted":true}`)
+		return a
+	}
+	plug := `{"enabled":true,"config":{"city":"Toshkent"}}`
+
+	// Obuna tugagan: vazifa yaratib/bajarib bo'lmaydi, plagin ham yoqilmaydi.
+	none := consent("71")
+	setTier(71, "", false)
+	if r, m := do(t, "POST", srv.URL+"/api/schedules", none, body); r.StatusCode != 402 || !strings.Contains(m["error"].(string), "Advanced") {
+		t.Fatalf("obunasiz vazifa: %d %v", r.StatusCode, m)
+	}
+	if _, m := do(t, "GET", srv.URL+"/api/schedules", none, ""); m["allowed"] != false || m["plugins_allowed"] != false {
+		t.Fatalf("obunasiz holat: %v", m)
+	}
+
+	// Advanced: vazifalar bor, plaginlar yo'q.
+	adv := consent("72")
+	setTier(72, "advanced", true)
+	r, m := do(t, "POST", srv.URL+"/api/schedules", adv, body)
+	if r.StatusCode != 200 {
+		t.Fatalf("advanced vazifa: %d %v", r.StatusCode, m)
+	}
+	id := strconv.FormatInt(int64(m["id"].(float64)), 10)
+	if r, _ := do(t, "POST", srv.URL+"/api/schedules/"+id+"/run", adv, ``); r.StatusCode != 200 {
+		t.Fatalf("advanced run: %d", r.StatusCode)
+	}
+	if r, m := do(t, "PUT", srv.URL+"/api/plugins/weather", adv, plug); r.StatusCode != 402 || !strings.Contains(m["error"].(string), "Pro") {
+		t.Fatalf("advanced plagin: %d %v", r.StatusCode, m)
+	}
+	if _, m := do(t, "GET", srv.URL+"/api/plugins", adv, ""); m["allowed"] != false {
+		t.Fatalf("advanced plaginlar: %v", m)
+	}
+	// O'chirib qo'yish va uzish Pro'siz ham mumkin.
+	if r, _ := do(t, "PUT", srv.URL+"/api/plugins/weather", adv, `{"enabled":false,"config":{}}`); r.StatusCode != 200 {
+		t.Fatal("o'chirib qo'yish")
+	}
+	if r, _ := do(t, "DELETE", srv.URL+"/api/plugins/weather", adv, ``); r.StatusCode != 200 {
+		t.Fatal("uzish")
+	}
+
+	// Obuna tugadi: tahrirlash va bajarish yopiladi, o'chirish mumkin.
+	setTier(72, "advanced", false)
+	if r, _ := do(t, "PUT", srv.URL+"/api/schedules/"+id, adv, body); r.StatusCode != 402 {
+		t.Fatalf("muddati o'tgan update: %d", r.StatusCode)
+	}
+	if r, _ := do(t, "POST", srv.URL+"/api/schedules/"+id+"/run", adv, ``); r.StatusCode != 402 {
+		t.Fatalf("muddati o'tgan run: %d", r.StatusCode)
+	}
+	if r, _ := do(t, "DELETE", srv.URL+"/api/schedules/"+id, adv, ``); r.StatusCode != 200 {
+		t.Fatal("o'chirish obunasiz ham mumkin")
+	}
+
+	// Pro: hammasi.
+	pro := consent("73")
+	setTier(73, "pro", true)
+	if r, _ := do(t, "PUT", srv.URL+"/api/plugins/weather", pro, plug); r.StatusCode != 200 {
+		t.Fatalf("pro plagin: %d", r.StatusCode)
+	}
+	if _, m := do(t, "GET", srv.URL+"/api/schedules", pro, ""); m["plugins_allowed"] != true || len(m["plugins"].([]any)) != 1 {
+		t.Fatalf("pro holat: %v", m)
+	}
 }

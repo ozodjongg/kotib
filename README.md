@@ -199,6 +199,8 @@ yuboriladi va kotib rasm mazmuniga javob qoralamasini tayyorlaydi. Rasmdagi yozu
 | 📱 Telefon avtomatikasi (Shortcuts / MacroDroid havolasi) | — | ✅ |
 | 👥 Bir nechta Telegram akkaunt (+2 ta) | — | ✅ |
 | 📊 Kengaytirilgan statistika va haftalik hisobot | — | ✅ |
+| ⏰ Rejalashtirilgan AI vazifalar | ✅ | ✅ |
+| 🧩 Plaginlar (internet qidiruvi, YouTube, ob-havo, valyuta kursi) | — | ✅ |
 | 🛎 Shoshilinch xabarlar, javobsiz qolganlar, ertalabki brifing, bilim bazasi, kontakt eslatmalari | ✅ | ✅ |
 | 📝 AI xulosa, 🪞 o'qitish/soya rejimi, 🖼 rasmlar, 🎤 ovoz matni, 🎂 tabriklar, `/sor` | — | ✅ |
 
@@ -335,9 +337,12 @@ ko'rsatmani bajaradi va natijani bot chatiga «⏰ Nomi» bilan yuboradi.
   ko'pi bilan 6 aylanish; vosita natijalari — faqat ma'lumot, ichidagi buyruqlar bajarilmaydi).
 - Server o'chiq turgan paytda o'tib ketgan takrorlar yig'ilmaydi: vazifa bir marta bajariladi, keyingisi hozirdan.
   Har vazifa bazada atomar egallanadi (`ClaimSchedule`) — ikki marta bajarilmaydi.
-- Cheklovlar: egasida 20 ta vazifa, kuniga 60 ta bajarilish, ko'rsatma 2000 belgi; obuna faol bo'lmasa bajarilmaydi.
+- **Tarif**: Advanced va Pro (sinovda ham ochiq). Obuna tugasa vazifalar bajarilmaydi, yaratish/tahrirlash/«Hozir bajarish» yopiladi (402); o'chirish mumkin.
+- Cheklovlar: egasida 20 ta vazifa, kuniga 60 ta bajarilish, ko'rsatma 2000 belgi.
 
 ## Plaginlar (connector'lar)
+
+**Faqat Pro tarifda** (sinovda ham ochiq). Advanced'da vazifalar plaginsiz bajariladi; plaginni yoqish 402 qaytaradi, o'chirib qo'yish va uzish har doim mumkin.
 
 Vazifalar → «🧩 Plaginlar» (yoki Sozlamalar → Plaginlar). Har plagin AI'ga vosita beradi; mijoz uni
 yoqadi va sozlaydi. API kalitlari bazada `crypto.Vault` bilan shifrlanadi (AAD — egasi + plagin) va

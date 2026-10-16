@@ -261,6 +261,17 @@ func TestRunnerPluginsAndErrors(t *testing.T) {
 		t.Fatalf("begona: %v", err)
 	}
 
+	// Pro bo'lmasa (Advanced) — vazifa plaginsiz bajariladi.
+	r.Pro = func(context.Context, int64) bool { return false }
+	if err := r.RunNow(ctx, 7, id); err != nil {
+		t.Fatal(err)
+	}
+	r.Wait()
+	if req := ai.reqs[len(ai.reqs)-1]; len(req.Tools) != 0 || req.Call != nil {
+		t.Fatalf("Pro'siz plagin vositalari berilmasligi kerak: %+v", req.Tools)
+	}
+	r.Pro = nil
+
 	// Bajarilayotgan vazifa qayta boshlanmaydi.
 	_, _ = st.MarkScheduleRunning(ctx, 7, id, *clock)
 	if err := r.RunNow(ctx, 7, id); !errors.Is(err, ErrBusy) {
@@ -275,7 +286,7 @@ func TestRunnerPluginsAndErrors(t *testing.T) {
 	}
 	r.Wait()
 	s, _ = st.GetSchedule(ctx, 7, id)
-	if s.LastStatus != "error" || !strings.Contains(n.all()[1], "bajarilmadi") {
+	if s.LastStatus != "error" || !strings.Contains(n.all()[len(n.all())-1], "bajarilmadi") {
 		t.Fatalf("xato: %+v %q", s, n.all())
 	}
 

@@ -60,6 +60,27 @@ func (s *Server) schedulesOn(w http.ResponseWriter) bool {
 	return true
 }
 
+// errNeedAdvanced — rejalashtirilgan vazifalar Advanced (va Pro) tarifda.
+const errNeedAdvanced = "rejalashtirilgan vazifalar Advanced tarifda — obunani yoqing"
+
+// entitled — obuna faolmi (Advanced yoki Pro, sinov ham). To'lov o'chiq bo'lsa — doim.
+func (s *Server) entitled(ctx context.Context, owner int64) bool {
+	if s.Billing == nil {
+		return true
+	}
+	bs, err := s.Billing.Status(ctx, owner)
+	return err == nil && bs.Active
+}
+
+// requireAdvanced — vazifa yaratish/o'zgartirish/bajarish uchun obuna kerak (402).
+func (s *Server) requireAdvanced(w http.ResponseWriter, r *http.Request, owner int64) bool {
+	if !s.entitled(r.Context(), owner) {
+		httpErr(w, http.StatusPaymentRequired, errNeedAdvanced)
+		return false
+	}
+	return true
+}
+
 func (s *Server) ownerLoc(ctx context.Context, owner int64) *time.Location {
 	if st, err := s.Store.GetSettings(ctx, owner); err == nil {
 		return st.Location()
@@ -81,7 +102,7 @@ func (s *Server) handleListSchedules(w http.ResponseWriter, r *http.Request, own
 		out = append(out, toScheduleOut(sc))
 	}
 	var tools []string
-	if s.Plugins != nil && s.Vault != nil {
+	if s.Plugins != nil && s.Vault != nil && s.hasPro(r.Context(), owner) {
 		for _, e := range s.Plugins.EnabledFor(r.Context(), s.Store, s.Vault, owner) {
 			if p, ok := s.Plugins.Get(e.ID); ok {
 				tools = append(tools, p.Info().Icon+" "+p.Info().Name)
@@ -89,7 +110,7 @@ func (s *Server) handleListSchedules(w http.ResponseWriter, r *http.Request, own
 		}
 	}
 	writeJSON(w, 200, map[string]any{"items": out, "max": schedule.MaxPerOwner, "tz": s.ownerLoc(r.Context(), owner).String(),
-		"plugins": tools})
+		"plugins": tools, "allowed": s.entitled(r.Context(), owner), "plugins_allowed": s.hasPro(r.Context(), owner)})
 }
 
 // applySchedule kiritilgan maydonlarni tekshiradi va keyingi bajarilish vaqtini hisoblaydi.
@@ -114,7 +135,7 @@ func (s *Server) applySchedule(w http.ResponseWriter, r *http.Request, owner int
 }
 
 func (s *Server) handleCreateSchedule(w http.ResponseWriter, r *http.Request, owner int64) {
-	if !s.schedulesOn(w) || !s.requireConsent(w, r, owner) {
+	if !s.schedulesOn(w) || !s.requireConsent(w, r, owner) || !s.requireAdvanced(w, r, owner) {
 		return
 	}
 	var in scheduleIn
@@ -145,7 +166,7 @@ func (s *Server) handleCreateSchedule(w http.ResponseWriter, r *http.Request, ow
 }
 
 func (s *Server) handleUpdateSchedule(w http.ResponseWriter, r *http.Request, owner int64) {
-	if !s.schedulesOn(w) || !s.requireConsent(w, r, owner) {
+	if !s.schedulesOn(w) || !s.requireConsent(w, r, owner) || !s.requireAdvanced(w, r, owner) {
 		return
 	}
 	id, ok := pathID(r)
@@ -192,7 +213,7 @@ func (s *Server) handleDeleteSchedule(w http.ResponseWriter, r *http.Request, ow
 }
 
 func (s *Server) handleRunSchedule(w http.ResponseWriter, r *http.Request, owner int64) {
-	if !s.schedulesOn(w) || !s.requireConsent(w, r, owner) {
+	if !s.schedulesOn(w) || !s.requireConsent(w, r, owner) || !s.requireAdvanced(w, r, owner) {
 		return
 	}
 	id, ok := pathID(r)
@@ -209,7 +230,7 @@ func (s *Server) handleRunSchedule(w http.ResponseWriter, r *http.Request, owner
 	case errors.Is(err, schedule.ErrBusy):
 		httpErr(w, 409, err.Error())
 	case errors.Is(err, schedule.ErrNotEntitle):
-		httpErr(w, http.StatusPaymentRequired, err.Error())
+		httpErr(w, http.StatusPaymentRequired, errNeedAdvanced)
 	case errors.Is(err, schedule.ErrDailyLimit):
 		httpErr(w, http.StatusTooManyRequests, err.Error())
 	default:
@@ -254,7 +275,7 @@ func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request, owner
 		}
 		out = append(out, o)
 	}
-	writeJSON(w, 200, out)
+	writeJSON(w, 200, map[string]any{"items": out, "allowed": s.hasPro(r.Context(), owner)})
 }
 
 func (s *Server) handleSavePlugin(w http.ResponseWriter, r *http.Request, owner int64) {
@@ -271,6 +292,11 @@ func (s *Server) handleSavePlugin(w http.ResponseWriter, r *http.Request, owner 
 		Config  map[string]string `json:"config"`
 	}
 	if !readJSON(w, r, &in) {
+		return
+	}
+	// Plaginlar — Pro tarifda. O'chirib qo'yish va uzish har doim mumkin.
+	if in.Enabled && !s.hasPro(r.Context(), owner) {
+		httpErr(w, http.StatusPaymentRequired, "plaginlar Pro tarifda")
 		return
 	}
 	if len(in.Config) > 20 {

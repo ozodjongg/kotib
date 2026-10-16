@@ -36,7 +36,9 @@ type Runner struct {
 	Notify func(ctx context.Context, owner int64, text string)
 	// Entitled — obuna faolmi (billing.Service.Entitled); nil → doim.
 	Entitled func(ctx context.Context, owner int64) bool
-	Log      *slog.Logger
+	// Pro — plaginlar ochiqmi (billing.Service.HasPro); nil → ochiq. Pro bo'lmasa vazifa plaginsiz bajariladi.
+	Pro func(ctx context.Context, owner int64) bool
+	Log *slog.Logger
 	// Now — test uchun soat; nil → time.Now.
 	Now func() time.Time
 
@@ -177,7 +179,7 @@ func (r *Runner) execute(ctx context.Context, s store.Schedule) {
 	st, _ := r.Store.GetSettings(ctx, s.OwnerID)
 	loc := st.Location()
 	req := llm.TaskRequest{OwnerName: st.OwnerName, Title: s.Title, Prompt: s.Prompt, Now: r.now().In(loc)}
-	if r.Plugins != nil && r.Vault != nil {
+	if r.Plugins != nil && r.Vault != nil && (r.Pro == nil || r.Pro(ctx, s.OwnerID)) {
 		req.Tools, req.Call = r.Plugins.Toolset(r.Plugins.EnabledFor(ctx, r.Store, r.Vault, s.OwnerID))
 	}
 	res, err := r.AI.RunTask(ctx, req)

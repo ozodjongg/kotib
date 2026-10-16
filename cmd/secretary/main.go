@@ -231,7 +231,7 @@ func run(log *slog.Logger) error {
 
 	// ---- Plaginlar va rejalashtirilgan vazifalar ----
 	plugins := plugin.Default(plugin.Options{Search: gem, YouTubeKey: env("YOUTUBE_API_KEY")})
-	sched := &schedule.Runner{Store: st, AI: gem, Plugins: plugins, Vault: vault, Entitled: bill.Entitled, Log: log,
+	sched := &schedule.Runner{Store: st, AI: gem, Plugins: plugins, Vault: vault, Entitled: bill.Entitled, Pro: bill.HasPro, Log: log,
 		Notify: func(ctx context.Context, owner int64, text string) { notify(ctx, owner, text, false) }}
 
 	staticDir := env("STATIC_DIR")

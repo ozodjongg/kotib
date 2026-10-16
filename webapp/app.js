@@ -576,12 +576,14 @@ const PLANS = [
     'Uzun suhbat konteksti (20 xabar)',
     'Avto rejim, qoidalar va holatlar',
     "Kechki xulosa, va'dalar, taqvimga .ics",
+    '⏰ Rejalashtirilgan AI vazifalar',
   ]],
   ['pro', '🚀 Pro', [
     "Advanced'dagi hammasi",
     '🎤 Ovozli xabarlarga javob',
     '📅 Google Calendar, Contacts, Tasks',
     '📱 Telefon avtomatikasi (Shortcuts / MacroDroid)',
+    '🧩 Plaginlar: internet qidiruvi, YouTube, ob-havo, valyuta kursi',
     'Eng uzun kontekst (40 xabar)',
   ]],
 ];
@@ -746,18 +748,28 @@ async function viewTasks(view) {
   const b = state.me.billing || {};
   const items = data.items || [];
   const kids = [head, h('p', { class: 'muted' }, "AI'ga topshiriq bering — kotib uni belgilangan vaqtda bajarib, natijani bot chatiga yuboradi. Bir martalik yoki takroriy.")];
-  if (b.enabled && !b.active) kids.push(h('div', { class: 'card accent' }, h('p', { class: 'small' }, "Obuna faol emas — vazifalar bajarilmaydi."),
-    h('button', { class: 'btn ghost sm', onclick: () => go('account') }, 'Obunani yoqish')));
-  kids.push(h('div', { class: 'card soft' },
+  if (!data.allowed) {
+    kids.push(h('div', { class: 'card' },
+      h('div', { class: 'card-head' }, h('h3', {}, 'Rejalashtirilgan vazifalar'), h('span', { class: 'badge accent' }, 'Advanced')),
+      h('p', { class: 'muted small' }, "Vazifalar Advanced va Pro tariflarida ishlaydi: AI belgilangan vaqtda topshiriqni bajarib, natijani bot chatiga yuboradi."),
+      h('button', { class: 'btn ghost block', onclick: () => go('account') }, b.price ? `Advanced tarifga o'tish · ${b.price} ⭐` : 'Obunani yoqish')));
+  }
+  kids.push(data.plugins_allowed ? h('div', { class: 'card soft' },
     h('p', { class: 'small' }, h('b', {}, 'Ulangan plaginlar: '), data.plugins && data.plugins.length ? data.plugins.join(', ') : "yo'q"),
     h('p', { class: 'small muted' }, "Plaginlar AI'ga internetdan qidirish, YouTube, ob-havo, valyuta kursi kabi imkoniyatlar beradi."),
-    h('button', { class: 'btn ghost sm', onclick: () => openPlugins() }, 'Plaginlarni sozlash')));
+    h('button', { class: 'btn ghost sm', onclick: () => openPlugins() }, 'Plaginlarni sozlash'))
+    : h('div', { class: 'card soft' },
+      h('div', { class: 'card-head' }, h('h3', {}, '🧩 Plaginlar'), h('span', { class: 'badge accent' }, 'Pro')),
+      h('p', { class: 'small muted' }, "Pro tarifda vazifalar internetdan qidira oladi, YouTube, ob-havo va valyuta kursidan foydalanadi. Hozir vazifalar plaginsiz bajariladi."),
+      h('button', { class: 'btn ghost sm', onclick: () => openPlugins() }, "Ko'rish")));
   if (!items.length) {
     kids.push(h('div', { class: 'empty' }, h('div', { class: 'big' }, "Hali vazifa yo'q"), h('p', { class: 'muted' }, 'Quyidagi tayyor namunalardan boshlang yoki o\'zingiz yozing.')));
   } else {
-    kids.push(...items.map((t) => taskCard(t)));
+    kids.push(...items.map((t) => taskCard(t, data.allowed)));
   }
-  if (items.length < data.max) {
+  if (!data.allowed) {
+    if (items.length) kids.push(h('p', { class: 'muted small center' }, "Obuna faollashgach vazifalar yana bajariladi."));
+  } else if (items.length < data.max) {
     kids.push(h('button', { class: 'btn block', onclick: () => openTaskEditor(null) }, '+ Yangi vazifa'));
     kids.push(h('h2', {}, 'Tayyor namunalar'),
       h('div', { class: 'chips' }, TASK_TEMPLATES.map(([title, kind, at, prompt]) => h('button', { class: 'chip-btn', onclick: () =>
@@ -776,13 +788,17 @@ function taskStatus(t) {
   return h('span', { class: 'badge ok' }, 'Faol');
 }
 
-function taskCard(t) {
+function taskCard(t, allowed) {
   const result = t.last_result ? h('details', {}, h('summary', { class: 'small' }, `Oxirgi natija · ${fmtRun(t.last_run)}`),
     h('p', { class: 'small pre' }, t.last_result)) : null;
   return h('div', { class: 'card' },
     h('div', { class: 'card-head' }, h('h3', {}, t.title), taskStatus(t)),
     h('p', { class: 'small muted' }, '🕒 ' + t.describe + (t.enabled && t.next_run ? ` · keyingisi ${fmtRun(t.next_run)}` : '') + (t.runs ? ` · ${t.runs} marta bajarildi` : '')),
     result,
+    !allowed ? h('div', { class: 'row' }, h('button', { class: 'btn danger-ghost sm', onclick: busy(async () => {
+      if (!(await confirmBox(`«${t.title}» vazifasi o'chirilsinmi?`))) return;
+      await api('DELETE', `/schedules/${t.id}`); toast("O'chirildi"); renderMain();
+    }) }, "O'chirish")) :
     h('div', { class: 'row' },
       h('button', { class: 'btn ghost sm', onclick: busy(async () => {
         await api('POST', `/schedules/${t.id}/run`);
@@ -880,20 +896,35 @@ function openPlugins() {
 async function viewPlugins(view) {
   const head = h('div', { class: 'card-head' }, h('h1', {}, 'Plaginlar'), h('button', { class: 'btn ghost sm', onclick: closeSub }, '← Orqaga'));
   put(view, head, h('div', { class: 'skeleton' }));
-  let list;
-  try { list = await api('GET', '/plugins'); } catch (e) { swap(view, head, h('p', { class: 'err' }, e.message)); return; }
+  let data;
+  try { data = await api('GET', '/plugins'); } catch (e) { swap(view, head, h('p', { class: 'err' }, e.message)); return; }
   if (state.sub !== viewPlugins) return;
+  const list = data.items || [];
   const ready = list.filter((p) => !p.soon), soon = list.filter((p) => p.soon);
+  const b = state.me.billing || {};
   swap(view, head,
     h('p', { class: 'muted' }, "Plaginlar (connector'lar) kotibga tashqi xizmatlardan foydalanish imkonini beradi. Yoqilgan plaginlardan rejalashtirilgan vazifalar foydalanadi."),
-    ready.map(pluginCard),
+    data.allowed ? null : h('div', { class: 'card accent' },
+      h('div', { class: 'card-head' }, h('h3', {}, 'Plaginlar Pro tarifda'), h('span', { class: 'badge accent' }, 'Pro')),
+      h('p', { class: 'small' }, "Internet qidiruvi, YouTube, ob-havo va valyuta kursini ulash uchun Pro tarifga o'ting."),
+      h('button', { class: 'btn block', onclick: () => go('account') }, b.pro_price ? `Pro tarifga o'tish · ${b.pro_price} ⭐` : 'Obunani yoqish')),
+    ready.map((p) => pluginCard(p, data.allowed)),
     soon.length ? h('h2', {}, 'Tez orada') : null,
     soon.length ? h('div', { class: 'card soft' }, h('ul', { class: 'plugin-soon' }, soon.map((p) =>
       h('li', {}, h('b', {}, `${p.icon} ${p.name}`), h('div', { class: 'small muted' }, p.description))))) : null);
 }
 
-function pluginCard(p) {
+function pluginCard(p, allowed) {
   const card = h('div', { class: 'card' });
+  if (!allowed) {
+    // Pro'siz: faqat tavsif; avval ulangan bo'lsa — uzish mumkin.
+    put(card, h('div', { class: 'card-head' }, h('h3', {}, `${p.icon} ${p.name}`), h('span', { class: 'badge' }, '🔒 Pro')),
+      h('p', { class: 'small muted' }, p.description),
+      p.configured ? h('button', { class: 'btn danger-ghost sm', onclick: busy(async () => {
+        await api('DELETE', `/plugins/${p.id}`); toast('Uzildi'); renderMain();
+      }) }, 'Uzish') : null);
+    return card;
+  }
   const draw = (open) => {
     const inputs = {};
     const fields = (p.fields || []).map((f) => {
@@ -1030,7 +1061,7 @@ function viewSettings(view) {
     h('div', { class: 'card' },
       h('p', { class: 'small muted' }, "Internet qidiruvi, YouTube, ob-havo, valyuta kursi — kotibga tashqi xizmatlarni ulang. Rejalashtirilgan vazifalar ulardan foydalanadi."),
       h('div', { class: 'row' },
-        h('button', { class: 'btn ghost sm', onclick: () => openPlugins() }, '🧩 Plaginlarni sozlash'),
+        h('button', { class: 'btn ghost sm', onclick: () => openPlugins() }, pro('🧩 Plaginlarni sozlash')),
         h('button', { class: 'btn ghost sm', onclick: () => go('tasks') }, '🕒 Vazifalar'))),
     h('h2', {}, "O'qitish rejimi"),
     styleCard(s),
