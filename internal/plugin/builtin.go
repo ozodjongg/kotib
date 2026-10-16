@@ -16,9 +16,10 @@ import (
 // Options — standart plaginlar uchun server sozlamalari.
 type Options struct {
 	Search llm.Searcher // nil → internet qidiruvi plagini yo'q
-	// YouTubeKey — server YouTube Data API kaliti (YOUTUBE_API_KEY). Bo'sh bo'lsa mijoz o'z kalitini kiritadi.
-	YouTubeKey string
-	HTTP       *http.Client
+	// YouTubeToken — YouTube akkaunti (Google OAuth) refresh tokenidan access token oladi
+	// (google.Client.PluginAccessToken). nil → Google sozlanmagan: YouTube «tez orada».
+	YouTubeToken func(ctx context.Context, refreshToken string) (string, error)
+	HTTP         *http.Client
 	// Testlar uchun manzillar (bo'sh — haqiqiy xizmatlar).
 	YouTubeURL, GeoURL, WeatherURL, CBUURL string
 }
@@ -33,7 +34,7 @@ func Default(o Options) *Registry {
 		ps = append(ps, &WebSearch{S: o.Search})
 	}
 	ps = append(ps,
-		&YouTube{ServerKey: o.YouTubeKey, HTTP: o.HTTP, BaseURL: o.YouTubeURL},
+		youtubePlugin(o),
 		&Weather{HTTP: o.HTTP, GeoURL: o.GeoURL, BaseURL: o.WeatherURL},
 		&Currency{HTTP: o.HTTP, BaseURL: o.CBUURL},
 		soon("gmail", "Gmail", "📧", "Pochta", "Kiruvchi xatlarni o'qish, muhimlarini xulosa qilish."),
@@ -83,112 +84,6 @@ func (w *WebSearch) Call(ctx context.Context, _ Config, _ string, args map[strin
 		return "", errors.New("query kerak")
 	}
 	return w.S.WebSearch(ctx, q)
-}
-
-// ---- YouTube ----
-
-type YouTube struct {
-	ServerKey string
-	HTTP      *http.Client
-	BaseURL   string // default https://www.googleapis.com/youtube/v3
-}
-
-var regions = []Option{{"UZ", "O'zbekiston"}, {"RU", "Rossiya"}, {"KZ", "Qozog'iston"}, {"TR", "Turkiya"}, {"US", "AQSH"}}
-
-func (y *YouTube) Info() Info {
-	return Info{ID: "youtube", Name: "YouTube", Icon: "▶️", Category: "Video",
-		Description: "YouTube'da video qidirish: yangi chiqqan videolar, kanal yangiliklari, darsliklar.",
-		Fields: []Field{
-			{Key: "api_key", Label: "YouTube Data API kaliti", Type: FieldSecret, Required: y.ServerKey == "",
-				Placeholder: "AIza…", Help: "Google Cloud Console → APIs & Services → YouTube Data API v3 → Credentials → API key." +
-					map[bool]string{true: " Bo'sh qoldirsangiz, Kotibning umumiy kaliti ishlatiladi.", false: ""}[y.ServerKey != ""]},
-			{Key: "region", Label: "Mintaqa", Type: FieldSelect, Options: regions, Default: "UZ"},
-			{Key: "order", Label: "Saralash", Type: FieldSelect, Default: "relevance",
-				Options: []Option{{"relevance", "Mosligi bo'yicha"}, {"date", "Eng yangilari"}, {"viewCount", "Ko'p ko'rilgan"}}},
-		},
-		Examples: []string{"Har kuni 20:00 da «Kun.uz» kanalining bugungi videolari", "Har dushanba — Go dasturlash bo'yicha yangi darslar"}}
-}
-
-func (y *YouTube) Tools() []llm.ToolDecl {
-	return []llm.ToolDecl{{Name: "youtube_search", Description: "YouTube'da video qidiradi: nom, kanal, sana va havola qaytaradi.",
-		Params: obj(map[string]any{
-			"query":          str("Qidiruv so'rovi"),
-			"max_results":    map[string]any{"type": "INTEGER", "description": "1–10, standart 5"},
-			"order":          map[string]any{"type": "STRING", "enum": []string{"relevance", "date", "viewCount"}, "description": "Saralash (ixtiyoriy)"},
-			"published_days": map[string]any{"type": "INTEGER", "description": "Faqat oxirgi N kunda chiqqanlar (ixtiyoriy)"},
-		}, "query")}}
-}
-
-func (y *YouTube) Call(ctx context.Context, cfg Config, _ string, args map[string]any) (string, error) {
-	q := argString(args, "query")
-	if q == "" {
-		return "", errors.New("query kerak")
-	}
-	key := cfg["api_key"]
-	if key == "" {
-		key = y.ServerKey
-	}
-	if key == "" {
-		return "", errors.New("YouTube API kaliti sozlanmagan (Plaginlar → YouTube)")
-	}
-	order := argString(args, "order")
-	if order != "date" && order != "viewCount" && order != "relevance" {
-		order = cfg["order"]
-	}
-	if order == "" {
-		order = "relevance"
-	}
-	v := url.Values{"part": {"snippet"}, "type": {"video"}, "q": {q}, "order": {order}, "key": {key},
-		"maxResults": {fmt.Sprint(argInt(args, "max_results", 5, 1, 10))}}
-	if r := cfg["region"]; r != "" {
-		v.Set("regionCode", r)
-	}
-	if d := argInt(args, "published_days", 0, 0, 365); d > 0 {
-		v.Set("publishedAfter", time.Now().AddDate(0, 0, -d).UTC().Format(time.RFC3339))
-	}
-	base := y.BaseURL
-	if base == "" {
-		base = "https://www.googleapis.com/youtube/v3"
-	}
-	data, err := getBody(ctx, y.HTTP, strings.TrimRight(base, "/")+"/search?"+v.Encode(), nil)
-	if err != nil {
-		if strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "400") {
-			return "", errors.New("YouTube kalitni rad etdi (noto'g'ri kalit yoki kunlik kvota tugagan)")
-		}
-		return "", err
-	}
-	var out struct {
-		Items []struct {
-			ID struct {
-				VideoID string `json:"videoId"`
-			} `json:"id"`
-			Snippet struct {
-				Title        string `json:"title"`
-				ChannelTitle string `json:"channelTitle"`
-				PublishedAt  string `json:"publishedAt"`
-			} `json:"snippet"`
-		} `json:"items"`
-	}
-	if err := json.Unmarshal(data, &out); err != nil {
-		return "", errors.New("YouTube javobini o'qib bo'lmadi")
-	}
-	if len(out.Items) == 0 {
-		return "Hech narsa topilmadi.", nil
-	}
-	var b strings.Builder
-	for i, it := range out.Items {
-		date := it.Snippet.PublishedAt
-		if len(date) >= 10 {
-			date = date[:10]
-		}
-		fmt.Fprintf(&b, "%d. %s — %s (%s)\nhttps://youtu.be/%s\n", i+1, unescape(it.Snippet.Title), unescape(it.Snippet.ChannelTitle), date, it.ID.VideoID)
-	}
-	return b.String(), nil
-}
-
-// unescape — YouTube nomlaridagi HTML belgilar (&#39; &amp; ...).
-func unescape(s string) string {
-	return strings.NewReplacer("&#39;", "'", "&quot;", `"`, "&amp;", "&", "&lt;", "<", "&gt;", ">").Replace(s)
 }
 
 // ---- Ob-havo (Open-Meteo, kalitsiz) ----

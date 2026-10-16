@@ -246,6 +246,68 @@ type pluginOut struct {
 	Enabled    bool              `json:"enabled"`
 	Configured bool              `json:"configured"`
 	Config     map[string]string `json:"config"`
+	// Account — akkaunt orqali ulangan plaginda: qaysi akkaunt (email).
+	Account string `json:"account,omitempty"`
+}
+
+// PluginAuth — plaginni foydalanuvchi akkaunti orqali ulash (google.Client): mijoz API kalit
+// kiritmaydi, Google rozilik sahifasida «Ruxsat berish»ni bosadi.
+type PluginAuth interface {
+	PluginAuthURL(owner int64, plugin string) (string, error)
+	// StatePurpose — OAuth state qaysi plaginga tegishli (bo'sh — asosiy Google ulanishi).
+	StatePurpose(state string) string
+	RevokeToken(ctx context.Context, token string)
+}
+
+func newPluginOut(info plugin.Info, enabled bool, cfg plugin.Config) pluginOut {
+	return pluginOut{Info: info, Enabled: enabled, Configured: true, Config: plugin.Public(info, cfg), Account: cfg[plugin.KeyAccount]}
+}
+
+// handleConnectPlugin — akkaunt orqali ulanadigan plagin (YouTube) uchun Google rozilik havolasi.
+func (s *Server) handleConnectPlugin(w http.ResponseWriter, r *http.Request, owner int64) {
+	if !s.pluginsOn(w) || !s.requireConsent(w, r, owner) {
+		return
+	}
+	p, ok := s.Plugins.Get(r.PathValue("id"))
+	if !ok || p.Info().Connect == "" || p.Info().Soon || s.PluginAuth == nil {
+		httpErr(w, 404, "bu plaginni akkaunt orqali ulab bo'lmaydi")
+		return
+	}
+	if !s.hasPro(r.Context(), owner) {
+		httpErr(w, http.StatusPaymentRequired, "plaginlar Pro tarifda")
+		return
+	}
+	u, err := s.PluginAuth.PluginAuthURL(owner, p.Info().ID)
+	if err != nil {
+		s.logger().Warn("plugin auth url", "owner", owner, "err", err)
+		httpErr(w, 500, "havola yaratilmadi")
+		return
+	}
+	writeJSON(w, 200, map[string]string{"url": u})
+}
+
+// revokePluginToken — akkaunt orqali ulangan plagin tokenini Google'da bekor qiladi.
+func (s *Server) revokePluginToken(ctx context.Context, owner int64, id string, cfgs map[string]plugin.Config) {
+	if s.PluginAuth == nil {
+		return
+	}
+	if rt := cfgs[id][plugin.KeyRefreshToken]; rt != "" {
+		s.PluginAuth.RevokeToken(ctx, rt)
+	}
+}
+
+// revokeAllPluginTokens — akkaunt o'chirilganda barcha plagin tokenlari bekor qilinadi.
+func (s *Server) revokeAllPluginTokens(ctx context.Context, owner int64) {
+	if s.Vault == nil || s.PluginAuth == nil {
+		return
+	}
+	_, cfgs, err := plugin.Load(ctx, s.Store, s.Vault, owner)
+	if err != nil {
+		return
+	}
+	for id := range cfgs {
+		s.revokePluginToken(ctx, owner, id, cfgs)
+	}
 }
 
 func (s *Server) pluginsOn(w http.ResponseWriter) bool {
@@ -271,7 +333,7 @@ func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request, owner
 		rec, ok := recs[info.ID]
 		o := pluginOut{Info: info, Config: map[string]string{}}
 		if ok && !info.Soon {
-			o.Enabled, o.Configured, o.Config = rec.Enabled, true, plugin.Public(info, cfgs[info.ID])
+			o = newPluginOut(info, rec.Enabled, cfgs[info.ID])
 		}
 		out = append(out, o)
 	}
@@ -332,7 +394,7 @@ func (s *Server) handleSavePlugin(w http.ResponseWriter, r *http.Request, owner 
 		ev = "plugin_enabled"
 	}
 	s.Store.Audit(r.Context(), owner, ev, info.ID)
-	writeJSON(w, 200, pluginOut{Info: info, Enabled: in.Enabled, Configured: true, Config: plugin.Public(info, cfg)})
+	writeJSON(w, 200, newPluginOut(info, in.Enabled, cfg))
 }
 
 func (s *Server) handleDeletePlugin(w http.ResponseWriter, r *http.Request, owner int64) {
@@ -343,6 +405,9 @@ func (s *Server) handleDeletePlugin(w http.ResponseWriter, r *http.Request, owne
 	if !ok {
 		httpErr(w, 404, "plagin topilmadi")
 		return
+	}
+	if _, cfgs, err := plugin.Load(r.Context(), s.Store, s.Vault, owner); err == nil {
+		s.revokePluginToken(context.WithoutCancel(r.Context()), owner, p.Info().ID, cfgs)
 	}
 	if err := s.Store.DeletePluginConfig(r.Context(), owner, p.Info().ID); err != nil {
 		httpErr(w, 500, "xatolik")

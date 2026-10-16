@@ -3,6 +3,7 @@ package miniapp
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -126,28 +127,28 @@ func TestPluginsAPI(t *testing.T) {
 	if resp != 200 || len(list) < 5 || list[0]["id"] != "web" || list[0]["enabled"] != false {
 		t.Fatalf("katalog: %d %v", resp, list)
 	}
-	if r, m := do(t, "PUT", srv.URL+"/api/plugins/youtube", a, `{"enabled":true,"config":{}}`); r.StatusCode != 400 || !strings.Contains(m["error"].(string), "kalit") {
-		t.Fatalf("kalitsiz youtube: %d %v", r.StatusCode, m)
+	for _, p := range list {
+		if p["id"] == "youtube" && p["soon"] != true {
+			t.Fatal("Google sozlanmagan serverda YouTube «tez orada» bo'lishi kerak")
+		}
 	}
-	r, m := do(t, "PUT", srv.URL+"/api/plugins/youtube", a, `{"enabled":true,"config":{"api_key":"AIzaSyVERYSECRET9876","region":"UZ"}}`)
-	if r.StatusCode != 200 || m["config"].(map[string]any)["api_key"] != "••••9876" {
-		t.Fatalf("youtube: %d %v", r.StatusCode, m)
+	r, m := do(t, "PUT", srv.URL+"/api/plugins/currency", a, `{"enabled":true,"config":{"codes":"USD,EUR"}}`)
+	if r.StatusCode != 200 || m["config"].(map[string]any)["codes"] != "USD,EUR" {
+		t.Fatalf("currency: %d %v", r.StatusCode, m)
 	}
-	// Bazada kalit ochiq saqlanmaydi.
+	// Bazada sozlama ochiq saqlanmaydi.
 	recs, _ := st.ListPluginConfigs(context.Background(), 61)
-	if len(recs) != 1 || strings.Contains(string(recs[0].Config), "VERYSECRET") {
+	if len(recs) != 1 || strings.Contains(string(recs[0].Config), "USD") {
 		t.Fatalf("shifrlanmagan: %v", recs)
 	}
-	// Kalitni qayta yubormasdan o'chirib qo'yish — kalit saqlanadi.
-	if r, _ := do(t, "PUT", srv.URL+"/api/plugins/youtube", a, `{"enabled":false,"config":{"region":"RU"}}`); r.StatusCode != 200 {
+	if r, _ := do(t, "PUT", srv.URL+"/api/plugins/currency", a, `{"enabled":false,"config":{"codes":"RUB"}}`); r.StatusCode != 200 {
 		t.Fatal("o'chirish")
 	}
 	_, list = doList(t, "GET", srv.URL+"/api/plugins", a)
 	for _, p := range list {
-		if p["id"] == "youtube" {
-			cfg := p["config"].(map[string]any)
-			if p["enabled"] != false || p["configured"] != true || cfg["api_key"] != "••••9876" || cfg["region"] != "RU" {
-				t.Fatalf("youtube holati: %v", p)
+		if p["id"] == "currency" {
+			if p["enabled"] != false || p["configured"] != true || p["config"].(map[string]any)["codes"] != "RUB" {
+				t.Fatalf("currency holati: %v", p)
 			}
 		}
 	}
@@ -157,7 +158,10 @@ func TestPluginsAPI(t *testing.T) {
 	if r, _ := do(t, "PUT", srv.URL+"/api/plugins/nope", a, `{"enabled":true,"config":{}}`); r.StatusCode != 404 {
 		t.Fatal("noma'lum plagin")
 	}
-	if r, _ := do(t, "DELETE", srv.URL+"/api/plugins/youtube", a, ``); r.StatusCode != 200 {
+	if r, _ := do(t, "POST", srv.URL+"/api/plugins/currency/connect", a, ``); r.StatusCode != 404 {
+		t.Fatal("kalitsiz plagin akkaunt orqali ulanmaydi")
+	}
+	if r, _ := do(t, "DELETE", srv.URL+"/api/plugins/currency", a, ``); r.StatusCode != 200 {
 		t.Fatal("delete")
 	}
 	if recs, _ := st.ListPluginConfigs(context.Background(), 61); len(recs) != 0 {
@@ -167,6 +171,93 @@ func TestPluginsAPI(t *testing.T) {
 	do(t, "PUT", srv.URL+"/api/plugins/weather", a, `{"enabled":true,"config":{"city":"Samarqand"}}`)
 	if _, m := do(t, "GET", srv.URL+"/api/schedules", a, ""); len(m["plugins"].([]any)) != 1 {
 		t.Fatalf("plugins: %v", m)
+	}
+}
+
+// fakePluginAuth — Google OAuth o'rnida (plagin akkaunti).
+type fakePluginAuth struct {
+	revoked []string
+	purpose map[string]string
+}
+
+func (f *fakePluginAuth) PluginAuthURL(owner int64, plugin string) (string, error) {
+	return "https://accounts.google.com/o/oauth2/v2/auth?state=good&scope=youtube.readonly&p=" + plugin, nil
+}
+func (f *fakePluginAuth) StatePurpose(state string) string { return f.purpose[state] }
+func (f *fakePluginAuth) RevokeToken(_ context.Context, token string) {
+	f.revoked = append(f.revoked, token)
+}
+
+// YouTube API kalitsiz — mijozning o'z akkaunti orqali ulanadi.
+func TestYouTubeAccountConnect(t *testing.T) {
+	st := store.NewMemory()
+	ctx := context.Background()
+	v := testVault(t)
+	pa := &fakePluginAuth{purpose: map[string]string{"good": "youtube"}}
+	var notified []string
+	plugins := plugin.Default(plugin.Options{Search: stubSearch{}, YouTubeToken: func(context.Context, string) (string, error) { return "AT", nil }})
+	s := &Server{BotToken: tok, Store: st, Ctl: &fakeCtl{}, Google: &fakeGoogle{}, Plugins: plugins, Vault: v, PluginAuth: pa,
+		OnGoogle: func(context.Context, int64, error) { t.Fatal("YouTube ulanishi Google xabari bermasligi kerak") },
+		OnPlugin: func(_ context.Context, owner int64, id string, err error) { notified = append(notified, id) }}
+	srv := newTestServer(t, s)
+	a := "tma " + signInitData(tok, time.Now(), userJSON) // owner 777
+	if r, _ := do(t, "POST", srv.URL+"/api/plugins/youtube/connect", a, ``); r.StatusCode != 403 {
+		t.Fatalf("rozilikdan oldin: %d", r.StatusCode)
+	}
+	do(t, "POST", srv.URL+"/api/consent", a, `{"accepted":true}`)
+	_, list := doList(t, "GET", srv.URL+"/api/plugins", a)
+	for _, p := range list {
+		if p["id"] == "youtube" && (p["connect"] != "google" || p["soon"] == true || p["fields"] != nil) {
+			t.Fatalf("youtube katalogda: %v", p)
+		}
+	}
+	// Ulanmagan holda yoqib bo'lmaydi.
+	if r, m := do(t, "PUT", srv.URL+"/api/plugins/youtube", a, `{"enabled":true,"config":{}}`); r.StatusCode != 400 || !strings.Contains(m["error"].(string), "akkauntni ulang") {
+		t.Fatalf("ulanmagan: %d %v", r.StatusCode, m)
+	}
+	r, m := do(t, "POST", srv.URL+"/api/plugins/youtube/connect", a, ``)
+	if r.StatusCode != 200 || !strings.Contains(m["url"].(string), "accounts.google.com") {
+		t.Fatalf("connect: %d %v", r.StatusCode, m)
+	}
+	// Google rozilikdan qaytdi: google.Client.OnPluginToken tokenni saqlaydi (bu yerda — qo'lda).
+	if err := plugin.SaveAccount(ctx, st, v, 777, "youtube", "RT-SECRET", "ali@gmail.com"); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.Get(srv.URL + "/oauth/google/callback?state=good&code=c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || !strings.Contains(string(body), "YouTube akkauntingiz ulandi") || len(notified) != 1 {
+		t.Fatalf("callback: %d %s %v", resp.StatusCode, body, notified)
+	}
+	_, list = doList(t, "GET", srv.URL+"/api/plugins", a)
+	for _, p := range list {
+		if p["id"] == "youtube" {
+			raw, _ := json.Marshal(p)
+			if p["enabled"] != true || p["account"] != "ali@gmail.com" || strings.Contains(string(raw), "RT-SECRET") {
+				t.Fatalf("ulangan youtube: %s", raw)
+			}
+		}
+	}
+	// O'chirib qo'yish va qayta yoqish: token saqlanadi, Mini App'dan kelgan qiymat e'tiborsiz.
+	do(t, "PUT", srv.URL+"/api/plugins/youtube", a, `{"enabled":false,"config":{"refresh_token":"hack"}}`)
+	if r, m := do(t, "PUT", srv.URL+"/api/plugins/youtube", a, `{"enabled":true,"config":{}}`); r.StatusCode != 200 || m["account"] != "ali@gmail.com" {
+		t.Fatalf("qayta yoqish: %d %v", r.StatusCode, m)
+	}
+	en := plugins.EnabledFor(ctx, st, v, 777)
+	if len(en) != 1 || en[0].Config[plugin.KeyRefreshToken] != "RT-SECRET" {
+		t.Fatalf("token o'zgarmasligi kerak: %+v", en)
+	}
+	// Uzish — Google'da token bekor qilinadi.
+	if r, _ := do(t, "DELETE", srv.URL+"/api/plugins/youtube", a, ``); r.StatusCode != 200 || len(pa.revoked) != 1 || pa.revoked[0] != "RT-SECRET" {
+		t.Fatalf("uzish: %d %v", r.StatusCode, pa.revoked)
+	}
+	// Akkaunt o'chirilsa ham plagin tokenlari bekor qilinadi.
+	_ = plugin.SaveAccount(ctx, st, v, 777, "youtube", "RT-2", "ali@gmail.com")
+	if r, _ := do(t, "DELETE", srv.URL+"/api/account", a, `{"confirm":"DELETE"}`); r.StatusCode != 200 || len(pa.revoked) != 2 || pa.revoked[1] != "RT-2" {
+		t.Fatalf("akkaunt o'chirish: %d %v", r.StatusCode, pa.revoked)
 	}
 }
 

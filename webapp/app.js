@@ -257,7 +257,11 @@ async function boot() {
   if (state.me.consented && needsConnect()) await resumeLogin();
   render();
   setInterval(backgroundRefresh, 20000);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) backgroundRefresh(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    backgroundRefresh();
+    if (state.sub === viewPlugins) renderMain(); // brauzerda akkaunt ulangach — holat yangilansin
+  });
 }
 
 async function refreshMe() { state.me = await api('GET', '/me'); }
@@ -925,6 +929,7 @@ function pluginCard(p, allowed) {
       }) }, 'Uzish') : null);
     return card;
   }
+  if (p.connect) return accountPluginCard(p, card);
   const draw = (open) => {
     const inputs = {};
     const fields = (p.fields || []).map((f) => {
@@ -962,6 +967,39 @@ function pluginCard(p, allowed) {
         : (p.fields && p.fields.length ? h('button', { class: 'btn ghost sm', onclick: () => draw(true) }, p.configured ? 'Sozlash' : 'Ulash') : null));
   };
   draw(false);
+  return card;
+}
+
+// accountPluginCard — akkaunt orqali ulanadigan plagin (YouTube): API kalit yo'q, faqat
+// «Ulash» tugmasi — Google rozilik sahifasi tashqi brauzerda ochiladi.
+function accountPluginCard(p, card) {
+  const draw = () => {
+    const connected = p.configured;
+    swap(card,
+      h('div', { class: 'card-head' }, h('h3', {}, `${p.icon} ${p.name}`),
+        connected ? switchMini(p.enabled, async (on) => {
+          Object.assign(p, await api('PUT', `/plugins/${p.id}`, { enabled: on, config: {} }));
+          toast(on ? `${p.name} yoqildi` : `${p.name} o'chirildi`);
+        }) : h('span', { class: 'badge' }, 'Ulanmagan')),
+      h('p', { class: 'small muted' }, p.description),
+      connected ? h('p', { class: 'small' }, '✅ Ulangan' + (p.account ? `: ${p.account}` : '')) : null,
+      p.examples && p.examples.length ? h('p', { class: 'small' }, '💡 ' + p.examples[0]) : null,
+      connected
+        ? h('button', { class: 'btn danger-ghost sm', onclick: busy(async () => {
+          if (!(await confirmBox(`${p.name} uzilsinmi? Ruxsat Google'da ham bekor qilinadi.`))) return;
+          await api('DELETE', `/plugins/${p.id}`); Object.assign(p, { enabled: false, configured: false, account: '' }); toast('Uzildi'); draw();
+        }) }, 'Uzish')
+        : h('div', { class: 'stack' },
+          h('button', { class: 'btn block', onclick: busy(async () => {
+            const { url } = await api('POST', `/plugins/${p.id}/connect`);
+            // Google ichki brauzerda (WebView) kirishni bloklaydi — tashqi brauzerda ochamiz.
+            if (tg && tg.openLink) tg.openLink(url); else window.open(url, '_blank', 'noopener');
+            toast("Brauzerda akkauntni tanlab, ruxsat bering, so'ng shu yerga qayting");
+          }) }, `${p.icon} ${p.name} akkauntini ulash`),
+          h('p', { class: 'small muted' }, "Kalit yoki parol kerak emas: Google sahifasida akkauntingizni tanlab «Ruxsat berish»ni bosasiz. Faqat o'qish ruxsati so'raladi."),
+          h('button', { class: 'btn ghost sm', onclick: () => renderMain() }, 'Ulandimi? Yangilash')));
+  };
+  draw();
   return card;
 }
 

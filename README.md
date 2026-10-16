@@ -101,7 +101,6 @@ Wordmark shrifti — Source Serif 4 (SIL Open Font License), matn vektor konturg
 | `TRIAL_DAILY_LIMIT` | sinovda kuniga ko'pi bilan nechta javob tayyorlanadi (default 50; 0 — cheksiz). To'langan obunada cheklov yo'q |
 | `ADMIN_IDS` | admin Telegram ID'lari, vergul bilan: `/stats`, `/refund`; adminlar uchun kotib bepul |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | ixtiyoriy: Google integratsiyasi (pastda). Bo'sh — o'chiq |
-| `YOUTUBE_API_KEY` | ixtiyoriy: YouTube plagini uchun umumiy kalit (YouTube Data API v3). Bo'sh — har mijoz o'z kalitini kiritadi |
 | `GOOGLE_REDIRECT_URL` | ixtiyoriy; default `<MINIAPP_URL domeni>/oauth/google/callback` |
 | `LISTEN` | aniq manzil (masalan `127.0.0.1:8080`); berilmasa `PORT` ishlatiladi |
 | `PORT` | platforma beradi (Railway); `0.0.0.0:$PORT` da tinglanadi. Ikkalasi ham bo'lmasa — `127.0.0.1:8080` |
@@ -308,10 +307,10 @@ Xavfsizlik:
 
 ### Sozlash (Google Cloud Console)
 
-1. Yangi loyiha → **APIs & Services → Library**: *Google Calendar API*, *People API*, *Google Tasks API* ni yoqing.
+1. Yangi loyiha → **APIs & Services → Library**: *Google Calendar API*, *People API*, *Google Tasks API*, *YouTube Data API v3* ni yoqing.
 2. **OAuth consent screen** (Google Auth Platform): User type — *External*; ilova nomi, logo (`branding/logo-512.png`),
    **maxfiylik siyosati** va **foydalanish shartlari** havolalari, domen.
-   Scopes: `calendar.events`, `calendar.freebusy`, `contacts.readonly`, `tasks` (hammasi *sensitive*, Gmail kabi *restricted* emas).
+   Scopes: `calendar.events`, `calendar.freebusy`, `contacts.readonly`, `tasks`, YouTube plagini uchun `youtube.readonly` (hammasi *sensitive*, Gmail kabi *restricted* emas).
 3. **Credentials → Create OAuth client ID → Web application**.
    Authorized redirect URI: `https://<domeningiz>/oauth/google/callback` (aynan `MINIAPP_URL` domeni).
 4. `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` ni env'ga qo'ying va qayta ishga tushiring.
@@ -348,10 +347,19 @@ Vazifalar → «🧩 Plaginlar» (yoki Sozlamalar → Plaginlar). Har plagin AI'
 yoqadi va sozlaydi. API kalitlari bazada `crypto.Vault` bilan shifrlanadi (AAD — egasi + plagin) va
 Mini App'ga qaytarilmaydi (faqat `••••1234`).
 
+**YouTube — akkaunt orqali.** Oddiy foydalanuvchi API kalit nimaligini bilmaydi, shuning uchun YouTube
+mavjud Google OAuth mijozi (`GOOGLE_CLIENT_ID/SECRET`) orqali ulanadi: alohida, faqat o'qish ruxsati
+(`youtube.readonly`), alohida refresh token (taqvim ruxsatlariga qo'shilmaydi), xuddi shu redirect URI
+(`/oauth/google/callback`). Token plagin sozlamasida shifrlangan; «Uzish» va akkauntni o'chirish uni Google'da
+bekor qiladi. Google Cloud Console'da: **YouTube Data API v3**ni yoqing va OAuth consent screen'ga
+`youtube.readonly` scope'ini qo'shing. Google sozlanmagan bo'lsa YouTube «tez orada» bo'lib turadi.
+Kvota loyiha bo'yicha umumiy: qidiruv 100 birlik, obunalar ~1 birlik/kanal (standart 10 000/kun) — ko'p
+foydalanuvchida Google'dan kvota oshirishni so'rang.
+
 | Plagin | Vosita | Sozlama |
 |---|---|---|
 | 🌐 Internet qidiruvi | `web_search` — Gemini Google Search grounding, manbalari bilan | — |
-| ▶️ YouTube | `youtube_search` — YouTube Data API v3 (nom, kanal, sana, havola) | API kalit (yoki server `YOUTUBE_API_KEY`), mintaqa, saralash |
+| ▶️ YouTube | `youtube_search` — video qidirish; `youtube_subscriptions` — obuna kanallaridagi yangi videolar | **«YouTube akkauntini ulash»** tugmasi (Google OAuth, `youtube.readonly`) — API kalit kerak emas |
 | 🌤 Ob-havo | `weather` — Open-Meteo (kalitsiz), 1–7 kun | asosiy shahar |
 | 💱 Valyuta kursi | `exchange_rates` — O'zbekiston Markaziy banki | kuzatiladigan valyutalar |
 | Tez orada | Gmail, Instagram, Notion, Google Drive | — |

@@ -115,6 +115,10 @@ type Server struct {
 	// Plugins — connector'lar katalogi; Vault — ularning sozlamalarini shifrlash. nil → o'chiq.
 	Plugins *plugin.Registry
 	Vault   plugin.Vault
+	// PluginAuth — plaginlarni akkaunt orqali ulash (YouTube); nil → bunday plaginlar ulanmaydi.
+	PluginAuth PluginAuth
+	// OnPlugin — plagin akkaunti ulanishi natijasi haqida egasiga bot xabari (ixtiyoriy).
+	OnPlugin func(ctx context.Context, owner int64, plugin string, err error)
 	// OnGoogle — ulanish natijasi haqida egasiga bot xabari (ixtiyoriy).
 	OnGoogle func(ctx context.Context, owner int64, err error)
 	Log      *slog.Logger
@@ -181,6 +185,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/plugins", s.auth(s.handleListPlugins))
 	mux.HandleFunc("PUT /api/plugins/{id}", s.auth(s.handleSavePlugin))
 	mux.HandleFunc("DELETE /api/plugins/{id}", s.auth(s.handleDeletePlugin))
+	mux.HandleFunc("POST /api/plugins/{id}/connect", s.auth(s.handleConnectPlugin))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
 	if s.StaticDir != "" {
 		mux.Handle("GET /", staticFiles(s.StaticDir))
@@ -726,6 +731,8 @@ func (s *Server) handleDeleteAccount(w http.ResponseWriter, r *http.Request, own
 		// Telegram tomonda uzib bo'lmasa ham lokal ma'lumot o'chiriladi; mijozga ogohlantiramiz.
 		s.logger().Warn("revoke", "owner", owner, "err", err)
 	}
+	// Plaginlarning akkaunt tokenlari (YouTube) ham Google'da bekor qilinsin.
+	s.revokeAllPluginTokens(context.WithoutCancel(r.Context()), owner)
 	if s.Google != nil {
 		// Google'dagi ruxsat ham bekor qilinsin (bazadagi token CASCADE bilan o'chadi).
 		if err := s.Google.Disconnect(context.WithoutCancel(r.Context()), owner); err != nil {
@@ -977,6 +984,10 @@ func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 		googlePage(w, 400, "Havola yaroqsiz.")
 		return
 	}
+	purpose := ""
+	if s.PluginAuth != nil {
+		purpose = s.PluginAuth.StatePurpose(state)
+	}
 	owner, err := s.Google.Callback(r.Context(), state, code)
 	if owner == 0 {
 		if !s.allowAuthFailure() {
@@ -984,6 +995,19 @@ func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		googlePage(w, 400, "Havola eskirgan yoki yaroqsiz. Ilovada \"Google'ni ulash\" tugmasini qayta bosing.")
+		return
+	}
+	if purpose != "" {
+		// Plagin (YouTube) akkaunti: token plagin sozlamasiga saqlangan (google.Client.OnPluginToken).
+		if s.OnPlugin != nil {
+			s.OnPlugin(context.WithoutCancel(r.Context()), owner, purpose, err)
+		}
+		if err != nil {
+			s.logger().Warn("plugin callback", "owner", owner, "plugin", purpose, "err", err)
+			googlePage(w, 400, "Ulanmadi. Telegram'ga qaytib, «Ulash»ni qayta bosing va ruxsat bering.")
+			return
+		}
+		googlePage(w, 200, pluginName(purpose)+" akkauntingiz ulandi ✅ Endi Telegram'ga qaytishingiz mumkin.")
 		return
 	}
 	if s.OnGoogle != nil {
@@ -995,6 +1019,14 @@ func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	googlePage(w, 200, "Google ulandi ✅ Endi Telegram'ga qaytishingiz mumkin.")
+}
+
+// pluginName — callback sahifasi uchun plagin nomi.
+func pluginName(id string) string {
+	if id == "youtube" {
+		return "YouTube"
+	}
+	return "Plagin"
 }
 
 func googlePage(w http.ResponseWriter, code int, msg string) {
