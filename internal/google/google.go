@@ -49,6 +49,7 @@ var Scopes = []string{
 // mijoz API kalit bilan ovora bo'lmaydi, «YouTube akkauntini ulash» tugmasini bosadi xolos.
 var PluginScopes = map[string][]string{
 	"youtube": {"openid", "email", "https://www.googleapis.com/auth/youtube.readonly"},
+	"sheets":  {"openid", "email", "https://www.googleapis.com/auth/spreadsheets.readonly"},
 }
 
 // Endpoints — Google manzillari (testda almashtiriladi).

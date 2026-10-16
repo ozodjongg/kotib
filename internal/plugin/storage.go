@@ -75,7 +75,7 @@ func (r *Registry) EnabledFor(ctx context.Context, st store.Store, v Vault, owne
 	for _, p := range r.list {
 		id := p.Info().ID
 		if rec, ok := recs[id]; ok && rec.Enabled && !p.Info().Soon {
-			out = append(out, Enabled{ID: id, Config: cfgs[id]})
+			out = append(out, Enabled{ID: id, Config: cfgs[id], Owner: owner})
 		}
 	}
 	return out
@@ -83,7 +83,14 @@ func (r *Registry) EnabledFor(ctx context.Context, st store.Store, v Vault, owne
 
 // SaveAccount — akkaunt orqali ulangan plagin (OAuth) tokenini shifrlab saqlaydi va plaginni yoqadi.
 func SaveAccount(ctx context.Context, st store.Store, v Vault, owner int64, id, refreshToken, account string) error {
-	sealed, err := Seal(v, owner, id, Config{KeyRefreshToken: refreshToken, KeyAccount: account})
+	cfg := Config{}
+	if _, cfgs, err := Load(ctx, st, v, owner); err == nil {
+		for k, val := range cfgs[id] { // qayta ulanishda boshqa sozlamalar (jadval havolasi) saqlanadi
+			cfg[k] = val
+		}
+	}
+	cfg[KeyRefreshToken], cfg[KeyAccount] = refreshToken, account
+	sealed, err := Seal(v, owner, id, cfg)
 	if err != nil {
 		return err
 	}

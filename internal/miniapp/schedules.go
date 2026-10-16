@@ -380,6 +380,12 @@ func (s *Server) handleSavePlugin(w http.ResponseWriter, r *http.Request, owner 
 		httpErr(w, 500, "xatolik")
 		return
 	}
+	if v, ok := p.(plugin.Validator); ok && in.Enabled {
+		if err := v.Validate(cfg); err != nil {
+			httpErr(w, 400, err.Error())
+			return
+		}
+	}
 	sealed, err := plugin.Seal(s.Vault, owner, info.ID, cfg)
 	if err != nil {
 		httpErr(w, 500, "xatolik")

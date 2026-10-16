@@ -1023,8 +1023,11 @@ func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 
 // pluginName — callback sahifasi uchun plagin nomi.
 func pluginName(id string) string {
-	if id == "youtube" {
+	switch id {
+	case "youtube":
 		return "YouTube"
+	case "sheets":
+		return "Google Sheets"
 	}
 	return "Plagin"
 }

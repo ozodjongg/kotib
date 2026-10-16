@@ -38,7 +38,7 @@ const EVENTS = {
   style_learn_started: "Uslub o'rganish boshlandi", style_learned: 'Uslub profili yangilandi', style_refine_run: "Uslub o'qitish tekshirildi",
   birthdays_checked: "Tug'ilgan kunlar tekshirildi", birthday_draft: "Tug'ilgan kun tabrigi tayyorlandi", ask_answered: '/sor savoliga javob berildi',
   schedule_created: 'Rejalashtirilgan vazifa yaratildi', schedule_updated: "Vazifa o'zgartirildi", schedule_deleted: "Vazifa o'chirildi",
-  schedule_run: 'Rejalashtirilgan vazifa bajarildi', plugin_enabled: 'Plagin yoqildi', plugin_disabled: "Plagin o'chirildi", plugin_removed: 'Plagin uzildi',
+  schedule_run: 'Rejalashtirilgan vazifa bajarildi', plugin_enabled: 'Plagin yoqildi', plugin_disabled: "Plagin o'chirildi", plugin_removed: 'Plagin uzildi', plugin_connected: 'Plagin akkaunti ulandi',
 };
 
 const state = {
@@ -587,7 +587,7 @@ const PLANS = [
     '🎤 Ovozli xabarlarga javob',
     '📅 Google Calendar, Contacts, Tasks',
     '📱 Telefon avtomatikasi (Shortcuts / MacroDroid)',
-    '🧩 Plaginlar: internet qidiruvi, YouTube, ob-havo, valyuta kursi',
+    '🧩 Plaginlar: Telegram kanallar xulosasi, YouTube, Google Sheets, amoCRM/Bitrix24, yangiliklar, namoz vaqtlari',
     'Eng uzun kontekst (40 xabar)',
   ]],
 ];
@@ -725,6 +725,10 @@ const TASK_TEMPLATES = [
   ['📰 Kun yangiliklari', 'daily', '20:00', "O'zbekiston va dunyoning bugungi eng muhim 5 ta yangiligini qisqa xulosa qil, manbalari bilan."],
   ['▶️ YouTube yangi videolar', 'weekly', '19:00', "YouTube'da oxirgi 7 kunda chiqqan Go dasturlash bo'yicha eng yaxshi 5 ta videoni top."],
   ['💡 Motivatsiya', 'weekdays', '08:00', "Ish kunini boshlash uchun qisqa, samimiy motivatsiya yoz (2–3 jumla)."],
+  ['📢 Kanallar xulosasi', 'daily', '21:00', "Telegram kanallarimdagi bugungi postlarni o'qib, eng muhim 10 ta yangilikni havolalari bilan qisqa xulosa qil."],
+  ['🕌 Namoz vaqtlari', 'daily', '04:30', "Bugungi namoz vaqtlarini yubor."],
+  ['📊 Kunlik savdo', 'daily', '21:30', "Google jadvalimdagi bugungi buyurtmalar soni va umumiy summasini hisobla."],
+  ['💼 CRM vazifalari', 'weekdays', '09:00', "CRM'dagi bugungi va muddati o'tgan vazifalarimni ro'yxat qil."],
 ];
 
 // fmtRun — vazifa vaqti egasining vaqt mintaqasida (Sozlamalar → Tinch soatlar), qurilmaniki emas.
@@ -760,11 +764,11 @@ async function viewTasks(view) {
   }
   kids.push(data.plugins_allowed ? h('div', { class: 'card soft' },
     h('p', { class: 'small' }, h('b', {}, 'Ulangan plaginlar: '), data.plugins && data.plugins.length ? data.plugins.join(', ') : "yo'q"),
-    h('p', { class: 'small muted' }, "Plaginlar AI'ga internetdan qidirish, YouTube, ob-havo, valyuta kursi kabi imkoniyatlar beradi."),
+    h('p', { class: 'small muted' }, "Plaginlar AI'ga Telegram kanallaringiz, YouTube, Google Sheets, CRM, yangiliklar, namoz vaqtlari kabi imkoniyatlar beradi."),
     h('button', { class: 'btn ghost sm', onclick: () => openPlugins() }, 'Plaginlarni sozlash'))
     : h('div', { class: 'card soft' },
       h('div', { class: 'card-head' }, h('h3', {}, '🧩 Plaginlar'), h('span', { class: 'badge accent' }, 'Pro')),
-      h('p', { class: 'small muted' }, "Pro tarifda vazifalar internetdan qidira oladi, YouTube, ob-havo va valyuta kursidan foydalanadi. Hozir vazifalar plaginsiz bajariladi."),
+      h('p', { class: 'small muted' }, "Pro tarifda vazifalar Telegram kanallaringizni o'qiydi, YouTube, Google Sheets, CRM, yangiliklar va namoz vaqtlaridan foydalanadi. Hozir vazifalar plaginsiz bajariladi."),
       h('button', { class: 'btn ghost sm', onclick: () => openPlugins() }, "Ko'rish")));
   if (!items.length) {
     kids.push(h('div', { class: 'empty' }, h('div', { class: 'big' }, "Hali vazifa yo'q"), h('p', { class: 'muted' }, 'Quyidagi tayyor namunalardan boshlang yoki o\'zingiz yozing.')));
@@ -910,7 +914,7 @@ async function viewPlugins(view) {
     h('p', { class: 'muted' }, "Plaginlar (connector'lar) kotibga tashqi xizmatlardan foydalanish imkonini beradi. Yoqilgan plaginlardan rejalashtirilgan vazifalar foydalanadi."),
     data.allowed ? null : h('div', { class: 'card accent' },
       h('div', { class: 'card-head' }, h('h3', {}, 'Plaginlar Pro tarifda'), h('span', { class: 'badge accent' }, 'Pro')),
-      h('p', { class: 'small' }, "Internet qidiruvi, YouTube, ob-havo va valyuta kursini ulash uchun Pro tarifga o'ting."),
+      h('p', { class: 'small' }, "Telegram kanallar xulosasi, YouTube, Google Sheets, CRM va boshqa plaginlarni ulash uchun Pro tarifga o'ting."),
       h('button', { class: 'btn block', onclick: () => go('account') }, b.pro_price ? `Pro tarifga o'tish · ${b.pro_price} ⭐` : 'Obunani yoqish')),
     ready.map((p) => pluginCard(p, data.allowed)),
     soon.length ? h('h2', {}, 'Tez orada') : null,
@@ -975,27 +979,42 @@ function pluginCard(p, allowed) {
 function accountPluginCard(p, card) {
   const draw = () => {
     const connected = p.configured;
+    // Ulangandan keyingi sozlamalar (masalan, Google Sheets — jadval havolasi).
+    const inputs = {};
+    const fields = connected ? (p.fields || []).map((f) => {
+      const control = f.type === 'select'
+        ? h('select', {}, f.options.map((o) => h('option', { value: o.value, selected: (p.config[f.key] || f.default) === o.value }, o.label)))
+        : h('input', { type: 'text', maxlength: 200, autocomplete: 'off', value: p.config[f.key] || '', placeholder: f.placeholder || '' });
+      inputs[f.key] = control;
+      return field(f.label, control, f.help);
+    }) : [];
+    const collect = () => Object.fromEntries(Object.entries(inputs).map(([k, el]) => [k, el.value]));
+    const missing = (p.fields || []).filter((f) => f.required && !p.config[f.key]);
+    const save = async (on) => {
+      Object.assign(p, await api('PUT', `/plugins/${p.id}`, { enabled: on, config: collect() }));
+      toast(on ? `${p.name} yoqildi` : `${p.name} o'chirildi`);
+    };
     swap(card,
       h('div', { class: 'card-head' }, h('h3', {}, `${p.icon} ${p.name}`),
-        connected ? switchMini(p.enabled, async (on) => {
-          Object.assign(p, await api('PUT', `/plugins/${p.id}`, { enabled: on, config: {} }));
-          toast(on ? `${p.name} yoqildi` : `${p.name} o'chirildi`);
-        }) : h('span', { class: 'badge' }, 'Ulanmagan')),
+        connected ? switchMini(p.enabled, save) : h('span', { class: 'badge' }, 'Ulanmagan')),
       h('p', { class: 'small muted' }, p.description),
       connected ? h('p', { class: 'small' }, '✅ Ulangan' + (p.account ? `: ${p.account}` : '')) : null,
+      connected && missing.length ? h('p', { class: 'small err' }, 'Yana kerak: ' + missing.map((f) => f.label).join(', ')) : null,
       p.examples && p.examples.length ? h('p', { class: 'small' }, '💡 ' + p.examples[0]) : null,
       connected
-        ? h('button', { class: 'btn danger-ghost sm', onclick: busy(async () => {
-          if (!(await confirmBox(`${p.name} uzilsinmi? Ruxsat Google'da ham bekor qilinadi.`))) return;
-          await api('DELETE', `/plugins/${p.id}`); Object.assign(p, { enabled: false, configured: false, account: '' }); toast('Uzildi'); draw();
-        }) }, 'Uzish')
+        ? h('div', { class: 'stack' }, fields,
+          fields.length ? h('button', { class: 'btn block', onclick: busy(async () => { await save(true); draw(); }) }, 'Saqlash') : null,
+          h('button', { class: 'btn danger-ghost sm', onclick: busy(async () => {
+            if (!(await confirmBox(`${p.name} uzilsinmi? Ruxsat Google'da ham bekor qilinadi.`))) return;
+            await api('DELETE', `/plugins/${p.id}`); Object.assign(p, { enabled: false, configured: false, account: '', config: {} }); toast('Uzildi'); draw();
+          }) }, 'Uzish'))
         : h('div', { class: 'stack' },
           h('button', { class: 'btn block', onclick: busy(async () => {
             const { url } = await api('POST', `/plugins/${p.id}/connect`);
             // Google ichki brauzerda (WebView) kirishni bloklaydi — tashqi brauzerda ochamiz.
             if (tg && tg.openLink) tg.openLink(url); else window.open(url, '_blank', 'noopener');
             toast("Brauzerda akkauntni tanlab, ruxsat bering, so'ng shu yerga qayting");
-          }) }, `${p.icon} ${p.name} akkauntini ulash`),
+          }) }, `${p.icon} ${p.name}ni ulash`),
           h('p', { class: 'small muted' }, "Kalit yoki parol kerak emas: Google sahifasida akkauntingizni tanlab «Ruxsat berish»ni bosasiz. Faqat o'qish ruxsati so'raladi."),
           h('button', { class: 'btn ghost sm', onclick: () => renderMain() }, 'Ulandimi? Yangilash')));
   };
@@ -1097,7 +1116,7 @@ function viewSettings(view) {
     notifyCard(s),
     h('h2', {}, 'Plaginlar'),
     h('div', { class: 'card' },
-      h('p', { class: 'small muted' }, "Internet qidiruvi, YouTube, ob-havo, valyuta kursi — kotibga tashqi xizmatlarni ulang. Rejalashtirilgan vazifalar ulardan foydalanadi."),
+      h('p', { class: 'small muted' }, "Telegram kanallar xulosasi, namoz vaqtlari, yangiliklar, YouTube, Google Sheets, amoCRM/Bitrix24 — kotibga ulang. Rejalashtirilgan vazifalar ulardan foydalanadi."),
       h('div', { class: 'row' },
         h('button', { class: 'btn ghost sm', onclick: () => openPlugins() }, pro('🧩 Plaginlarni sozlash')),
         h('button', { class: 'btn ghost sm', onclick: () => go('tasks') }, '🕒 Vazifalar'))),
