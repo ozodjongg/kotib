@@ -41,12 +41,6 @@ func (io loginIO) Code(ctx context.Context, via, hint string) (string, error) {
 	return recv(ctx, io.l.codeCh)
 }
 
-func (io loginIO) QR(url, image string, expires time.Time) {
-	io.l.mu.Lock()
-	io.l.state = miniapp.LoginState{Step: "wait_qr", QRURL: url, QRImage: image, QRExpires: &expires}
-	io.l.mu.Unlock()
-}
-
 func (io loginIO) Password(ctx context.Context) (string, error) {
 	io.l.set("wait_password", "")
 	return recv(ctx, io.l.pwCh)
@@ -70,20 +64,13 @@ const (
 
 var ErrTooManyLogins = miniapp.ErrTooManyAttempts
 
-// ErrWrongAccount — tasdiqlangan Telegram akkaunt Mini App egasiniki emas (boshqa akkauntni
+// ErrWrongAccount — kiritilgan raqamdagi Telegram akkaunt Mini App egasiniki emas (boshqa akkauntni
 // birovning kotibiga ulab bo'lmaydi). Bunday sessiya darhol uziladi.
-var ErrWrongAccount = errors.New("boshqa Telegram akkaunt tasdiqladi")
+var ErrWrongAccount = errors.New("boshqa Telegram akkaunt")
 
 func (m *Manager) BeginLogin(ctx context.Context, owner int64, phone string) error {
 	return m.beginLogin(ctx, owner, func(lctx context.Context, io LoginIO) error {
 		return m.Conn.Login(lctx, owner, phone, io)
-	})
-}
-
-// BeginQRLogin kodsiz kirish: Telegram ilovasida tasdiqlanadigan token (SMS/kod kelmaganda ham ishlaydi).
-func (m *Manager) BeginQRLogin(ctx context.Context, owner int64) error {
-	return m.beginLogin(ctx, owner, func(lctx context.Context, io LoginIO) error {
-		return m.Conn.LoginQR(lctx, owner, io)
 	})
 }
 
@@ -146,7 +133,7 @@ func (m *Manager) beginLogin(ctx context.Context, owner int64, run func(context.
 			m.Log.Warn("login", "owner", owner, "err", err)
 			msg := "Ulanib bo'lmadi. Kod/parolni tekshirib, qayta urinib ko'ring."
 			if errors.Is(err, ErrWrongAccount) {
-				msg = "Boshqa Telegram akkaunt tasdiqladi. Kotibni ochgan akkauntingizning o'zida tasdiqlang."
+				msg = "Bu raqam boshqa Telegram akkauntga tegishli. Kotibni ochgan akkauntingiz raqamini kiriting."
 			}
 			ls.set("error", msg)
 			m.Store.Audit(context.Background(), owner, "login_failed", "")
@@ -192,14 +179,24 @@ func (m *Manager) submit(owner int64, wantStep, v string, ch func(*loginSession)
 	}
 }
 
-// cancelLogin jarayondagi loginni bekor qiladi (masalan, akkaunt o'chirilganda).
-func (m *Manager) cancelLogin(owner int64) {
+// CancelLogin jarayondagi ulanishni bekor qiladi: Mini App'da «Orqaga» bosilganda (raqamni
+// o'zgartirish) yoki akkaunt o'chirilganda. Holat "idle"ga qaytadi.
+func (m *Manager) CancelLogin(owner int64) {
 	m.mu.Lock()
 	l := m.logins[owner]
 	delete(m.logins, owner)
 	m.mu.Unlock()
-	if l != nil && l.cancel != nil {
-		l.cancel()
+	if l == nil || l.cancel == nil {
+		return
+	}
+	l.cancel()
+	// Telegram ulanishi yopilishini qisqa kutamiz: darhol yangi raqam bilan boshlansa,
+	// bitta sessiyaga ikki ulanish bo'lmasin.
+	if l.done != nil {
+		select {
+		case <-l.done:
+		case <-time.After(5 * time.Second):
+		}
 	}
 }
 

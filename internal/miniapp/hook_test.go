@@ -121,21 +121,23 @@ func TestICSEndpoint(t *testing.T) {
 	}
 }
 
-func TestTGLoginPage(t *testing.T) {
-	srv := newTestServer(t, &Server{BotToken: tok, Store: store.NewMemory()})
-	resp, err := http.Get(srv.URL + "/tglogin?token=QUJDREVGR0hJSktM")
-	if err != nil {
-		t.Fatal(err)
+// Telegram havola/QR orqali kirish olib tashlangan: faqat telefon raqam + kod.
+func TestLinkLoginRemoved(t *testing.T) {
+	srv, _, ctl := setup(t)
+	a := userAuth("51")
+	if code := doReq(t, srv.URL+"/tglogin?token=QUJDREVGR0hJSktM", "GET", ""); code == 200 {
+		t.Fatal("/tglogin sahifasi bo'lmasligi kerak")
 	}
-	b, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if resp.StatusCode != 200 || !strings.Contains(string(b), `href="tg://login?token=QUJDREVGR0hJSktM"`) {
-		t.Fatalf("%d %s", resp.StatusCode, b)
+	do(t, "POST", srv.URL+"/api/consent", a, `{"accepted":true}`)
+	if r, _ := do(t, "POST", srv.URL+"/api/login/qr", a, `{}`); r.StatusCode == 200 {
+		t.Fatal("/api/login/qr bo'lmasligi kerak")
 	}
-	for _, bad := range []string{"", "abc", "QUJD%22%3E%3Cscript%3E", "javascript:alert(1)aaaaaa"} {
-		if code := doReq(t, srv.URL+"/tglogin?token="+bad, "GET", ""); code != 400 {
-			t.Fatalf("%q rad etilishi kerak: %d", bad, code)
-		}
+	// «Orqaga» — jarayondagi ulanish bekor qilinadi.
+	if r, _ := do(t, "POST", srv.URL+"/api/login/cancel", a, `{}`); r.StatusCode != 200 || ctl.canceled.Load() != 1 {
+		t.Fatalf("cancel: %d %d", r.StatusCode, ctl.canceled.Load())
+	}
+	if r, _ := do(t, "POST", srv.URL+"/api/login/cancel", "", `{}`); r.StatusCode != 401 {
+		t.Fatal("cancel avtorizatsiyasiz bo'lmasligi kerak")
 	}
 }
 

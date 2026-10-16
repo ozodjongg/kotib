@@ -321,17 +321,16 @@ Xavfsizlik:
 
 ## Telegram akkauntini ulash
 
-Ikki yo'l bor (Mini App → ulash oynasi):
+Faqat **telefon raqam va kod** orqali (Mini App → ulash oynasi): Telegram kodni SMS yoki Telegram
+ilovasiga yuboradi, kod qayerga yuborilgani (Telegram chati, SMS, qo'ng'iroq, email) ko'rsatiladi.
+2FA paroli bo'lsa, alohida so'raladi (saqlanmaydi).
 
-1. **Kodsiz (tavsiya etiladi)** — Telegram Desktop'dagi QR-kirish kabi: server login token oladi
-   (`auth.exportLoginToken`), mijoz «Telegram'da tasdiqlash» tugmasini bosadi va Telegram ilovasida
-   kirishni tasdiqlaydi (`tg://login?token=…`). Tugma ishlamasa — boshqa qurilmadan QR skanerlash
-   (Sozlamalar → Qurilmalar → Kompyuterni ulash). Token ~30 soniyada yangilanadi. SMS/kod yetkazilmasa
-   ham ishlaydi; 2FA paroli bo'lsa, alohida so'raladi.
-2. **Telefon raqam va kod** — kod qayerga yuborilgani (Telegram chati, SMS, qo'ng'iroq, email) ko'rsatiladi.
+Har bosqichda **«Orqaga»** bor (Mini App tugmasi va Telegram BackButton): jarayondagi ulanish
+bekor qilinadi (`POST /api/login/cancel`) va raqam kiritish sahifasiga qaytiladi — kod kelmasa yoki
+raqam xato bo'lsa ilova qotib qolmaydi.
 
-Ikkala yo'lda ham tasdiqlangan akkaunt **Mini App'ni ochgan foydalanuvchining o'zi** bo'lishi shart
-(`self.id == owner`): havolani boshqa odam tasdiqlasa, sessiya darhol uziladi.
+Kirilgan akkaunt **Mini App'ni ochgan foydalanuvchining o'zi** bo'lishi shart (`self.id == owner`):
+boshqa odamning raqami kiritilsa, sessiya darhol uziladi.
 
 ## Telefon qulayliklari (iPhone va Android)
 
@@ -345,7 +344,7 @@ Ikkala yo'lda ham tasdiqlangan akkaunt **Mini App'ni ochgan foydalanuvchining o'
 | **Siri / Google Assistant** | — | `t.me/<bot>?start=pause` va `?start=resume` deep link'lari |
 | **Face ID / barmoq izi** | Hisob → Telefon | Mini App'dan yuborish, avto rejimni yoqish, Google'ni uzish, akkauntni o'chirishdan oldin (shu qurilmada) |
 | **Bosh ekranga qo'shish** | Hisob → Telefon | Telegram `addToHomeScreen` (Telegram 8.0+). Eski ilovada yoki qo'llamaydigan qurilmada qo'lda qo'shish yo'riqnomasi ko'rsatiladi: iPhone — Safari'da `t.me/<bot>?startapp` → «Bosh ekranga»; Android — bot chati ⋮ menyusi. `?startapp` ishlashi uchun @BotFather → Bot Settings → **Configure Mini App** (Main Mini App) yoqilgan bo'lishi kerak |
-| **Orqaga tugmasi** | — | Telegram BackButton (Android tizim tugmasi ham): bo'limdan Asosiy'ga |
+| **Orqaga tugmasi** | — | Telegram BackButton (Android tizim tugmasi ham): ichki sahifadan yoki bo'limdan Asosiy'ga; ulanish jarayonida — raqam kiritishga |
 | **Pastga surib yopilmaslik** | — | `disableVerticalSwipes`: matn yozayotganda ilova tasodifan yopilmaydi |
 
 Avtomatlashtirish havolasi parametrlari: `mode=draft|auto|off`, `away=<matn>` (bo'sh — tozalash), `for=<daqiqa>` (holat shuncha vaqtdan keyin o'zi tugaydi, 1440 gacha), `action=pause|resume`.

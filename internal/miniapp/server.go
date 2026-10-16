@@ -37,16 +37,12 @@ var ErrTooManyAttempts = errors.New("juda ko'p urinish: birozdan keyin qayta uri
 
 // LoginState — Telegram akkauntni ulash jarayonining holati.
 type LoginState struct {
-	Step  string `json:"step"` // idle | wait_code | wait_password | done | error
+	Step  string `json:"step"` // idle | connecting | wait_code | wait_password | done | error
 	Error string `json:"error,omitempty"`
 	// Via — kod qayerga yuborilgani (wait_code'da): app | sms | call | email | fragment.
 	Via string `json:"via,omitempty"`
 	// Hint — qo'shimcha: email shabloni (a***@gmail.com) yoki fragment havolasi.
 	Hint string `json:"hint,omitempty"`
-	// QR orqali kirish (wait_qr): tg://login havolasi, QR rasm (data:image/png) va muddati.
-	QRURL     string     `json:"qr_url,omitempty"`
-	QRImage   string     `json:"qr_image,omitempty"`
-	QRExpires *time.Time `json:"qr_expires,omitempty"`
 }
 
 // ContactInfo — kontakt tanlash ro'yxati uchun (faqat egasiga ko'rsatiladi).
@@ -59,9 +55,10 @@ type ContactInfo struct {
 
 // Controller — Mini App userbot menejeriga murojaat qiladigan interfeys.
 type Controller interface {
+	// BeginLogin telefon raqam bilan ulanishni boshlaydi: Telegram kod yuboradi (SMS yoki ilova).
 	BeginLogin(ctx context.Context, owner int64, phone string) error
-	// BeginQRLogin kodsiz kirish: Telegram ilovasida tasdiqlanadigan token (QR / tg://login havola).
-	BeginQRLogin(ctx context.Context, owner int64) error
+	// CancelLogin jarayondagi ulanishni bekor qiladi (raqamni o'zgartirish, «Orqaga»).
+	CancelLogin(owner int64)
 	SubmitCode(owner int64, code string) error
 	SubmitPassword(owner int64, password string) error
 	LoginState(owner int64) LoginState
@@ -138,8 +135,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/settings", s.auth(s.handleGetSettings))
 	mux.HandleFunc("PUT /api/settings", s.auth(s.handlePutSettings))
 	mux.HandleFunc("POST /api/login/phone", s.auth(s.handleLoginPhone))
-	mux.HandleFunc("POST /api/login/qr", s.auth(s.handleLoginQR))
-	mux.HandleFunc("GET /tglogin", handleTGLogin)
+	mux.HandleFunc("POST /api/login/cancel", s.auth(s.handleLoginCancel))
 	mux.HandleFunc("POST /api/login/code", s.auth(s.handleLoginCode))
 	mux.HandleFunc("POST /api/login/password", s.auth(s.handleLoginPassword))
 	mux.HandleFunc("GET /api/login/state", s.auth(s.handleLoginState))
@@ -549,20 +545,10 @@ func (s *Server) handleLoginPassword(w http.ResponseWriter, r *http.Request, own
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
-func (s *Server) handleLoginQR(w http.ResponseWriter, r *http.Request, owner int64) {
-	if !s.requireConsent(w, r, owner) {
-		return
-	}
-	// MUHIM: kontekst so'rovdan emas — login jarayoni so'rov tugagandan keyin ham davom etadi.
-	if err := s.Ctl.BeginQRLogin(context.WithoutCancel(r.Context()), owner); err != nil {
-		if errors.Is(err, ErrTooManyAttempts) {
-			httpErr(w, http.StatusTooManyRequests, err.Error())
-			return
-		}
-		s.logger().Warn("begin qr login", "owner", owner, "err", err)
-		httpErr(w, 400, "ulanishni boshlab bo'lmadi")
-		return
-	}
+// handleLoginCancel — «Orqaga»: jarayondagi ulanish bekor bo'ladi, Mini App raqam kiritish
+// sahifasiga qaytadi (kod kelmasa yoki raqam xato kiritilgan bo'lsa, ilova qotib qolmasin).
+func (s *Server) handleLoginCancel(w http.ResponseWriter, r *http.Request, owner int64) {
+	s.Ctl.CancelLogin(owner)
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
@@ -995,32 +981,6 @@ func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	googlePage(w, 200, "Google ulandi ✅ Endi Telegram'ga qaytishingiz mumkin.")
-}
-
-// loginTokenRe — Telegram login tokeni (base64url, padding bilan).
-var loginTokenRe = regexp.MustCompile(`^[A-Za-z0-9_=-]{10,256}$`)
-
-var tgLoginTmpl = template.Must(template.New("l").Parse(`<!doctype html><html lang="uz"><head><meta charset="utf-8">` +
-	`<meta name="viewport" content="width=device-width, initial-scale=1"><title>Kotib · Telegram'da tasdiqlash</title>` +
-	`<meta http-equiv="refresh" content="0;url={{.}}"></head>` +
-	`<body><h2>Kotib</h2><p>Telegram ochilib, «Kirishni tasdiqlaysizmi?» deb so'raydi — tasdiqlang, so'ng Telegram'ga qayting.</p>` +
-	`<p><a href="{{.}}"><b>Telegram'ni ochish</b></a></p>` +
-	`<p>Ochilmasa: boshqa qurilmadagi Telegram → Sozlamalar → Qurilmalar → «Kompyuterni ulash» orqali Mini App'dagi QR'ni skanerlang.</p>` +
-	`</body></html>`))
-
-// handleTGLogin — Mini App ichida tg:// havolalarni ochib bo'lmaydi (Telegram openLink faqat
-// https qabul qiladi). Shuning uchun Mini App tashqi brauzerda shu sahifani ochadi, sahifa esa
-// tg://login havolasini Telegram ilovasiga uzatadi. Token qisqa muddatli (~30 s) va uni boshqa
-// akkaunt tasdiqlasa ham kotib ulanmaydi (ensureOwner), shuning uchun alohida auth shart emas.
-func handleTGLogin(w http.ResponseWriter, r *http.Request) {
-	token := r.URL.Query().Get("token")
-	if !loginTokenRe.MatchString(token) {
-		http.Error(w, "havola yaroqsiz", http.StatusBadRequest)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	// tg:// sxemasi html/template'da "xavfsiz" deb belgilanishi kerak; token regex bilan tekshirilgan.
-	_ = tgLoginTmpl.Execute(w, template.URL("tg://login?token="+token))
 }
 
 func googlePage(w http.ResponseWriter, code int, msg string) {

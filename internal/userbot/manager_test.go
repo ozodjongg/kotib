@@ -26,14 +26,6 @@ func (f *fakeConn) Login(ctx context.Context, _ int64, _ string, io LoginIO) err
 	return ctx.Err()
 }
 
-func (f *fakeConn) LoginQR(ctx context.Context, _ int64, io LoginIO) error {
-	if f.loginFn != nil {
-		return f.loginFn(ctx, io)
-	}
-	<-ctx.Done()
-	return ctx.Err()
-}
-
 func (f *fakeConn) Run(ctx context.Context, _ int64, _ func(Telegram), _ func(Incoming)) error {
 	return f.runErr
 }
@@ -198,16 +190,17 @@ func waitLogin(t *testing.T, m *Manager, owner int64, step string) miniapp.Login
 	}
 }
 
-func TestQRLoginFlow(t *testing.T) {
-	accept := make(chan struct{})
+func TestPhoneLoginFlow(t *testing.T) {
 	conn := &fakeConn{loginFn: func(ctx context.Context, io LoginIO) error {
-		io.QR("tg://login?token=abc", "data:image/png;base64,AA", time.Now().Add(30*time.Second))
-		select {
-		case <-accept:
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
+		code, err := io.Code(ctx, "sms", "")
+		if err != nil {
+			return err
 		}
+		if code != "12345" {
+			return errors.New("kod noto'g'ri")
+		}
+		_, err = io.Password(ctx)
+		return err
 	}}
 	m, st := newManager(conn)
 	connected := make(chan int64, 1)
@@ -215,14 +208,22 @@ func TestQRLoginFlow(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 	_ = st.UpsertAccount(ctx, store.Account{OwnerID: 7, Status: store.StatusRevoked, ConsentAt: &now})
-	if err := m.BeginQRLogin(ctx, 7); err != nil {
+	if err := m.BeginLogin(ctx, 7, "+998901234567"); err != nil {
 		t.Fatal(err)
 	}
-	qs := waitLogin(t, m, 7, "wait_qr")
-	if qs.QRURL != "tg://login?token=abc" || qs.QRImage == "" || qs.QRExpires == nil {
-		t.Fatalf("qr holati: %+v", qs)
+	if cs := waitLogin(t, m, 7, "wait_code"); cs.Via != "sms" {
+		t.Fatalf("kod holati: %+v", cs)
 	}
-	close(accept)
+	if err := m.SubmitPassword(7, "x"); err == nil {
+		t.Fatal("kod kutilayotganda parol qabul qilinmasligi kerak")
+	}
+	if err := m.SubmitCode(7, "12345"); err != nil {
+		t.Fatal(err)
+	}
+	waitLogin(t, m, 7, "wait_password")
+	if err := m.SubmitPassword(7, "secret"); err != nil {
+		t.Fatal(err)
+	}
 	waitLogin(t, m, 7, "done")
 	if acc, _ := st.GetAccount(ctx, 7); acc.Status != store.StatusActive {
 		t.Fatalf("akkaunt faol bo'lishi kerak: %s", acc.Status)
@@ -238,15 +239,15 @@ func TestQRLoginFlow(t *testing.T) {
 	m.Shutdown()
 }
 
-func TestQRLoginWrongAccount(t *testing.T) {
+func TestLoginWrongAccount(t *testing.T) {
 	m, st := newManager(&fakeConn{loginFn: func(context.Context, LoginIO) error { return ErrWrongAccount }})
 	ctx := context.Background()
 	_ = st.UpsertAccount(ctx, store.Account{OwnerID: 7, Status: store.StatusRevoked})
-	if err := m.BeginQRLogin(ctx, 7); err != nil {
+	if err := m.BeginLogin(ctx, 7, "+998901234567"); err != nil {
 		t.Fatal(err)
 	}
 	es := waitLogin(t, m, 7, "error")
-	if !strings.Contains(es.Error, "Boshqa Telegram akkaunt") {
+	if !strings.Contains(es.Error, "boshqa Telegram akkaunt") {
 		t.Fatalf("xato matni: %q", es.Error)
 	}
 	if acc, _ := st.GetAccount(ctx, 7); acc.Status == store.StatusActive {
@@ -261,27 +262,64 @@ func TestNewLoginReplacesStuckOne(t *testing.T) {
 		mu.Lock()
 		started++
 		mu.Unlock()
-		io.QR("tg://login?token=x", "", time.Now().Add(30*time.Second))
-		<-ctx.Done()
-		return ctx.Err()
+		_, err := io.Code(ctx, "app", "")
+		return err
 	}}
 	m, st := newManager(conn)
 	ctx := context.Background()
 	_ = st.UpsertAccount(ctx, store.Account{OwnerID: 7, Status: store.StatusRevoked})
-	if err := m.BeginQRLogin(ctx, 7); err != nil {
+	if err := m.BeginLogin(ctx, 7, "+998901234567"); err != nil {
 		t.Fatal(err)
 	}
-	waitLogin(t, m, 7, "wait_qr")
+	waitLogin(t, m, 7, "wait_code")
 	// Ekran yangilandi va tugma qayta bosildi: eski urinish bekor bo'lib, yangisi boshlanadi.
-	if err := m.BeginQRLogin(ctx, 7); err != nil {
+	if err := m.BeginLogin(ctx, 7, "+998901234568"); err != nil {
 		t.Fatalf("qayta urinish rad etilmasligi kerak: %v", err)
 	}
-	waitLogin(t, m, 7, "wait_qr")
+	waitLogin(t, m, 7, "wait_code")
 	mu.Lock()
 	n := started
 	mu.Unlock()
 	if n != 2 {
 		t.Fatalf("ikkita urinish boshlanishi kerak: %d", n)
 	}
-	m.cancelLogin(7)
+	m.CancelLogin(7)
+}
+
+// «Orqaga»: kod kutilayotgan ulanish bekor qilinadi, holat idle'ga qaytadi va telefon
+// raqamini qaytadan kiritish mumkin (Mini App qotib qolmaydi).
+func TestCancelLoginReturnsToIdle(t *testing.T) {
+	var mu sync.Mutex
+	exited := 0
+	conn := &fakeConn{loginFn: func(ctx context.Context, io LoginIO) error {
+		defer func() { mu.Lock(); exited++; mu.Unlock() }()
+		_, err := io.Code(ctx, "sms", "")
+		return err
+	}}
+	m, st := newManager(conn)
+	ctx := context.Background()
+	_ = st.UpsertAccount(ctx, store.Account{OwnerID: 7, Status: store.StatusPending})
+	if err := m.BeginLogin(ctx, 7, "+998901234567"); err != nil {
+		t.Fatal(err)
+	}
+	waitLogin(t, m, 7, "wait_code")
+	m.CancelLogin(7)
+	mu.Lock()
+	n := exited
+	mu.Unlock()
+	if n != 1 {
+		t.Fatal("CancelLogin Telegram ulanishi yopilishini kutishi kerak")
+	}
+	if st := m.LoginState(7); st.Step != "idle" {
+		t.Fatalf("bekor qilingach idle bo'lishi kerak: %+v", st)
+	}
+	if err := m.SubmitCode(7, "12345"); err == nil {
+		t.Fatal("bekor qilingan ulanishga kod qabul qilinmasligi kerak")
+	}
+	if err := m.BeginLogin(ctx, 7, "+998901234567"); err != nil {
+		t.Fatalf("qayta boshlash: %v", err)
+	}
+	waitLogin(t, m, 7, "wait_code")
+	m.CancelLogin(7)
+	m.CancelLogin(7) // ikki marta — xavfsiz
 }

@@ -22,17 +22,13 @@ type LoginIO interface {
 	// Code — via: kod qayerga yuborilgani (app, sms, call, email, fragment), hint: email shabloni va h.k.
 	Code(ctx context.Context, via, hint string) (string, error)
 	Password(ctx context.Context) (string, error)
-	// QR — kodsiz kirish tokeni tayyor (yangilanganda qayta chaqiriladi): tg://login havola, PNG data URL.
-	QR(url, image string, expires time.Time)
 }
 
 // Connector — Telegram'ga ulanish qatlami (gotd.go'da implementatsiya).
 type Connector interface {
 	// Login telefon raqam bilan avtorizatsiya qiladi; sessiya shifrlangan holda saqlanadi.
-	Login(ctx context.Context, owner int64, phone string, io LoginIO) error
-	// LoginQR kodsiz kirish: token mijozning Telegram ilovasida tasdiqlanadi.
 	// Tasdiqlangan akkaunt owner'dan boshqa bo'lsa — ErrWrongAccount.
-	LoginQR(ctx context.Context, owner int64, io LoginIO) error
+	Login(ctx context.Context, owner int64, phone string, io LoginIO) error
 	// Run saqlangan sessiya bilan ulanadi va ctx tugaguncha ishlaydi.
 	// onReady ulanish tayyor bo'lganda, onMsg har kiruvchi shaxsiy xabarda chaqiriladi (tez qaytishi shart).
 	// Qaytarilgan *FatalError — qayta urinish ma'nosiz.
@@ -360,7 +356,7 @@ var ErrNoLiveSession = errors.New("jonli sessiya yo'q")
 // Revoke Telegram tomonda sessiyani tugatadi. Jonli ulanish yo'q bo'lsa, mijozga qo'lda uzishni aytadi.
 func (m *Manager) Revoke(ctx context.Context, owner int64) error {
 	m.init(ctx)
-	m.cancelLogin(owner)
+	m.CancelLogin(owner)
 	m.mu.Lock()
 	w := m.workers[owner]
 	m.mu.Unlock()
