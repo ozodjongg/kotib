@@ -171,7 +171,13 @@ func (m *Manager) digestText(ctx context.Context, owner int64, st *config.Settin
 	sentToday, _ := m.Store.CountAudit(ctx, owner, store.SentEvents, day)
 	drafts, _ := m.Store.ListDrafts(ctx, owner, store.DraftPending, 100)
 	open, _ := m.Store.ListOpenFollowups(ctx, owner)
-	if prepared == 0 && len(drafts) == 0 && len(open) == 0 {
+	chats := m.openChats(ctx, owner, day)
+	waiting := unanswered(chats)
+	summary := ""
+	if st.SmartDigest && len(chats) > 0 && m.pro(ctx, owner) {
+		summary = m.aiSummary(ctx, owner, st, chats, day, "bugun")
+	}
+	if prepared == 0 && len(drafts) == 0 && len(open) == 0 && len(waiting) == 0 && summary == "" {
 		return "", false
 	}
 	var b strings.Builder
@@ -192,6 +198,12 @@ func (m *Manager) digestText(ctx context.Context, owner int64, st *config.Settin
 			names = append(names, m.contactName(ctx, owner, f.ChatID))
 		}
 		fmt.Fprintf(&b, "⏰ «Keyinroq yozaman» deyilgan: %s\n", strings.Join(names, ", "))
+	}
+	if len(waiting) > 0 {
+		fmt.Fprintf(&b, "❗ Javob kutayotganlar: %s\n", waitingList(ctx, m, owner, waiting, st.Location()))
+	}
+	if summary != "" {
+		b.WriteString("\n📝 Bugun nima bo'ldi:\n" + summary + "\n")
 	}
 	if n, saved, err := store.ReplyStats(ctx, m.Store, owner, store.MonthStart(now, st.Location())); err == nil && n > 0 {
 		fmt.Fprintf(&b, "\n⏱ Bu oy kotib %d ta javob yubordi — taxminan %s vaqtingizni tejadi.", n, store.FormatSaved(saved))

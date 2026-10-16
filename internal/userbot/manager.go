@@ -70,8 +70,12 @@ type Manager struct {
 	OnConnected func(ctx context.Context, owner int64)
 	// Pro — Pro tarif funksiyalari ochiqmi (billing.Service.HasPro); nil → ochiq.
 	Pro func(ctx context.Context, owner int64) bool
+	// Offer — egasiga tugmali xabar (masalan, soya rejimi natijasi); buttons: {matn, callback data}.
+	// nil → oddiy Notify.
+	Offer func(ctx context.Context, owner int64, text string, buttons [][2]string)
 
 	mu         sync.Mutex
+	learning   map[int64]bool // uslub o'rganilayotgan egalar (bir vaqtda bitta)
 	workers    map[int64]*worker
 	logins     map[int64]*loginSession
 	loginTimes map[int64][]time.Time
@@ -117,6 +121,7 @@ func (m *Manager) init(ctx context.Context) {
 		m.workers = map[int64]*worker{}
 		m.logins = map[int64]*loginSession{}
 		m.loginTimes = map[int64][]time.Time{}
+		m.learning = map[int64]bool{}
 		m.BaseCtx = ctx
 		if m.Log == nil {
 			m.Log = slog.Default()
@@ -192,7 +197,13 @@ func (m *Manager) runLoop(ctx context.Context, owner int64, w *worker) {
 				w.mu.Unlock()
 				w.pipe.SetTG(tg)
 			},
-			func(in Incoming) { w.pipe.Submit(ctx, in) },
+			func(in Incoming) {
+				if in.Outgoing {
+					w.pipe.OwnerMessage(ctx, in.ChatID, in.Text)
+					return
+				}
+				w.pipe.Submit(ctx, in)
+			},
 		)
 		w.mu.Lock()
 		w.tg = nil

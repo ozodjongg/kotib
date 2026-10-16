@@ -42,6 +42,9 @@ func (f *fakeTG) LogOut(context.Context) error { return nil }
 func (f *fakeTG) Contacts(context.Context) ([]miniapp.ContactInfo, error) {
 	return nil, nil
 }
+func (f *fakeTG) RecentChats(context.Context, int) ([]miniapp.ContactInfo, error) {
+	return nil, nil
+}
 func (f *fakeTG) sentCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()

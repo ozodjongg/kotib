@@ -30,9 +30,13 @@ import (
 )
 
 const (
-	draftTTL = 7 * 24 * time.Hour  // draftlar (kontakt xabari matni bilan) shundan ko'p saqlanmaydi
-	auditTTL = 90 * 24 * time.Hour // audit (matnsiz meta) saqlash muddati
+	draftTTL    = 7 * 24 * time.Hour  // draftlar (kontakt xabari matni bilan) shundan ko'p saqlanmaydi
+	auditTTL    = 90 * 24 * time.Hour // audit (matnsiz meta) saqlash muddati
+	activityTTL = 30 * 24 * time.Hour // chat faolligi (matnsiz): shuncha vaqt faolligi yo'q chatlar o'chiriladi
 )
+
+// Google mijozi tug'ilgan kunlarni ham beradi (userbot ixtiyoriy interfeys orqali tekshiradi).
+var _ userbot.Birthdays = (*google.Client)(nil)
 
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -176,6 +180,17 @@ func run(log *slog.Logger) error {
 		}
 	}
 	mgr.CalendarFallback = true
+	// Tugmali takliflar (soya rejimi natijasi).
+	mgr.Offer = func(ctx context.Context, owner int64, text string, buttons [][2]string) {
+		chat, text := botcmd.Route(ctx, st, owner, text)
+		btns := make([]bot.Button, 0, len(buttons))
+		for _, b := range buttons {
+			btns = append(btns, bot.Button{Text: b[0], Data: b[1]})
+		}
+		if err := ctrlBot.Ask(ctx, chat, text, btns); err != nil {
+			log.Warn("taklif yuborilmadi", "owner", owner, "err", err)
+		}
+	}
 	icsKey := sha256.Sum256([]byte("kotib-ics:" + env("MASTER_KEY")))
 	icsSigner := &ics.Signer{Key: icsKey[:], Base: publicURL(env("MINIAPP_URL"))}
 
@@ -207,7 +222,7 @@ func run(log *slog.Logger) error {
 	}
 
 	ctrlBot.Handler = &botcmd.Handler{
-		Store: st, Billing: bill, Ctl: mgr, Admins: admins, Log: log, ICS: icsSigner,
+		Store: st, Billing: bill, Ctl: mgr, Admins: admins, Log: log, ICS: icsSigner, AI: mgr,
 		Notify: func(ctx context.Context, owner int64, text string, openApp bool) { notify(ctx, owner, text, openApp) },
 	}
 
@@ -436,8 +451,10 @@ func listenAddr(listen, port string) (string, error) {
 	return "127.0.0.1:8080", nil
 }
 
-// insights har 5 daqiqada: muddati kelgan "keyinroq yozaman" va'dalarini tekshiradi va
-// soat 21:00 da kechki xulosani yuboradi. Faqat bitta nusxa (gate) ishlatadi — takror yuborilmasin.
+// insights har 5 daqiqada: muddati kelgan "keyinroq yozaman" va'dalari va javobsiz qolgan chatlar,
+// kechki xulosa (21:00), ertalabki brifing (8:00), haftalik hisobot, tug'ilgan kunlar (9:00),
+// uslub profilini yangilash (3:00) va soya rejimi natijasi. Faqat bitta nusxa (gate) ishlatadi —
+// takror yuborilmasin; har biri kuniga bir marta (audit bo'yicha).
 func insights(ctx context.Context, mgr *userbot.Manager, gate <-chan struct{}) {
 	select {
 	case <-gate:
@@ -449,8 +466,13 @@ func insights(ctx context.Context, mgr *userbot.Manager, gate <-chan struct{}) {
 	for {
 		now := time.Now()
 		mgr.CheckFollowups(ctx, now)
+		mgr.CheckUnanswered(ctx, now)
 		mgr.SendDigests(ctx, now)
+		mgr.SendMorningBriefs(ctx, now)
 		mgr.SendWeeklyReports(ctx, now)
+		mgr.SendBirthdays(ctx, now)
+		mgr.RefineStyles(ctx, now)
+		mgr.SendShadowReports(ctx, now)
 		select {
 		case <-ctx.Done():
 			return
@@ -459,8 +481,8 @@ func insights(ctx context.Context, mgr *userbot.Manager, gate <-chan struct{}) {
 	}
 }
 
-// janitor maxfiylik uchun eski ma'lumotni muntazam tozalaydi: draftlar 7 kun,
-// audit 90 kun. Har soatda (va ishga tushganda bir marta) ishlaydi.
+// janitor maxfiylik uchun eski ma'lumotni muntazam tozalaydi: draftlar va o'qitish juftliklari
+// 7 kun, chat faolligi 30 kun, audit 90 kun. Har soatda (va ishga tushganda bir marta) ishlaydi.
 func janitor(ctx context.Context, st store.Store, bill *billing.Service, notify billing.Notifier, log *slog.Logger) {
 	t := time.NewTicker(time.Hour)
 	defer t.Stop()
@@ -479,6 +501,12 @@ func janitor(ctx context.Context, st store.Store, bill *billing.Service, notify 
 		}
 		if _, err := st.PruneActions(ctx, now.Add(-draftTTL)); err != nil {
 			log.Warn("janitor actions", "err", err)
+		}
+		if _, err := st.PruneChats(ctx, now.Add(-activityTTL)); err != nil {
+			log.Warn("janitor chats", "err", err)
+		}
+		if _, err := st.PruneStyleSamples(ctx, now.Add(-draftTTL)); err != nil {
+			log.Warn("janitor style samples", "err", err)
 		}
 		bill.RemindExpiring(ctx, notify)
 		select {

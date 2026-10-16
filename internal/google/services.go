@@ -175,6 +175,65 @@ func (c *Client) Contact(ctx context.Context, owner, userID int64, name, phone s
 	return cc.name, cc.note
 }
 
+// Birthday — Google Contacts'dagi bugun tug'ilgan kishi.
+type Birthday struct {
+	Name  string
+	Phone string // faqat raqamlar (bo'lmasa bo'sh)
+}
+
+// maxBirthdayPages — connections ro'yxati sahifalari chegarasi (1000 tadan).
+const maxBirthdayPages = 5
+
+// Birthdays — egasining Google kontaktlaridan tug'ilgan kuni month/day bo'lganlar.
+func (c *Client) Birthdays(ctx context.Context, owner int64, month time.Month, day int) ([]Birthday, error) {
+	var out []Birthday
+	token := ""
+	for page := 0; page < maxBirthdayPages; page++ {
+		q := url.Values{"personFields": {"names,birthdays,phoneNumbers"}, "pageSize": {"1000"}}
+		if token != "" {
+			q.Set("pageToken", token)
+		}
+		var res struct {
+			Connections []struct {
+				person
+				Birthdays []struct {
+					Date struct {
+						Month int `json:"month"`
+						Day   int `json:"day"`
+					} `json:"date"`
+				} `json:"birthdays"`
+			} `json:"connections"`
+			NextPageToken string `json:"nextPageToken"`
+		}
+		if err := c.do(ctx, owner, http.MethodGet, c.Endpoints.People+"/people/me/connections?"+q.Encode(), nil, &res); err != nil {
+			return nil, err
+		}
+		for _, p := range res.Connections {
+			if len(p.Names) == 0 || strings.TrimSpace(p.Names[0].DisplayName) == "" {
+				continue
+			}
+			for _, b := range p.Birthdays {
+				if b.Date.Month == int(month) && b.Date.Day == day {
+					bd := Birthday{Name: strings.TrimSpace(p.Names[0].DisplayName)}
+					if len(p.PhoneNumbers) > 0 {
+						v := p.PhoneNumbers[0].CanonicalForm
+						if v == "" {
+							v = p.PhoneNumbers[0].Value
+						}
+						bd.Phone = onlyDigits(v)
+					}
+					out = append(out, bd)
+					break
+				}
+			}
+		}
+		if token = res.NextPageToken; token == "" {
+			break
+		}
+	}
+	return out, nil
+}
+
 func (c *Client) search(ctx context.Context, owner int64, query string, out *[]person) error {
 	q := url.Values{"query": {query}, "readMask": {"names,biographies,phoneNumbers"}, "pageSize": {"10"}}
 	var res struct {

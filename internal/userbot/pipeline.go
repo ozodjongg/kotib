@@ -31,6 +31,8 @@ type Telegram interface {
 	History(ctx context.Context, chatID int64, n int) ([]llm.Turn, error)
 	// Contacts mijozning Telegram kontaktlari.
 	Contacts(ctx context.Context) ([]miniapp.ContactInfo, error)
+	// RecentChats oxirgi faol shaxsiy chatlar (botlarsiz, yangidan eskiga, ko'pi bilan n ta).
+	RecentChats(ctx context.Context, n int) ([]miniapp.ContactInfo, error)
 	// LogOut Telegram tomonda shu sessiyani tugatadi (auth.logOut).
 	LogOut(ctx context.Context) error
 }
@@ -84,7 +86,19 @@ type Incoming struct {
 	Text    string
 	Contact config.Contact
 	Voice   *Voice // ovozli xabar (Text — "🎤 Ovozli xabar"); nil — oddiy matn
+	Photo   *Photo // rasm (Text — "🖼 Rasm" + izoh); nil — yo'q
+	// Outgoing — egasining o'zi (boshqa qurilmadan) yozgan xabari: javob yozilmaydi,
+	// faqat faollik va o'qitish rejimi uchun qayd etiladi.
+	Outgoing bool
 }
+
+// Photo — rasm: fayl faqat kerak bo'lganda (sozlama yoqilgan bo'lsa) yuklanadi.
+type Photo struct {
+	Load func(ctx context.Context) ([]byte, error)
+}
+
+// PhotoText — rasm o'rnida ko'rsatiladigan matn.
+const PhotoText = "🖼 Rasm"
 
 // Voice — ovozli xabar: fayl faqat kerak bo'lganda (sozlama yoqilgan bo'lsa) yuklanadi.
 type Voice struct {
@@ -97,6 +111,9 @@ const VoiceText = "🎤 Ovozli xabar"
 
 // maxVoiceSeconds — bundan uzun ovozli xabarlar modelga yuborilmaydi (xarajat).
 const maxVoiceSeconds = 120
+
+// maxTranscribeSeconds — bundan uzun ovozli xabarlar matnga o'girilmaydi.
+const maxTranscribeSeconds = 300
 
 // FatalError — qayta urinish ma'nosiz (sessiya o'chgan, PEER_FLOOD, akkaunt bloklangan).
 type FatalError struct{ Reason string }
@@ -148,9 +165,11 @@ type Pipeline struct {
 	Now   func() time.Time
 	Sleep func(ctx context.Context, d time.Duration) error
 
-	sem          chan struct{}       // bir vaqtda LLM chaqiruvlari cheklovi
-	proposals    *ratelimit.Bucket   // egasiga yuboriladigan takliflar (bot xabarlari) cheklovi
-	chatMu       map[int64]*chatLock // bitta chat xabarlari qat'iy navbat bilan
+	sem          chan struct{} // bir vaqtda LLM chaqiruvlari cheklovi
+	shadow       map[int64]shadowGuess
+	ownSent      map[int64][]sentMark // kotib yuborgan xabarlar (egasining xabari deb qayta qayd etilmasin)
+	proposals    *ratelimit.Bucket    // egasiga yuboriladigan takliflar (bot xabarlari) cheklovi
+	chatMu       map[int64]*chatLock  // bitta chat xabarlari qat'iy navbat bilan
 	tgMu         sync.RWMutex
 	mu           sync.Mutex
 	pending      map[int64]*pendingChat
@@ -159,9 +178,30 @@ type Pipeline struct {
 	wg           sync.WaitGroup
 }
 
+// shadowGuess — soya rejimida kotib jim tayyorlagan javob (egasi yozgach solishtiriladi).
+type shadowGuess struct {
+	incoming, reply string
+	at              time.Time
+}
+
+type sentMark struct {
+	hash string
+	at   time.Time
+}
+
+const (
+	// shadowTTL — soya taxmini shuncha vaqt ichida egasining javobi bilan solishtiriladi.
+	shadowTTL = 12 * time.Hour
+	// maxShadow — xotirada saqlanadigan soya taxminlari chegarasi.
+	maxShadow = 200
+	// ownSentTTL — kotib yuborgan xabar shuncha vaqt ichida "egasi yozdi" deb hisoblanmaydi.
+	ownSentTTL = 10 * time.Minute
+)
+
 type pendingChat struct {
 	texts   []string
 	lastID  int
+	photo   *Photo
 	voice   *Voice // birlashtirilgan xabarlardagi oxirgi ovozli xabar
 	contact config.Contact
 	timer   *time.Timer
@@ -189,6 +229,8 @@ func (p *Pipeline) init() {
 		// Kontakt ko'p xabar yozsa ham egasi takliflarga ko'milib ketmasin: 5 ta, keyin ~10 daqiqada bitta.
 		p.proposals = ratelimit.NewBucket(5, 1.0/600)
 		p.chatMu = map[int64]*chatLock{}
+		p.shadow = map[int64]shadowGuess{}
+		p.ownSent = map[int64][]sentMark{}
 	}
 }
 
@@ -239,6 +281,9 @@ func (p *Pipeline) Submit(ctx context.Context, in Incoming) {
 	if in.Voice != nil {
 		pc.voice = in.Voice
 	}
+	if in.Photo != nil {
+		pc.photo = in.Photo
+	}
 	if pc.timer != nil && pc.timer.Stop() {
 		p.wg.Done() // bekor qilingan eski taymerning hisobi
 	}
@@ -253,7 +298,7 @@ func (p *Pipeline) Submit(ctx context.Context, in Incoming) {
 		if cur == nil {
 			return
 		}
-		p.Handle(ctx, Incoming{ChatID: chatID, MsgID: cur.lastID, Text: strings.Join(cur.texts, "\n"), Contact: cur.contact, Voice: cur.voice})
+		p.Handle(ctx, Incoming{ChatID: chatID, MsgID: cur.lastID, Text: strings.Join(cur.texts, "\n"), Contact: cur.contact, Voice: cur.voice, Photo: cur.photo})
 	})
 }
 
@@ -285,25 +330,48 @@ func (p *Pipeline) Handle(ctx context.Context, in Incoming) {
 	}
 	now := p.Now()
 	dec := st.Resolve(in.Contact, now)
+	// Tinch soatlarda ham chat faolligi, shoshilinch ogohlantirish va transkript ishlaydi;
+	// egasi qoidalar bilan chetlatgan chat (private) esa umuman qayta ishlanmaydi.
+	quiet := !dec.Reply && dec.Reason == config.ReasonQuiet
+	p.recordIn(ctx, in, !dec.Reply && !quiet)
+	if !dec.Reply && !quiet {
+		p.Store.Audit(ctx, p.Owner, "skip", dec.Reason)
+		return
+	}
+	entitled := p.Entitled == nil || p.Entitled(ctx, p.Owner)
+	pro := p.Pro == nil || p.Pro(ctx, p.Owner)
+	var audio *llm.Audio
+	if entitled {
+		p.alertUrgent(ctx, &st, in)
+		audio = p.transcribe(ctx, &st, in, pro)
+	}
 	if !dec.Reply {
 		p.Store.Audit(ctx, p.Owner, "skip", dec.Reason)
 		return
 	}
 
-	if p.Entitled != nil && !p.Entitled(ctx, p.Owner) {
+	if !entitled {
 		p.Store.Audit(ctx, p.Owner, "skip", "obuna faol emas")
 		p.notifyOnce(ctx, "billing", 24*time.Hour,
 			"Obuna faol emas — kotib yangi xabarlarga javob tayyorlamayapti. Davom ettirish uchun ilovada obunani yoqing.", true)
 		return
 	}
 
-	pro := p.Pro == nil || p.Pro(ctx, p.Owner)
 	if in.Voice != nil && (!st.ReplyVoice || !pro || in.Voice.Duration > maxVoiceSeconds) {
 		// Ovozga javob o'chiq, Pro tarifda emas (yoki juda uzun): faqat matnli qismi bilan davom etamiz.
-		in.Voice = nil
+		in.Voice, audio = nil, nil
 		in.Text = strings.TrimSpace(strings.ReplaceAll(in.Text, VoiceText, ""))
 		if in.Text == "" {
 			p.Store.Audit(ctx, p.Owner, "skip", "ovozli xabar")
+			return
+		}
+	}
+	if in.Photo != nil && (!st.ReplyPhotos || !pro) {
+		// Rasmga javob o'chiq: izohi bo'lsa — faqat matn bilan.
+		in.Photo = nil
+		in.Text = strings.TrimSpace(strings.ReplaceAll(in.Text, PhotoText, ""))
+		if in.Text == "" {
+			p.Store.Audit(ctx, p.Owner, "skip", "rasm")
 			return
 		}
 	}
@@ -322,6 +390,9 @@ func (p *Pipeline) Handle(ctx context.Context, in Incoming) {
 	if forced == "" && in.Voice != nil {
 		forced = "ovozli xabar — faqat qoralama" // audio matn filtridan o'tmaydi
 	}
+	if forced == "" && in.Photo != nil {
+		forced = "rasm — faqat qoralama" // rasmdagi yozuv matn filtridan o'tmaydi
+	}
 	if forced == "" && in.Contact.IsBot {
 		forced = "bot — faqat qoralama" // ikkinchi himoya qatlami (config.Resolve ham draft qiladi)
 	}
@@ -336,17 +407,22 @@ func (p *Pipeline) Handle(ctx context.Context, in Incoming) {
 		return
 	}
 
-	var audio *llm.Audio
-	if in.Voice != nil {
-		vctx, vcancel := context.WithTimeout(ctx, 30*time.Second)
-		data, err := in.Voice.Load(vctx)
-		vcancel()
-		if err != nil || len(data) == 0 {
-			p.Store.Audit(ctx, p.Owner, "voice_error", "")
-			p.Log.Warn("voice", "owner", p.Owner, "err", err)
+	if in.Voice != nil && audio == nil {
+		if audio = p.loadVoice(ctx, in.Voice); audio == nil {
 			return
 		}
-		audio = &llm.Audio{MIME: "audio/ogg", Data: data}
+	}
+	var image *llm.Media
+	if in.Photo != nil {
+		pctx, pcancel := context.WithTimeout(ctx, 30*time.Second)
+		data, err := in.Photo.Load(pctx)
+		pcancel()
+		if err != nil || len(data) == 0 {
+			p.Store.Audit(ctx, p.Owner, "photo_error", "")
+			p.Log.Warn("photo", "owner", p.Owner, "err", err)
+			return
+		}
+		image = &llm.Media{MIME: "image/jpeg", Data: data}
 	}
 
 	limit := defaultHistory
@@ -368,7 +444,8 @@ func (p *Pipeline) Handle(ctx context.Context, in Incoming) {
 	defer cancel()
 	req := llm.Request{
 		OwnerName: st.OwnerName, Persona: dec.Persona, Language: st.Language,
-		History: hist, Incoming: in.Text, Away: st.CurrentAway(p.Now()), Audio: audio,
+		History: hist, Incoming: in.Text, Away: st.CurrentAway(p.Now()), Audio: audio, Image: image,
+		Knowledge: st.Knowledge, ContactNote: st.ContactNotes[in.ChatID],
 	}
 	var resp llm.Response
 	connected := pro && p.Google != nil && p.Google.Connected(ctx, p.Owner) // Google — Pro funksiyasi
@@ -382,6 +459,13 @@ func (p *Pipeline) Handle(ctx context.Context, in Incoming) {
 	if err != nil {
 		p.Store.Audit(ctx, p.Owner, "llm_error", "")
 		p.Log.Warn("llm", "owner", p.Owner, "err", err)
+		return
+	}
+
+	if st.ShadowActive(now) {
+		// Soya rejimi: hech narsa yuborilmaydi va bildirilmaydi — egasi o'zi yozgach solishtiriladi.
+		p.rememberShadow(in, reply)
+		p.Store.Audit(ctx, p.Owner, "shadow_prepared", fmt.Sprintf("chat=%d", in.ChatID))
 		return
 	}
 
@@ -421,6 +505,7 @@ func (p *Pipeline) sendAuto(ctx context.Context, tg Telegram, in Incoming, reply
 		return
 	}
 	p.Store.Audit(ctx, p.Owner, "auto_sent", fmt.Sprintf("chat=%d", in.ChatID))
+	p.markSent(ctx, in.ChatID, reply)
 	p.trackPromise(ctx, in.ChatID, reply)
 }
 
@@ -442,11 +527,14 @@ func (p *Pipeline) SendDraft(ctx context.Context, d store.Draft) error {
 		p.handleTGErr(ctx, err)
 		return err
 	}
+	p.markSent(ctx, d.ChatID, d.Reply)
+	p.learnFromEdit(ctx, d)
 	p.trackPromise(ctx, d.ChatID, d.Reply)
 	return nil
 }
 
 func (p *Pipeline) makeDraft(ctx context.Context, in Incoming, reply, reason string) {
+	p.init() // manager ham chaqiradi (tug'ilgan kun tabrigi)
 	if reply == "" {
 		return
 	}
@@ -504,20 +592,29 @@ func (p *Pipeline) blockedUntilTime() time.Time {
 	return p.blockedUntil
 }
 
-func (p *Pipeline) notifyOnce(ctx context.Context, key string, every time.Duration, text string, openApp bool) {
+// notifyOnce egasiga xabar yuboradi, agar shu kalit bo'yicha every ichida yuborilmagan bo'lsa.
+func (p *Pipeline) notifyOnce(ctx context.Context, key string, every time.Duration, text string, openApp bool) bool {
 	if p.Notify == nil {
-		return
+		return false
 	}
 	p.mu.Lock()
 	last := p.notifiedAt[key]
 	now := p.Now()
 	if now.Sub(last) < every {
 		p.mu.Unlock()
-		return
+		return false
+	}
+	if len(p.notifiedAt) > 1000 { // chat kalitlari (urgent:<id>) cheksiz o'smasin
+		for k, t := range p.notifiedAt {
+			if now.Sub(t) > 24*time.Hour {
+				delete(p.notifiedAt, k)
+			}
+		}
 	}
 	p.notifiedAt[key] = now
 	p.mu.Unlock()
 	p.Notify(ctx, p.Owner, text, openApp)
+	return true
 }
 
 // assistContext Google'dan vaqt, band vaqtlar va kontakt eslatmasini yig'adi. Google

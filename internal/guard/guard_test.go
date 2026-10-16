@@ -65,3 +65,18 @@ func TestCheckOutputPhone(t *testing.T) {
 		}
 	}
 }
+
+func TestIsUrgent(t *testing.T) {
+	yes := []string{"Shoshilinch! qo'ng'iroq qil", "СРОЧНО перезвони", "this is urgent", "Onam kasalxonada", "tezroq javob ber", "‼️ ko'r"}
+	no := []string{"Salom, qalaysan?", "ertaga uchrashamizmi", "tez orada ko'rishamiz", ""}
+	for _, s := range yes {
+		if !IsUrgent(s) {
+			t.Errorf("%q shoshilinch bo'lishi kerak", s)
+		}
+	}
+	for _, s := range no {
+		if IsUrgent(s) {
+			t.Errorf("%q shoshilinch emas", s)
+		}
+	}
+}

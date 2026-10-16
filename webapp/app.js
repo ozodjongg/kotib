@@ -9,7 +9,7 @@ const toastEl = document.getElementById('toast');
 
 const PERSONA_LABELS = {
   neutral: "Do'stona (standart)", joke: 'Hazil ruhida', son: "O'g'il nomidan",
-  formal: 'Rasmiy', brief: 'Juda qisqa', custom: "O'z ko'rsatmam",
+  formal: 'Rasmiy', brief: 'Juda qisqa', mine: "🪞 O'zimdek (o'rganilgan)", custom: "O'z ko'rsatmam",
 };
 const TIMEZONES = [
   ['Asia/Tashkent', 'Toshkent (UTC+5)'], ['Asia/Samarkand', 'Samarqand (UTC+5)'], ['Asia/Almaty', 'Olmaota (UTC+5)'],
@@ -32,6 +32,11 @@ const EVENTS = {
   action_rejected: 'Taklif rad etildi', action_failed: "Google'ga qo'shib bo'lmadi",
   referral_bonus: "Do'st taklifi uchun bonus kunlar", account_linked: "Qo'shimcha akkaunt rozilik berdi",
   account_unlinked: "Qo'shimcha akkaunt uzildi", weekly_sent: 'Haftalik hisobot yuborildi', link_created: 'Akkaunt ulash havolasi yaratildi', away_set: "Holat o'zgartirildi",
+  urgent_alert: 'Shoshilinch xabar bildirildi', voice_transcribed: "Ovozli xabar matnga o'girildi", photo_error: 'Rasm yuklanmadi',
+  unanswered_reminded: 'Javobsiz chatlar eslatildi', summary_made: 'AI xulosa tayyorlandi', morning_sent: 'Ertalabki brifing yuborildi',
+  shadow_prepared: 'Soya rejimi: javob jim tayyorlandi', shadow_set: "Soya rejimi o'zgartirildi", shadow_report: 'Soya rejimi natijasi yuborildi',
+  style_learn_started: "Uslub o'rganish boshlandi", style_learned: 'Uslub profili yangilandi', style_refine_run: "Uslub o'qitish tekshirildi",
+  birthdays_checked: "Tug'ilgan kunlar tekshirildi", birthday_draft: "Tug'ilgan kun tabrigi tayyorlandi", ask_answered: '/sor savoliga javob berildi',
 };
 
 const state = {
@@ -792,6 +797,7 @@ function viewSettings(view) {
     h('div', { class: 'card' },
       switchRow("Kontaktda yo'qlarga ham", 'Tavsiya etilmaydi: spam va firibgarlar ko\'p', s.reply_unknown, (v) => { s.reply_unknown = v; }),
       switchRow('Ovozli xabarlarga ham' + (needsPro() ? ' · Pro' : ''), (needsPro() ? 'Pro tarifda ishlaydi. ' : '') + "Kotib ovozli xabarni tinglab, javob qoralamasini tayyorlaydi (2 daqiqagacha). Ovozga javob doim faqat qoralama — avtomatik yuborilmaydi.", s.reply_voice, (v) => { s.reply_voice = v; }),
+      switchRow('Rasmlarga ham' + (needsPro() ? ' · Pro' : ''), (needsPro() ? 'Pro tarifda ishlaydi. ' : '') + "Kotib rasmni ko'rib, javob qoralamasini tayyorlaydi. Rasmga javob doim faqat qoralama.", s.reply_photos, (v) => { s.reply_photos = v; }),
       switchRow('Botlarga ham', "Faqat qoralama: bot bilan cheksiz yozishma bo'lmasligi uchun avtomatik yuborilmaydi", s.reply_bots, (v) => { s.reply_bots = v; }),
       switchRow('Javobda havolalar', "O'chiq bo'lsa, havolali javoblar qoralamada qoladi", s.allow_links, (v) => { s.allow_links = v; }),
       switchRow('Uchrashuvlarni taqvimga taklif qilish', "Suhbatda aniq vaqtli uchrashuv chiqsa, bot «Taqvimga qo'shaymi?» deb so'raydi. Google ulanmagan bo'lsa ham ishlaydi (iPhone/Android taqvimi).", !s.no_suggest, (v) => { s.no_suggest = !v; }),
@@ -799,6 +805,12 @@ function viewSettings(view) {
       switchRow('Haftalik hisobot' + (needsPro() ? ' · Pro' : ''), "Har dushanba 9:00 da: o'tgan hafta statistikasi, o'zgarish, eng faol vaqt va kontaktlar.", !s.no_weekly, (v) => { s.no_weekly = !v; }),
       switchRow("«Keyinroq yozaman» eslatmasi", "Kotib kimgadir «keyinroq yozaman» desa va 3 soat ichida o'zingiz yozmasangiz — bot eslatadi.", !s.no_followups, (v) => { s.no_followups = !v; }),
       switchRow('Qoralamalar bot chatida', "Qoralama botga tugmalar bilan keladi: bir bosishda yuborasiz yoki xabarga javob qilib matnni o'zgartirasiz. Matnlar bot chatida saqlanib qoladi.", s.drafts_in_bot, (v) => { s.drafts_in_bot = v; })),
+    h('h2', {}, 'Kunlik yordamchi'),
+    notifyCard(s),
+    h('h2', {}, "O'qitish rejimi"),
+    styleCard(s),
+    h('h2', {}, 'Bilim bazasi'),
+    knowledgeCard(s),
     h('h2', {}, 'Tinch soatlar'),
     h('div', { class: 'card' },
       switchRow('Tunda javob yozilmasin', 'Shu vaqt oralig\'ida kotib jim turadi', s.quiet_hours.enabled, (v) => { s.quiet_hours.enabled = v; quietHint(); }),
@@ -809,6 +821,96 @@ function viewSettings(view) {
       hint),
     saveButton(),
   );
+}
+
+// ---------- Kunlik yordamchi: xulosa, brifing, eslatmalar ----------
+const pro = (t) => t + (needsPro() ? ' · Pro' : '');
+function notifyCard(s) {
+  const hours = select([['1', '1 soat'], ['2', '2 soat'], ['4', '4 soat'], ['8', '8 soat'], ['24', '1 kun']],
+    String(s.unanswered_hours || 4), (v) => { s.unanswered_hours = +v; });
+  return h('div', { class: 'card' },
+    switchRow(pro('AI xulosa: «Bugun nima bo\'ldi»'), "Kechki xulosa va ertalabki brifingga yozishmalar mazmuni qo'shiladi: kim nima so'radi, nima kelishildi, nima qilish kerak. Xabarlar xulosa uchun AI'ga yuboriladi, natija faqat bot chatiga keladi va saqlanmaydi.", s.smart_digest, (v) => { s.smart_digest = v; }),
+    switchRow('Ertalabki brifing', "Har kuni 8:00 da: tunda kim yozdi, kutayotgan qoralamalar va bugungi taqvim.", s.morning_brief, (v) => { s.morning_brief = v; }),
+    switchRow('Shoshilinch xabarlar', "«Shoshilinch», «срочно», «kasalxona» kabi xabarlar haqida darhol bildiradi — tinch soatlarda ham.", !s.no_urgent, (v) => { s.no_urgent = !v; }),
+    switchRow('Javobsiz qolganlar', "Kontakt yozganiga ko'p vaqt bo'lib, hech kim javob bermagan bo'lsa — eslatadi (tinch soatlarda emas).", !s.no_unanswered, (v) => { s.no_unanswered = !v; }),
+    field('Qancha vaqtdan keyin eslatilsin', hours),
+    switchRow(pro('Ovozli xabar matni'), "Kontakt yuborgan ovozli xabar matnga o'girilib bot chatiga keladi — yig'ilishda ham o'qiysiz.", s.transcribe_voice, (v) => { s.transcribe_voice = v; }),
+    switchRow(pro("Tug'ilgan kun tabriklari"), "Google Contacts'da tug'ilgan kuni bor kontaktlar uchun soat 9:00 da tabrik qoralamasi tayyorlanadi — siz tasdiqlaysiz. Google ulangan bo'lishi kerak.", !s.no_birthdays, (v) => { s.no_birthdays = !v; }),
+    h('p', { class: 'hint' }, "Botda: /sor Aziz bilan nima kelishdik? — kotib yozishmani o'qib, javob beradi (Pro)."));
+}
+
+// ---------- O'qitish rejimi: «O'zimdek» uslubi ----------
+function styleCard(s) {
+  if (needsPro()) return proLock("O'qitish rejimi", "Kotib sizning haqiqiy yozishmalaringizdan uslubingizni o'rganadi va xuddi o'zingizdek javob yozadi. Soya rejimida bir hafta jim kuzatib, qanchalik mos kelishini o'lchaydi.");
+  const card = h('div', { class: 'card' });
+  const profile = h('textarea', { maxlength: 2000, placeholder: "Hali o'rganilmagan. «Uslubimni o'rganish» tugmasini bosing yoki o'zingiz yozing." }, s.style_profile || '');
+  profile.addEventListener('input', () => { s.style_profile = profile.value; markDirty(); });
+  const shadowOn = () => s.shadow_until && new Date(s.shadow_until) > new Date();
+  const draw = () => {
+    const meta = [];
+    if (s.style_updated_at) meta.push('Yangilangan: ' + fmtAgo(s.style_updated_at));
+    if (s.style_score > 0) meta.push(`moslik: ${s.style_score}%`);
+    swap(card,
+      h('div', { class: 'card-head' }, h('h3', {}, "🪞 O'zimdek"),
+        shadowOn() ? h('span', { class: 'badge accent' }, 'Soya rejimi') : (s.style_profile ? h('span', { class: 'badge ok' }, "O'rganilgan") : null)),
+      h('p', { class: 'muted small' }, "Kotib so'nggi yozishmalaringizdan uslubingizni (uzunlik, murojaat, iboralar, emoji) o'rganadi. Uslub sifatida «O'zimdek»ni tanlang."),
+      meta.length ? h('p', { class: 'hint' }, meta.join(' · ')) : null,
+      h('button', { class: 'btn ghost block', onclick: busy(async () => {
+        await api('POST', '/style/learn');
+        toast("O'rganilmoqda… Tayyor bo'lganda bot xabar beradi");
+      }) }, "Uslubimni o'rganish"),
+      switchRow("Tahrirlarimdan o'rganish", "Qoralamani o'zgartirib yuborsangiz, kotib farqdan o'rganadi; profil har kuni tunda yangilanadi.", s.learn, (v) => { s.learn = v; }),
+      shadowOn()
+        ? h('div', { class: 'card accent' },
+          h('p', { class: 'small' }, `Soya rejimi ${fmtDate(s.shadow_until)} gacha: kotib javoblarni jim tayyorlab, siz yozganingiz bilan solishtiradi. Hech narsa yuborilmaydi va qoralama ham chiqmaydi.`),
+          h('button', { class: 'btn ghost sm', onclick: busy(async () => {
+            const r = await api('POST', '/style/shadow', { days: 0 });
+            s.shadow_until = r.shadow_until; draw();
+          }) }, "To'xtatish"))
+        : h('button', { class: 'btn ghost block', onclick: busy(async () => {
+          const ok = await confirmBox("Soya rejimi 7 kun: kotib hech narsa yubormaydi va qoralama ham ko'rsatmaydi — faqat siz qanday javob berishingizni kuzatib o'rganadi. Oxirida natija va avto rejim taklifi keladi. Boshlansinmi?");
+          if (!ok) return;
+          const r = await api('POST', '/style/shadow', { days: 7 });
+          s.shadow_until = r.shadow_until; s.learn = r.learn; draw(); toast('Soya rejimi boshlandi');
+        }) }, '👀 Soya rejimi (7 kun)'),
+      field('Uslub profili', profile, "Ko'rib chiqing va xohlasangiz tahrirlang — kotib aynan shunga amal qiladi."));
+  };
+  draw();
+  return card;
+}
+
+// ---------- Bilim bazasi ----------
+function knowledgeCard(s) {
+  const kb = h('textarea', { maxlength: 4000, placeholder: "Masalan:\nIsh vaqti: 9:00–18:00, yakshanba dam\nYetkazib berish: shahar ichida bepul, 1 kunda\nNarxlar: konsultatsiya — 200 000 so'm" }, s.knowledge || '');
+  kb.addEventListener('input', () => { s.knowledge = kb.value; markDirty(); });
+  return h('div', { class: 'card' },
+    h('p', { class: 'muted small' }, "Ko'p so'raladigan savollarga javoblar: narxlar, ish vaqti, xizmatlar, manzil. Kotib faqat shu ma'lumotdan foydalanadi, bazada yo'q narsani o'ylab topmaydi. Do'kon va biznes akkauntlari uchun qulay."),
+    kb);
+}
+
+// ---------- Kontakt eslatmalari ----------
+function notesCard() {
+  const s = state.settings;
+  s.contact_notes = s.contact_notes || {};
+  const names = new Map((state.contacts || []).map((c) => [String(c.id), c.name]));
+  const list = h('div', {});
+  const pick = select([['', 'Kontaktni tanlang…'], ...(state.contacts || []).filter((c) => !s.contact_notes[c.id]).map((c) => [String(c.id), c.name])], '', () => {});
+  const text = h('input', { type: 'text', class: 'grow', maxlength: 300, placeholder: "Masalan: onam / loyiha X bo'yicha hamkor, «siz» deb yoz" });
+  const draw = () => swap(list, ...Object.entries(s.contact_notes).map(([id, note]) => {
+    const input = h('input', { type: 'text', class: 'grow', value: note, maxlength: 300, oninput: (e) => { s.contact_notes[id] = e.target.value; markDirty(); } });
+    return field(names.get(id) || ('#' + id), h('div', { class: 'row' }, input,
+      h('button', { class: 'btn danger-ghost sm', onclick: () => { delete s.contact_notes[id]; markDirty(); draw(); } }, '✖️')));
+  }));
+  draw();
+  return h('div', { class: 'card' },
+    h('p', { class: 'muted small' }, "Kotib shu kontaktga javob yozganda eslatmangizni hisobga oladi (kim ekani, qanday murojaat qilish)."),
+    list,
+    h('div', { class: 'row' }, pick, text,
+      h('button', { class: 'btn sm', onclick: () => {
+        const id = pick.value; const v = text.value.trim();
+        if (!id || !v) return toast('Kontakt va eslatmani kiriting', true);
+        s.contact_notes[id] = v; text.value = ''; markDirty(); draw(); haptic('tap');
+      } }, "Qo'shish")));
 }
 
 // ---------- Qoidalar ----------
@@ -834,6 +936,8 @@ async function viewRules(view) {
       s.rules.push({ id: rid(), title: 'Yangi qoida', match: { user_ids: [] }, persona: 'neutral' });
       markDirty(); redraw(); haptic('tap');
     } }, '+ Qoida qo\'shish'),
+    h('h2', {}, 'Kontakt eslatmalari'),
+    notesCard(),
     h('div', { class: 'field' }, saveButton()));
 }
 

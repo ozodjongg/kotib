@@ -100,6 +100,20 @@ func (f *fakeGoogle) handler(t *testing.T) http.Handler {
 		f.mu.Unlock()
 		w.Write([]byte(`{}`))
 	}))
+	mux.HandleFunc("GET /people/people/me/connections", auth(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("personFields") != "names,birthdays,phoneNumbers" {
+			w.WriteHeader(400)
+			return
+		}
+		if r.URL.Query().Get("pageToken") == "" {
+			w.Write([]byte(`{"connections":[` +
+				`{"names":[{"displayName":"Aziz Karimov"}],"birthdays":[{"date":{"year":1990,"month":10,"day":15}}],` +
+				`"phoneNumbers":[{"value":"90 123 45 67","canonicalForm":"+998901234567"}]},` +
+				`{"names":[{"displayName":"Vali"}],"birthdays":[{"date":{"month":3,"day":1}}]}],"nextPageToken":"p2"}`))
+			return
+		}
+		w.Write([]byte(`{"connections":[{"names":[{"displayName":"Onam"}],"birthdays":[{"date":{"month":10,"day":15}}]}]}`))
+	}))
 	mux.HandleFunc("GET /people/people:searchContacts", auth(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query().Get("query")
 		f.mu.Lock()
@@ -329,5 +343,20 @@ func TestErrorsDoNotLeakBody(t *testing.T) {
 	_, err := c.Busy(context.Background(), 7, time.Now(), time.Now().Add(time.Hour))
 	if err == nil || strings.Contains(err.Error(), "SECRET") {
 		t.Fatalf("%v", err)
+	}
+}
+
+func TestBirthdays(t *testing.T) {
+	c, _, _ := newClient(t, fullScope)
+	connect(t, c)
+	bs, err := c.Birthdays(context.Background(), 7, time.October, 15)
+	if err != nil || len(bs) != 2 {
+		t.Fatalf("%+v %v", bs, err)
+	}
+	if bs[0].Name != "Aziz Karimov" || bs[0].Phone != "998901234567" || bs[1].Name != "Onam" || bs[1].Phone != "" {
+		t.Fatalf("%+v", bs)
+	}
+	if bs, _ := c.Birthdays(context.Background(), 7, time.March, 2); len(bs) != 0 {
+		t.Fatal("boshqa kun")
 	}
 }

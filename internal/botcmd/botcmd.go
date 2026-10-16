@@ -40,6 +40,16 @@ type Handler struct {
 	ICS *ics.Signer
 	// BotUsername — taklif havolasi uchun (t.me/<bot>?start=ref_...); bo'sh → /taklif havolasiz.
 	BotUsername string
+	// AI — /sor va soya rejimi tugmalari (userbot.Manager); nil → o'chiq.
+	AI Assistant
+}
+
+// Assistant — egasi uchun AI yordamchi (userbot.Manager).
+type Assistant interface {
+	// Ask savoldagi kontakt bilan yozishmadan javob beradi (Pro).
+	Ask(ctx context.Context, owner int64, question string) (string, error)
+	// ApplyShadowChoice soya rejimi natijasidagi tanlovni qo'llaydi (userbot.ShadowAuto / ShadowDraft).
+	ApplyShadowChoice(ctx context.Context, owner int64, choice string) (string, error)
 }
 
 // Executor — egasi tasdiqlagan amalni Google'da bajaradi.
@@ -58,6 +68,7 @@ var Commands = []bot.Command{
 	{Name: "resume", Description: "Kotibni davom ettirish"},
 	{Name: "obuna", Description: "Obuna (Telegram Stars)"},
 	{Name: "taklif", Description: "Do'stni taklif qilish — bonus kunlar"},
+	{Name: "sor", Description: "Yozishma haqida so'rash: /sor Aziz bilan nima kelishdik?"},
 	{Name: "help", Description: "Yordam"},
 }
 
@@ -87,6 +98,7 @@ const helpText = `Kotib — Telegram'dagi shaxsiy xabarlaringizga AI yordamida j
 /resume — davom ettirish
 /obuna — obunani yoqish (Telegram Stars)
 /taklif — do'stni taklif qilish (bonus kunlar)
+/sor <savol> — yozishma haqida so'rash, masalan: /sor Aziz bilan nima kelishdik? (Pro)
 
 Sozlamalar, qoidalar va qoralamalar — "Ochish" tugmasi orqali ilovada.`
 
@@ -130,6 +142,8 @@ func (h *Handler) Command(ctx context.Context, from int64, cmd, args string) bot
 		return h.subscribe(ctx, from)
 	case "taklif", "invite", "referral":
 		return h.invite(ctx, from)
+	case "sor", "so'ra", "ask":
+		return h.ask(ctx, from, args)
 	case "stats":
 		if h.Admins[from] {
 			return h.stats(ctx)
@@ -409,6 +423,10 @@ func ActionButtons(id int64) []bot.Button {
 func (h *Handler) Callback(ctx context.Context, from int64, data string) bot.Answer {
 	if strings.HasPrefix(data, "lnk:") {
 		return h.linkCallback(ctx, from, data)
+	}
+	if strings.HasPrefix(data, "shd:") {
+		toast, edit := h.shadowCallback(ctx, from, data)
+		return bot.Answer{Toast: toast, Edit: edit}
 	}
 	if strings.HasPrefix(data, "d:") {
 		toast, edit := h.draftCallback(ctx, from, data)

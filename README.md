@@ -125,6 +125,63 @@ qayta ishlanadi: keyingi javob oldingisi yuborilgandan keyin tayyorlanadi va uni
 
 Ikkala bildirishnoma Sozlamalarda o'chiriladi. Tekshiruv har 5 daqiqada, faqat bitta nusxada (gate).
 
+## Kunlik yordamchi
+
+Sozlamalar → «Kunlik yordamchi». Hammasi har 5 daqiqalik tekshiruvda, kuniga bir marta (audit bo'yicha).
+
+- **AI xulosa: «Bugun nima bo'ldi»** (Pro, default o'chiq, `smart_digest`) — kechki xulosaga bugungi yozishmalar mazmuni
+  qo'shiladi: har suhbatga bir qator (kim nima so'radi, nima kelishildi), javob kutilayotganlari ❗ bilan, oxirida
+  «Qilish kerak» ro'yxati. Xabarlar shu payt Telegram'dan o'qiladi va Gemini'ga yuboriladi; xulosa faqat bot chatiga
+  keladi, bazada saqlanmaydi.
+- **Ertalabki brifing** (default o'chiq, `morning_brief`) — 8:00 da: kechagi 21:00 dan beri kim yozdi, kim javob kutyapti,
+  kutayotgan qoralamalar, bugungi taqvimdagi band vaqtlar (Google, Pro) va — AI xulosa yoqilgan bo'lsa — tungi xabarlar xulosasi.
+- **Shoshilinch xabarlar** (default yoqiq) — «shoshilinch», «srochno/срочно», «kasalxona», «urgent» kabi xabarlar haqida
+  bot darhol yozadi, **tinch soatlarda ham** (bitta chatdan 30 daqiqada bir marta). Xabar matni bot chatiga faqat
+  «Qoralamalar bot chatida» yoqilgan bo'lsa qo'shiladi.
+- **Javobsiz qolganlar** (default yoqiq, 4 soat; 1/2/4/8/24) — kontakt yozgan, lekin na egasi, na kotib javob bergan
+  bo'lsa eslatadi (bir xabar uchun bir marta, tinch soatlarda emas, qoralamasi kutayotgan chatlar bundan mustasno).
+  Kechki xulosada ham «❗ Javob kutayotganlar» qatori chiqadi.
+- **Ovozli xabar matni** (Pro, `transcribe_voice`) — kontakt ovozli xabari (5 daqiqagacha) matnga o'girilib bot chatiga keladi.
+- **Tug'ilgan kun tabriklari** (Pro, Google ulangan) — 9:00 da Google Contacts'da bugun tug'ilganlar uchun egasi uslubida
+  tabrik **qoralamasi** tayyorlanadi (Telegram kontakti telefon yoki ism bo'yicha topiladi). Faqat egasi tasdiqlasa yuboriladi.
+- **`/sor <savol>`** (Pro) — «/sor Aziz bilan nima kelishdik?»: bot savoldagi kontaktni topadi, oxirgi 100 xabarni o'qib javob beradi.
+  Qoida bilan kotibdan yopilgan chatlar o'qilmaydi.
+
+Bularning hammasi uchun `chat_activity` jadvalida faqat meta saqlanadi: chat, kontakt ismi, oxirgi kiruvchi/chiquvchi
+xabar vaqti (matn yo'q; 30 kun faolligi bo'lmasa o'chiriladi). Egasi qoida bilan kotibni chetlatgan chatlar (`private`)
+AI xulosaga ham, eslatmalarga ham kirmaydi.
+
+## O'qitish rejimi: «O'zimdek» uslubi (Pro)
+
+Kotib egasining haqiqiy yozishmalaridan uslubini o'rganadi va xuddi o'zidek javob yozadi (Sozlamalar → «O'qitish rejimi»).
+
+1. **Uslubimni o'rganish** — eng faol 15 ta shaxsiy chatning oxirgi xabarlari o'qiladi va Gemini uslub profilini yozadi:
+   javob uzunligi, salomlashish, murojaat (siz/sen, aka, onajon), imlo, emoji, sevimli iboralar, kimga qanday yozishi.
+   Profil matni Mini App'da ko'rinadi va tahrirlanadi; yozishmalarning o'zi saqlanmaydi. Uslub sifatida **«O'zimdek»**
+   (`mine`) tanlanadi — umumiy yoki qoida bo'yicha.
+2. **Tahrirlardan o'rganish** (`learn`) — egasi qoralamani o'zgartirib yuborsa (Mini App yoki bot), «kotib yozgani → egasi
+   yuborgani» juftligi saqlanadi. Har kuni soat 3:00 da (kamida 3 juftlik bo'lsa) profil shu farqlar asosida yangilanadi va
+   **moslik bahosi** (0–100%) hisoblanadi. Juftliklar ishlatilgach o'chiriladi, aks holda 7 kunda.
+3. **Soya rejimi** (7 kun, 14 kungacha) — kotib har xabarga javobni **jim** tayyorlaydi: hech narsa yubormaydi, qoralama ham
+   ko'rsatmaydi. Egasi o'zi javob yozgach (Telegram'ning istalgan qurilmasidan), ikkalasi juftlik sifatida solishtiriladi.
+   Muddat tugagach bot natijani yuboradi: nechta javob tayyorlandi, o'rtacha moslik va **[⚡️ Avto rejim] [✍️ Qoralamada qolish]**
+   tugmalari (ikkalasi ham «O'zimdek» uslubini yoqadi).
+
+Kotib o'zi yuborgan xabarlar «egasi yozdi» deb hisoblanmaydi (10 daqiqalik xesh belgisi).
+
+## Bilim bazasi va kontakt eslatmalari
+
+- **Bilim bazasi** (Sozlamalar, 4000 belgigacha) — narxlar, ish vaqti, xizmatlar, manzil. Kotib narx/vaqt savollariga faqat
+  shundan javob beradi, bazada yo'q narsani o'ylab topmaydi. Do'kon va biznes akkauntlari uchun.
+- **Kontakt eslatmalari** (Qoidalar → «Kontakt eslatmalari», har biri 300 belgigacha) — «onam, «siz» deb yoz»,
+  «loyiha X bo'yicha hamkor»: kotib shu kontaktga javob yozganda hisobga oladi (Google Contacts eslatmasidan mustaqil).
+
+## Rasmli xabarlar (Pro)
+
+Sozlamalar → «Rasmlarga ham» (default o'chiq): kontakt yuborgan rasm (eng kattasi 1280 px, 1 MB gacha) Gemini'ga
+yuboriladi va kotib rasm mazmuniga javob qoralamasini tayyorlaydi. Rasmdagi yozuv matn filtridan o'tolmagani uchun javob
+**har doim faqat qoralama**. O'chiq bo'lsa, rasm izohi bo'lsa — faqat izohga javob yoziladi.
+
 ## To'lov: Telegram Stars obunasi
 
 ### Tariflar
@@ -139,6 +196,8 @@ Ikkala bildirishnoma Sozlamalarda o'chiriladi. Tekshiruv har 5 daqiqada, faqat b
 | 📱 Telefon avtomatikasi (Shortcuts / MacroDroid havolasi) | — | ✅ |
 | 👥 Bir nechta Telegram akkaunt (+2 ta) | — | ✅ |
 | 📊 Kengaytirilgan statistika va haftalik hisobot | — | ✅ |
+| 🛎 Shoshilinch xabarlar, javobsiz qolganlar, ertalabki brifing, bilim bazasi, kontakt eslatmalari | ✅ | ✅ |
+| 📝 AI xulosa, 🪞 o'qitish/soya rejimi, 🖼 rasmlar, 🎤 ovoz matni, 🎂 tabriklar, `/sor` | — | ✅ |
 
 - **Sinov** davrida Pro funksiyalari ochiq (kunlik limit va 8 xabarlik kontekst bilan) — mijoz tatib ko'rib tanlaydi.
 - **Tarif almashtirish** (Advanced ↔ Pro): Mini App → Hisob yoki `/obuna`. Yangi tarif to'langach eski obunaning avtomatik
@@ -301,6 +360,7 @@ Masalan: `https://<domen>/hook/<token>?mode=auto&away=Hozir%20rulda`. GET ham, P
 | `/pause`, `/resume` | hamma | kotibni darhol to'xtatish / davom ettirish |
 | `/obuna` | hamma | tariflar va to'lov havolalari (Advanced / Pro), tarifni almashtirish |
 | `/taklif` | hamma | do'stni taklif qilish havolasi va natijalar (bonus kunlar) |
+| `/sor <savol>` | Pro | yozishma haqida savol: «/sor Aziz bilan nima kelishdik?» |
 | `/stats` | `ADMIN_IDS` | akkauntlar, faol obunalar, tushum |
 | `/refund <charge_id>` | `ADMIN_IDS` | to'lovni qaytarish |
 
@@ -317,7 +377,8 @@ Masalan: `https://<domen>/hook/<token>?mode=auto&away=Hozir%20rulda`. GET ham, P
 - **Botlar**: sozlamada "Botlarga ham" yoqilsa (default o'chiq) — faqat qoralama, hech qachon avtomatik emas (bot ↔ kotib cheksiz yozishmasi = spam/ban). Telegram xizmati (777000, login kodlari) har qanday sozlamada e'tiborsiz qoldiriladi va AI'ga yuborilmaydi.
 - **Ban xavfini kamaytirish**: token-bucket (global/chat/kunlik), o'qish+yozish kechikishi, "typing", xabarlarni birlashtirish (debounce), FloodWait'ga hurmat, `PEER_FLOOD`/revoked → circuit breaker (avtomatik qayta yoqilmaydi), barqaror qurilma ma'lumoti, sessiyalarni 2s oraliqda ulash.
 - **Model chiqishi** tekshiriladi: havola/@username/karta yoki telefon raqami/AI-sizib chiqishi/uzunlik → draft.
-- **Maxfiylik**: audit logda xabar matni yo'q; ilova har soatda 7 kundan eski draftlarni matni bilan tozalaydi, 90 kundan eski auditni o'chiradi; "Akkauntni o'chirish" → `auth.logOut` + CASCADE.
+- **Maxfiylik**: audit logda xabar matni yo'q; ilova har soatda 7 kundan eski draftlar va o'qitish juftliklarini matni bilan tozalaydi, 30 kun faolligi yo'q chat metalarini va 90 kundan eski auditni o'chiradi; "Akkauntni o'chirish" → `auth.logOut` + CASCADE.
+  AI xulosa, uslub o'rganish va `/sor` uchun yozishmalar shu payt Telegram'dan o'qiladi va bazaga yozilmaydi; ularning ichidagi buyruqlar modelga «faqat ma'lumot» sifatida o'ralgan holda beriladi.
 - **Ishonchlilik**: yuborilmay qolgan draft yo'qolmaydi (qayta "pending"ga qaytadi); Telegram fatal xatosida circuit breaker deadlock'siz ishlaydi; xotira cheksiz o'smasligi uchun barcha keshlar chegaralangan.
 
 ## Bilishingiz shart bo'lgan cheklovlar
@@ -327,7 +388,7 @@ Masalan: `https://<domen>/hook/<token>?mode=auto&away=Hozir%20rulda`. GET ham, P
 3. Login kodini Telegram boshqa qurilmaga kiritilganini sezib, kirishni bloklashi mumkin ("login attempt blocked"). Mijozga kodni chatda yozmaslikni ayting.
 4. Mijoz nomidan javob berish — mijozning suhbatdoshlari uchun shaffoflik masalasi. Model "inson ekanini" tasdiqlamaydi, lekin ishlatish qoidalarida (ToS) mijoz javobgarligini aniq yozing; ro'yxatdan o'tish paytidagi rozilik (`consent_at`) saqlanadi.
 5. Qonuniy tomon: mijozning suhbatdoshlari xabarlari Gemini'ga (Google) yuboriladi — maxfiylik siyosatida ko'rsating; O'zbekiston "Shaxsga doir ma'lumotlar to'g'risida"gi qonuni talablarini yurist bilan tekshiring.
-6. Faqat **shaxsiy matnli va ovozli xabarlar** (ovoz — faqat qoralama): guruh, rasm, video hozircha qo'llab-quvvatlanmaydi. `updates.Manager` qisqa uzilishlarni tiklaydi, lekin holat xotirada saqlanadi: ilova qayta ishga tushganda o'chiq paytdagi xabarlar javobsiz qoladi.
+6. Faqat **shaxsiy matnli, ovozli va rasmli xabarlar** (ovoz va rasm — faqat qoralama): guruh, video, hujjat hozircha qo'llab-quvvatlanmaydi. `updates.Manager` qisqa uzilishlarni tiklaydi, lekin holat xotirada saqlanadi: ilova qayta ishga tushganda o'chiq paytdagi xabarlar javobsiz qoladi.
 
 ## Keyingi qadamlar
 

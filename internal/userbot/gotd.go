@@ -245,11 +245,7 @@ func (c *GotdConnector) Run(ctx context.Context, owner int64, onReady func(Teleg
 			g.remember(usr)
 		}
 		m, ok := u.Message.(*tg.Message)
-		if !ok || m.Out {
-			return nil
-		}
-		voice := g.voice(m)
-		if m.Message == "" && voice == nil {
+		if !ok {
 			return nil
 		}
 		pu, ok := m.PeerID.(*tg.PeerUser) // faqat shaxsiy chatlar (guruh/kanal — qo'llab-quvvatlanmaydi)
@@ -258,6 +254,18 @@ func (c *GotdConnector) Run(ctx context.Context, owner int64, onReady func(Teleg
 		}
 		if config.IsTelegramService(pu.UserID) {
 			return nil // login kodlari: pipeline'ga ham, AI'ga ham bormaydi
+		}
+		if m.Out {
+			// Egasi o'zi (boshqa qurilmadan) yozdi: faollik va o'qitish rejimi uchun.
+			if m.Message != "" {
+				onMsg(Incoming{ChatID: pu.UserID, MsgID: m.ID, Text: m.Message, Outgoing: true})
+			}
+			return nil
+		}
+		voice := g.voice(m)
+		photo := g.photo(m)
+		if m.Message == "" && voice == nil && photo == nil {
+			return nil
 		}
 		// Shaxsiy xabarlar ko'pincha UpdateShortMessage bo'lib keladi — unda foydalanuvchi
 		// ma'lumoti (bot belgisi ham) yo'q. Avval kontaktlar keshi, keyin xabarning o'zi
@@ -284,7 +292,10 @@ func (c *GotdConnector) Run(ctx context.Context, owner int64, onReady func(Teleg
 		if voice != nil {
 			text = strings.TrimSpace(VoiceText + "\n" + text)
 		}
-		onMsg(Incoming{ChatID: pu.UserID, MsgID: m.ID, Text: text, Contact: contact, Voice: voice})
+		if photo != nil {
+			text = strings.TrimSpace(PhotoText + "\n" + text)
+		}
+		onMsg(Incoming{ChatID: pu.UserID, MsgID: m.ID, Text: text, Contact: contact, Voice: voice, Photo: photo})
 		return nil
 	})
 
@@ -345,6 +356,51 @@ func (g *gotdTG) voice(m *tg.Message) *Voice {
 	return nil
 }
 
+// maxPhotoBytes — bundan katta rasm o'lchami yuklanmaydi.
+const maxPhotoBytes = 1 << 20
+
+// maxPhotoSide — modelga yuboriladigan rasmning eng katta tomoni (piksel).
+const maxPhotoSide = 1280
+
+// photo xabarda rasm bo'lsa, mos o'lchamini kerak bo'lganda yuklaydigan Photo qaytaradi.
+func (g *gotdTG) photo(m *tg.Message) *Photo {
+	mp, ok := m.Media.(*tg.MessageMediaPhoto)
+	if !ok {
+		return nil
+	}
+	ph, ok := mp.Photo.(*tg.Photo)
+	if !ok {
+		return nil
+	}
+	best, bestW := "", 0
+	for _, sz := range ph.Sizes {
+		var typ string
+		var w, size int
+		switch v := sz.(type) {
+		case *tg.PhotoSize:
+			typ, w, size = v.Type, max(v.W, v.H), v.Size
+		case *tg.PhotoSizeProgressive:
+			if len(v.Sizes) > 0 {
+				typ, w, size = v.Type, max(v.W, v.H), v.Sizes[len(v.Sizes)-1]
+			}
+		}
+		if typ != "" && w <= maxPhotoSide && size <= maxPhotoBytes && w > bestW {
+			best, bestW = typ, w
+		}
+	}
+	if best == "" {
+		return nil
+	}
+	loc := &tg.InputPhotoFileLocation{ID: ph.ID, AccessHash: ph.AccessHash, FileReference: ph.FileReference, ThumbSize: best}
+	return &Photo{Load: func(ctx context.Context) ([]byte, error) {
+		var buf bytes.Buffer
+		if _, err := downloader.NewDownloader().Download(g.api, loc).Stream(ctx, &limitWriter{w: &buf, n: maxPhotoBytes}); err != nil {
+			return nil, classify(err)
+		}
+		return buf.Bytes(), nil
+	}}
+}
+
 // limitWriter — n baytdan oshsa xato (kutilmagan katta fayldan himoya).
 type limitWriter struct {
 	w io.Writer
@@ -353,7 +409,7 @@ type limitWriter struct {
 
 func (l *limitWriter) Write(p []byte) (int, error) {
 	if int64(len(p)) > l.n {
-		return 0, errors.New("ovozli fayl juda katta")
+		return 0, errors.New("fayl juda katta")
 	}
 	l.n -= int64(len(p))
 	return l.w.Write(p)
@@ -440,7 +496,7 @@ func (g *gotdTG) refreshContacts(ctx context.Context) {
 		if name == "" {
 			name = "(ismsiz)"
 		}
-		list = append(list, miniapp.ContactInfo{ID: u.ID, Name: name})
+		list = append(list, miniapp.ContactInfo{ID: u.ID, Name: name, Phone: u.Phone})
 	}
 	g.mu.Lock()
 	g.contactsList = list
@@ -543,7 +599,7 @@ func (g *gotdTG) History(ctx context.Context, chatID int64, n int) ([]llm.Turn, 
 	out := make([]llm.Turn, 0, len(msgs))
 	for i := len(msgs) - 1; i >= 0; i-- {
 		if m, ok := msgs[i].(*tg.Message); ok && m.Message != "" {
-			out = append(out, llm.Turn{FromOwner: m.Out, Text: m.Message})
+			out = append(out, llm.Turn{FromOwner: m.Out, Text: m.Message, At: time.Unix(int64(m.Date), 0)})
 		}
 	}
 	return out, nil
@@ -554,6 +610,57 @@ func (g *gotdTG) Contacts(ctx context.Context) ([]miniapp.ContactInfo, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return append([]miniapp.ContactInfo(nil), g.contactsList...), nil
+}
+
+// RecentChats — oxirgi dialoglardagi shaxsiy chatlar (botlar, o'chirilganlar va xizmat akkauntlarisiz).
+func (g *gotdTG) RecentChats(ctx context.Context, n int) ([]miniapp.ContactInfo, error) {
+	res, err := g.api.MessagesGetDialogs(ctx, &tg.MessagesGetDialogsRequest{
+		OffsetPeer: &tg.InputPeerEmpty{}, Limit: min(max(n*2, 20), 100),
+	})
+	if err != nil {
+		return nil, classify(err)
+	}
+	var dialogs []tg.DialogClass
+	var users []tg.UserClass
+	switch r := res.(type) {
+	case *tg.MessagesDialogs:
+		dialogs, users = r.Dialogs, r.Users
+	case *tg.MessagesDialogsSlice:
+		dialogs, users = r.Dialogs, r.Users
+	default:
+		return nil, nil
+	}
+	byID := map[int64]*tg.User{}
+	for _, uc := range users {
+		if u, ok := uc.(*tg.User); ok {
+			g.remember(u)
+			byID[u.ID] = u
+		}
+	}
+	out := make([]miniapp.ContactInfo, 0, n)
+	for _, dc := range dialogs {
+		d, ok := dc.(*tg.Dialog)
+		if !ok {
+			continue
+		}
+		pu, ok := d.Peer.(*tg.PeerUser)
+		if !ok {
+			continue
+		}
+		u := byID[pu.UserID]
+		if u == nil || u.Bot || u.Deleted || u.Self || config.IsTelegramService(u.ID) {
+			continue
+		}
+		name := strings.TrimSpace(u.FirstName + " " + u.LastName)
+		if name == "" {
+			name = "(ismsiz)"
+		}
+		out = append(out, miniapp.ContactInfo{ID: u.ID, Name: name, Phone: u.Phone})
+		if len(out) >= n {
+			break
+		}
+	}
+	return out, nil
 }
 
 func (g *gotdTG) LogOut(ctx context.Context) error {

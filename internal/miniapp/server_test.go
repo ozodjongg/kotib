@@ -18,6 +18,7 @@ type fakeCtl struct {
 	revoked  atomic.Int32
 	sendErr  error
 	loginErr error
+	learnErr error
 }
 
 func (f *fakeCtl) BeginLogin(context.Context, int64, string) error { return f.loginErr }
@@ -26,6 +27,7 @@ func (f *fakeCtl) SubmitCode(int64, string) error                  { return nil 
 func (f *fakeCtl) SubmitPassword(int64, string) error              { return nil }
 func (f *fakeCtl) LoginState(int64) LoginState                     { return LoginState{Step: "idle"} }
 func (f *fakeCtl) Pause(int64)                                     {}
+func (f *fakeCtl) StartLearnStyle(context.Context, int64) error    { return f.learnErr }
 func (f *fakeCtl) Resume(context.Context, int64) error             { return nil }
 func (f *fakeCtl) Revoke(context.Context, int64) error             { f.revoked.Add(1); return nil }
 func (f *fakeCtl) SendDraft(context.Context, int64, store.Draft) error {
