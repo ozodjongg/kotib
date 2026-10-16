@@ -231,10 +231,17 @@ func run(log *slog.Logger) error {
 
 	// ---- Plaginlar va rejalashtirilgan vazifalar ----
 	// YouTube mijozning o'z akkaunti orqali ulanadi (Google OAuth, API kalitsiz) — Google sozlangan bo'lsa.
-	popts := plugin.Options{Search: gem}
+	// Telegram kanallar/guruhlar plagini kotib allaqachon ulangan sessiyadan o'qiydi.
+	popts := plugin.Options{Search: gem, TelegramFeed: mgr.Feed}
 	if gcli != nil {
-		popts.YouTubeToken = gcli.PluginAccessToken
+		popts.YouTubeToken, popts.SheetsToken = gcli.PluginAccessToken, gcli.PluginAccessToken
 		gcli.OnPluginToken = func(ctx context.Context, owner int64, id, refreshToken, account string) error {
+			// Qayta ulanishda eski token Google'da bekor qilinadi.
+			if _, cfgs, err := plugin.Load(ctx, st, vault, owner); err == nil {
+				if old := cfgs[id][plugin.KeyRefreshToken]; old != "" && old != refreshToken {
+					gcli.RevokeToken(ctx, old)
+				}
+			}
 			return plugin.SaveAccount(ctx, st, vault, owner, id, refreshToken, account)
 		}
 	}
@@ -253,9 +260,12 @@ func run(log *slog.Logger) error {
 		api.Google = gcli
 		api.PluginAuth = gcli
 		api.OnPlugin = func(ctx context.Context, owner int64, id string, err error) {
-			text := "▶️ YouTube akkauntingiz ulandi ✅ Endi rejalashtirilgan vazifalar YouTube'dan qidira oladi va obunalaringizdagi yangi videolarni ko'radi."
-			if err != nil {
-				text = "YouTube ulanmadi. Ilovada Plaginlar → YouTube → «Ulash»ni qayta bosing va ruxsat bering."
+			text := map[string]string{
+				"youtube": "▶️ YouTube akkauntingiz ulandi ✅ Endi rejalashtirilgan vazifalar YouTube'dan qidira oladi va obunalaringizdagi yangi videolarni ko'radi.",
+				"sheets":  "📊 Google Sheets ulandi ✅ Endi ilovada Plaginlar → Google Sheets → «Sozlash»da jadval havolasini kiriting.",
+			}[id]
+			if err != nil || text == "" {
+				text = "Plagin ulanmadi. Ilovada Plaginlar bo'limida «Ulash»ni qayta bosing va ruxsat bering."
 			}
 			notify(ctx, owner, text, err != nil)
 		}

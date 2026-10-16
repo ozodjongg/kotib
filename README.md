@@ -362,7 +362,17 @@ foydalanuvchida Google'dan kvota oshirishni so'rang.
 | ▶️ YouTube | `youtube_search` — video qidirish; `youtube_subscriptions` — obuna kanallaridagi yangi videolar | **«YouTube akkauntini ulash»** tugmasi (Google OAuth, `youtube.readonly`) — API kalit kerak emas |
 | 🌤 Ob-havo | `weather` — Open-Meteo (kalitsiz), 1–7 kun | asosiy shahar |
 | 💱 Valyuta kursi | `exchange_rates` — O'zbekiston Markaziy banki | kuzatiladigan valyutalar |
-| Tez orada | Gmail, Instagram, Notion, Google Drive | — |
+| 📢 Telegram kanallar va guruhlar | `telegram_feed` — kotib ulangan sessiyadan kanal/guruhlardagi oxirgi xabarlar (arxivdagilarsiz, 30 tagacha chat, so'rovlar orasida 300 ms) | — (kalit kerak emas) |
+| 🕌 Namoz vaqtlari | `prayer_times` — islomapi.uz (O'zbekiston), ishlamasa aladhan.com (Hanafiy, taxminiy) | shahar |
+| 📰 Yangiliklar | `news_feed` — Kun.uz, Gazeta.uz, Daryo.uz, UzA, Spot.uz RSS (faqat shu ro'yxat — ixtiyoriy URL yo'q) | manbalar |
+| 📊 Google Sheets | `sheets_read` — jadval qatorlari (faqat o'qish) | **«Google Sheets'ni ulash»** (OAuth, `spreadsheets.readonly`) + jadval havolasi (3 tagacha) |
+| 💼 amoCRM / Kommo | `amocrm` — yangi lidlar, bajarilmagan vazifalar | akkaunt manzili + uzoq muddatli token |
+| 🏢 Bitrix24 | `bitrix24` — lidlar, bitimlar, vazifalar | kiruvchi vebhuk (faqat `https://*.bitrix24.*/rest/<id>/<kalit>/` — SSRF himoyasi) |
+| Tez orada | Gmail, Instagram, Notion, Google Drive, sport natijalari | — |
+
+Google Sheets uchun Google Cloud Console'da **Google Sheets API**ni yoqing va consent screen'ga
+`spreadsheets.readonly` scope'ini qo'shing (sensitive, restricted emas). Telegram plagini guruh xabarlarini ham
+xulosa uchun AI'ga yuboradi — mijozga Mini App'da shu haqida yozilgan.
 
 Yangi plagin qo'shish: `internal/plugin` da `Plugin` interfeysini (Info, Tools, Call) amalga oshirib,
 `plugin.Default` ro'yxatiga qo'shing — Mini App katalogi va sozlash formasi `Info.Fields` dan avtomatik chiziladi.

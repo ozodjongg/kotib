@@ -136,14 +136,14 @@ func Clean(info Info, in, old Config) (Config, error) {
 	if info.Soon {
 		return nil, &ErrInvalid{"bu plagin hali mavjud emas"}
 	}
+	out := Config{}
 	if info.Connect != "" {
-		// Akkaunt orqali ulanadigan plagin: sozlama faqat ulanishdan keladi (Mini App'dan emas).
+		// Akkaunt orqali ulanadigan plagin: token faqat ulanishdan keladi (Mini App'dan emas).
 		if old[KeyRefreshToken] == "" {
 			return nil, &ErrInvalid{"avval akkauntni ulang"}
 		}
-		return Config{KeyRefreshToken: old[KeyRefreshToken], KeyAccount: old[KeyAccount]}, nil
+		out[KeyRefreshToken], out[KeyAccount] = old[KeyRefreshToken], old[KeyAccount]
 	}
-	out := Config{}
 	for _, f := range info.Fields {
 		v := strings.TrimSpace(in[f.Key])
 		if utf8.RuneCountInString(v) > maxFieldRunes || strings.ContainsAny(v, "\r\n\x00") {
@@ -199,13 +199,31 @@ func Public(info Info, cfg Config) map[string]string {
 type Enabled struct {
 	ID     string
 	Config Config
+	Owner  int64 // egasi (Telegram kabi egaga bog'liq plaginlar uchun; OwnerFrom)
+}
+
+type ownerKey struct{}
+
+// WithOwner — vosita chaqiruvi kontekstiga egasini qo'shadi.
+func WithOwner(ctx context.Context, owner int64) context.Context {
+	return context.WithValue(ctx, ownerKey{}, owner)
+}
+
+// OwnerFrom — vosita qaysi ega uchun chaqirilgani (0 — noma'lum).
+func OwnerFrom(ctx context.Context) int64 {
+	v, _ := ctx.Value(ownerKey{}).(int64)
+	return v
 }
 
 // Toolset yoqilgan plaginlar vositalari va ularni chaqiruvchi funksiya (rejalashtirilgan vazifa uchun).
 func (r *Registry) Toolset(enabled []Enabled) ([]llm.ToolDecl, llm.ToolCaller) {
 	cfgs := map[string]Config{}
 	var decls []llm.ToolDecl
+	var owner int64
 	for _, e := range enabled {
+		if e.Owner != 0 {
+			owner = e.Owner
+		}
 		p, ok := r.byID[e.ID]
 		if !ok || p.Info().Soon {
 			continue
@@ -222,7 +240,7 @@ func (r *Registry) Toolset(enabled []Enabled) ([]llm.ToolDecl, llm.ToolCaller) {
 		if !ok {
 			return "", fmt.Errorf("plagin yoqilmagan: %s", p.Info().ID)
 		}
-		cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		cctx, cancel := context.WithTimeout(WithOwner(ctx, owner), 60*time.Second)
 		defer cancel()
 		return p.Call(cctx, cfg, name, args)
 	}
@@ -267,6 +285,9 @@ func getBody(ctx context.Context, c *http.Client, url string, hdr map[string]str
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode == http.StatusNoContent {
+		return nil, nil
+	}
 	if resp.StatusCode != http.StatusOK {
 		return data, fmt.Errorf("xizmat javobi: %d", resp.StatusCode)
 	}

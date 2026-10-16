@@ -72,26 +72,33 @@ func (y *YouTube) base() string {
 
 // get — akkaunt tokeni bilan YouTube API so'rovi.
 func (y *YouTube) get(ctx context.Context, cfg Config, path string, q url.Values, out any) error {
+	return oauthGet(ctx, y.HTTP, y.Token, cfg, "YouTube", y.base()+path+"?"+q.Encode(), out)
+}
+
+// oauthGet — akkaunt (Google OAuth) orqali ulangan plagin uchun GET so'rov va JSON javob.
+func oauthGet(ctx context.Context, c *http.Client, token func(context.Context, string) (string, error), cfg Config, name, u string, out any) error {
 	rt := cfg[KeyRefreshToken]
 	if rt == "" {
-		return errors.New("YouTube akkaunti ulanmagan (Plaginlar → YouTube → Ulash)")
+		return fmt.Errorf("%s akkaunti ulanmagan (Plaginlar → %s → Ulash)", name, name)
 	}
-	tok, err := y.Token(ctx, rt)
+	tok, err := token(ctx, rt)
 	if err != nil {
 		return ErrAccountRevoked
 	}
-	data, err := getBody(ctx, y.HTTP, y.base()+path+"?"+q.Encode(), map[string]string{"Authorization": "Bearer " + tok})
+	data, err := getBody(ctx, c, u, map[string]string{"Authorization": "Bearer " + tok})
 	if err != nil {
 		switch {
 		case strings.Contains(err.Error(), "401"):
 			return ErrAccountRevoked
 		case strings.Contains(err.Error(), "403"):
-			return errors.New("YouTube so'rovni rad etdi (kunlik limit tugagan bo'lishi mumkin)")
+			return fmt.Errorf("%s so'rovni rad etdi (ruxsat yo'q yoki kunlik limit tugagan)", name)
+		case strings.Contains(err.Error(), "404"):
+			return fmt.Errorf("%s: topilmadi", name)
 		}
 		return err
 	}
 	if err := json.Unmarshal(data, out); err != nil {
-		return errors.New("YouTube javobini o'qib bo'lmadi")
+		return fmt.Errorf("%s javobini o'qib bo'lmadi", name)
 	}
 	return nil
 }

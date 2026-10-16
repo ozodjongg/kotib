@@ -29,6 +29,7 @@ import (
 	"github.com/ozodjongg/secretar_ai_agent/internal/config"
 	"github.com/ozodjongg/secretar_ai_agent/internal/llm"
 	"github.com/ozodjongg/secretar_ai_agent/internal/miniapp"
+	"github.com/ozodjongg/secretar_ai_agent/internal/plugin"
 )
 
 // GotdConnector — gotd/td (MTProto) asosidagi Connector.
@@ -613,6 +614,158 @@ func (g *gotdTG) RecentChats(ctx context.Context, n int) ([]miniapp.ContactInfo,
 		out = append(out, miniapp.ContactInfo{ID: u.ID, Name: name, Phone: u.Phone})
 		if len(out) >= n {
 			break
+		}
+	}
+	return out, nil
+}
+
+// feedChat — dialoglar ro'yxatidan tanlangan kanal yoki guruh.
+type feedChat struct {
+	peer     tg.InputPeerClass
+	title    string
+	kind     string
+	username string
+	last     time.Time
+}
+
+// Feed — oxirgi dialoglardan kind ("channels" | "groups") turidagi, since'dan keyin yangi xabari bor
+// chatlar va ulardagi matnli xabarlar (eskidan yangiga). Arxivlangan chatlar kirmaydi (asosiy ro'yxat).
+// So'rovlar ketma-ket va oraliq bilan — Telegram cheklovi (FLOOD_WAIT) bo'lsa, borini qaytaradi.
+func (g *gotdTG) Feed(ctx context.Context, kind string, since time.Time, maxChats int) ([]plugin.FeedChat, error) {
+	res, err := g.api.MessagesGetDialogs(ctx, &tg.MessagesGetDialogsRequest{OffsetPeer: &tg.InputPeerEmpty{}, Limit: 100})
+	if err != nil {
+		return nil, classify(err)
+	}
+	var dialogs []tg.DialogClass
+	var msgs []tg.MessageClass
+	var chats []tg.ChatClass
+	switch r := res.(type) {
+	case *tg.MessagesDialogs:
+		dialogs, msgs, chats = r.Dialogs, r.Messages, r.Chats
+	case *tg.MessagesDialogsSlice:
+		dialogs, msgs, chats = r.Dialogs, r.Messages, r.Chats
+	default:
+		return nil, nil
+	}
+	lastAt := map[int64]time.Time{} // chat ID → eng oxirgi xabar vaqti
+	for _, mc := range msgs {
+		m, ok := mc.(*tg.Message)
+		if !ok {
+			continue
+		}
+		var id int64
+		switch p := m.PeerID.(type) {
+		case *tg.PeerChannel:
+			id = p.ChannelID
+		case *tg.PeerChat:
+			id = p.ChatID
+		}
+		if t := time.Unix(int64(m.Date), 0); id != 0 && t.After(lastAt[id]) {
+			lastAt[id] = t
+		}
+	}
+	byID := map[int64]feedChat{}
+	for _, cc := range chats {
+		switch c := cc.(type) {
+		case *tg.Channel:
+			if c.Left {
+				continue
+			}
+			k := "group"
+			if c.Broadcast {
+				k = "channel"
+			} else if !c.Megagroup {
+				continue
+			}
+			byID[c.ID] = feedChat{peer: &tg.InputPeerChannel{ChannelID: c.ID, AccessHash: c.AccessHash}, title: c.Title, kind: k, username: c.Username}
+		case *tg.Chat:
+			if c.Left || c.Deactivated {
+				continue
+			}
+			byID[c.ID] = feedChat{peer: &tg.InputPeerChat{ChatID: c.ID}, title: c.Title, kind: "group"}
+		}
+	}
+	want := map[string]string{"channels": "channel", "groups": "group"}[kind]
+	var picked []feedChat
+	for _, dc := range dialogs {
+		d, ok := dc.(*tg.Dialog)
+		if !ok {
+			continue
+		}
+		var id int64
+		switch p := d.Peer.(type) {
+		case *tg.PeerChannel:
+			id = p.ChannelID
+		case *tg.PeerChat:
+			id = p.ChatID
+		default:
+			continue
+		}
+		c, ok := byID[id]
+		if !ok || c.kind != want || lastAt[id].Before(since) {
+			continue
+		}
+		c.last = lastAt[id]
+		picked = append(picked, c)
+		if len(picked) >= maxChats {
+			break
+		}
+	}
+	var out []plugin.FeedChat
+	for i, c := range picked {
+		if i > 0 {
+			select { // bir zumda ko'p so'rov — FLOOD_WAIT xavfi
+			case <-ctx.Done():
+				return out, nil
+			case <-time.After(300 * time.Millisecond):
+			}
+		}
+		h, err := g.api.MessagesGetHistory(ctx, &tg.MessagesGetHistoryRequest{Peer: c.peer, Limit: 30})
+		if err != nil {
+			if len(out) > 0 {
+				return out, nil // borini qaytaramiz
+			}
+			return nil, classify(err)
+		}
+		var hm []tg.MessageClass
+		var users []tg.UserClass
+		switch r := h.(type) {
+		case *tg.MessagesMessages:
+			hm, users = r.Messages, r.Users
+		case *tg.MessagesMessagesSlice:
+			hm, users = r.Messages, r.Users
+		case *tg.MessagesChannelMessages:
+			hm, users = r.Messages, r.Users
+		}
+		names := map[int64]string{}
+		for _, uc := range users {
+			if u, ok := uc.(*tg.User); ok {
+				names[u.ID] = strings.TrimSpace(u.FirstName + " " + u.LastName)
+			}
+		}
+		fc := plugin.FeedChat{Title: c.title, Kind: c.kind}
+		for j := len(hm) - 1; j >= 0; j-- { // Telegram yangidan eskiga beradi
+			m, ok := hm[j].(*tg.Message)
+			if !ok || m.Message == "" {
+				continue
+			}
+			at := time.Unix(int64(m.Date), 0)
+			if at.Before(since) {
+				continue
+			}
+			p := plugin.FeedPost{At: at, Text: m.Message}
+			if c.username != "" {
+				p.Link = "https://t.me/" + c.username + "/" + strconv.Itoa(m.ID)
+			}
+			if c.kind == "group" {
+				if fu, ok := m.FromID.(*tg.PeerUser); ok {
+					p.From = names[fu.UserID]
+				}
+			}
+			fc.Posts = append(fc.Posts, p)
+		}
+		if len(fc.Posts) > 0 {
+			out = append(out, fc)
 		}
 	}
 	return out, nil
