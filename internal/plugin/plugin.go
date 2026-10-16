@@ -47,15 +47,18 @@ type Field struct {
 
 // Info — katalogdagi plagin tavsifi.
 type Info struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Icon        string   `json:"icon"` // emoji
-	Category    string   `json:"category"`
-	Description string   `json:"description"`
-	Soon        bool     `json:"soon,omitempty"` // tez orada: hali yoqib bo'lmaydi
-	Fields      []Field  `json:"fields,omitempty"`
-	Tools       []string `json:"tools,omitempty"` // AI'ga beriladigan vositalar nomi (ko'rsatish uchun)
-	Examples    []string `json:"examples,omitempty"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Icon        string `json:"icon"` // emoji
+	Category    string `json:"category"`
+	Description string `json:"description"`
+	Soon        bool   `json:"soon,omitempty"` // tez orada: hali yoqib bo'lmaydi
+	// Connect — plagin akkaunt orqali ulanadi ("google": Google/YouTube rozilik sahifasi), API
+	// kalit yoki sozlama maydonlarisiz. Token sozlamada yashirin saqlanadi.
+	Connect  string   `json:"connect,omitempty"`
+	Fields   []Field  `json:"fields,omitempty"`
+	Tools    []string `json:"tools,omitempty"` // AI'ga beriladigan vositalar nomi (ko'rsatish uchun)
+	Examples []string `json:"examples,omitempty"`
 }
 
 // Config — mijozning plagin sozlamalari (maydon kaliti → qiymat).
@@ -132,6 +135,13 @@ func (e *ErrInvalid) Error() string { return e.Msg }
 func Clean(info Info, in, old Config) (Config, error) {
 	if info.Soon {
 		return nil, &ErrInvalid{"bu plagin hali mavjud emas"}
+	}
+	if info.Connect != "" {
+		// Akkaunt orqali ulanadigan plagin: sozlama faqat ulanishdan keladi (Mini App'dan emas).
+		if old[KeyRefreshToken] == "" {
+			return nil, &ErrInvalid{"avval akkauntni ulang"}
+		}
+		return Config{KeyRefreshToken: old[KeyRefreshToken], KeyAccount: old[KeyAccount]}, nil
 	}
 	out := Config{}
 	for _, f := range info.Fields {

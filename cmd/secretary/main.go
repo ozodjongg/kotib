@@ -230,7 +230,15 @@ func run(log *slog.Logger) error {
 	}
 
 	// ---- Plaginlar va rejalashtirilgan vazifalar ----
-	plugins := plugin.Default(plugin.Options{Search: gem, YouTubeKey: env("YOUTUBE_API_KEY")})
+	// YouTube mijozning o'z akkaunti orqali ulanadi (Google OAuth, API kalitsiz) — Google sozlangan bo'lsa.
+	popts := plugin.Options{Search: gem}
+	if gcli != nil {
+		popts.YouTubeToken = gcli.PluginAccessToken
+		gcli.OnPluginToken = func(ctx context.Context, owner int64, id, refreshToken, account string) error {
+			return plugin.SaveAccount(ctx, st, vault, owner, id, refreshToken, account)
+		}
+	}
+	plugins := plugin.Default(popts)
 	sched := &schedule.Runner{Store: st, AI: gem, Plugins: plugins, Vault: vault, Entitled: bill.Entitled, Pro: bill.HasPro, Log: log,
 		Notify: func(ctx context.Context, owner int64, text string) { notify(ctx, owner, text, false) }}
 
@@ -243,6 +251,14 @@ func run(log *slog.Logger) error {
 	if gcli != nil {
 		ctrlBot.Handler.(*botcmd.Handler).Google = gcli
 		api.Google = gcli
+		api.PluginAuth = gcli
+		api.OnPlugin = func(ctx context.Context, owner int64, id string, err error) {
+			text := "▶️ YouTube akkauntingiz ulandi ✅ Endi rejalashtirilgan vazifalar YouTube'dan qidira oladi va obunalaringizdagi yangi videolarni ko'radi."
+			if err != nil {
+				text = "YouTube ulanmadi. Ilovada Plaginlar → YouTube → «Ulash»ni qayta bosing va ruxsat bering."
+			}
+			notify(ctx, owner, text, err != nil)
+		}
 		api.OnGoogle = func(ctx context.Context, owner int64, err error) {
 			text := "Google akkauntingiz ulandi ✅ Endi kotib taqvimingizdagi band vaqtlarni hisobga oladi, uchrashuv va vazifalarni tasdiqlashingiz uchun shu yerga yuboradi."
 			if err != nil {

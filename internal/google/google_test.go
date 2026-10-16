@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -358,5 +359,78 @@ func TestBirthdays(t *testing.T) {
 	}
 	if bs, _ := c.Birthdays(context.Background(), 7, time.March, 2); len(bs) != 0 {
 		t.Fatal("boshqa kun")
+	}
+}
+
+// YouTube plagini: alohida token, faqat youtube.readonly ruxsati, asosiy Google ulanishiga tegmaydi.
+func TestPluginOAuth(t *testing.T) {
+	c, f, st := newClient(t, "openid email https://www.googleapis.com/auth/youtube.readonly")
+	ctx := context.Background()
+	if _, err := c.PluginAuthURL(7, "youtube"); err == nil {
+		t.Fatal("OnPluginToken'siz plagin ulanmasligi kerak")
+	}
+	var got []string
+	c.OnPluginToken = func(_ context.Context, owner int64, plugin, rt, account string) error {
+		got = append(got, fmt.Sprint(owner), plugin, rt, account)
+		return nil
+	}
+	if _, err := c.PluginAuthURL(7, "gmail"); err == nil {
+		t.Fatal("noma'lum plagin")
+	}
+	u, err := c.PluginAuthURL(7, "youtube")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pu, _ := url.Parse(u)
+	q := pu.Query()
+	if q.Get("scope") != "openid email https://www.googleapis.com/auth/youtube.readonly" || q.Get("include_granted_scopes") != "false" {
+		t.Fatalf("auth url: %s", u)
+	}
+	// Asosiy Google havolasi plagin havolasini bekor qilmaydi.
+	if _, err := c.AuthURL(7); err != nil {
+		t.Fatal(err)
+	}
+	state := q.Get("state")
+	if c.StatePurpose(state) != "youtube" || c.StatePurpose("begona") != "" {
+		t.Fatal("state maqsadi")
+	}
+	owner, err := c.Callback(ctx, state, "CODE")
+	if err != nil || owner != 7 || strings.Join(got, ",") != "7,youtube,RT-SECRET,ali@example.com" {
+		t.Fatalf("callback: %d %v %v", owner, err, got)
+	}
+	if _, err := st.GetGoogleLink(ctx, 7); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("plagin ulanishi asosiy Google ulanishi bo'lib saqlanmasligi kerak")
+	}
+	// Access token keshlanadi.
+	for i := 0; i < 2; i++ {
+		if at, err := c.PluginAccessToken(ctx, "RT-SECRET"); err != nil || at != "AT2" {
+			t.Fatalf("access: %q %v", at, err)
+		}
+	}
+	if f.refreshes != 1 {
+		t.Fatalf("kesh: %d", f.refreshes)
+	}
+	if _, err := c.PluginAccessToken(ctx, "eski"); !errors.Is(err, ErrNotConnected) {
+		t.Fatalf("bekor qilingan token: %v", err)
+	}
+	c.RevokeToken(ctx, "RT-SECRET")
+	if len(f.revoked) != 1 || f.revoked[0] != "RT-SECRET" {
+		t.Fatalf("revoke: %v", f.revoked)
+	}
+}
+
+func TestPluginOAuthScopeRequired(t *testing.T) {
+	c, f, _ := newClient(t, "openid email")
+	c.OnPluginToken = func(context.Context, int64, string, string, string) error {
+		t.Fatal("chaqirilmasligi kerak")
+		return nil
+	}
+	u, _ := c.PluginAuthURL(7, "youtube")
+	pu, _ := url.Parse(u)
+	if _, err := c.Callback(context.Background(), pu.Query().Get("state"), "CODE"); !errors.Is(err, ErrNoScope) {
+		t.Fatalf("ruxsatsiz: %v", err)
+	}
+	if len(f.revoked) != 1 {
+		t.Fatal("token bekor qilinishi kerak")
 	}
 }

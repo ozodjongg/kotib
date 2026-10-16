@@ -45,6 +45,12 @@ var Scopes = []string{
 	"https://www.googleapis.com/auth/tasks",
 }
 
+// PluginScopes — plaginlarni Google akkaunti orqali ulash (alohida token, alohida rozilik):
+// mijoz API kalit bilan ovora bo'lmaydi, «YouTube akkauntini ulash» tugmasini bosadi xolos.
+var PluginScopes = map[string][]string{
+	"youtube": {"openid", "email", "https://www.googleapis.com/auth/youtube.readonly"},
+}
+
 // Endpoints — Google manzillari (testda almashtiriladi).
 type Endpoints struct {
 	Auth, Token, Revoke, Calendar, Tasks, People string
@@ -74,8 +80,12 @@ type Client struct {
 	Log                    *slog.Logger
 	Endpoints              Endpoints
 	Now                    func() time.Time
+	// OnPluginToken — plagin akkaunti ulandi (PluginAuthURL orqali): refresh tokenni
+	// plagin sozlamasiga (shifrlab) saqlash. nil → plagin ulanishi o'chiq.
+	OnPluginToken func(ctx context.Context, owner int64, plugin, refreshToken, account string) error
 
 	mu       sync.Mutex
+	ptokens  map[string]accessToken // plagin refresh token xeshi → access token
 	pending  map[string]pendingAuth // state → kutilayotgan ulanish (bir martalik)
 	tokens   map[int64]accessToken
 	busy     map[int64]busyCache
@@ -87,6 +97,7 @@ type pendingAuth struct {
 	owner    int64
 	verifier string
 	exp      time.Time
+	plugin   string // bo'sh — asosiy Google ulanishi; aks holda plagin (youtube)
 }
 
 type accessToken struct {
@@ -138,6 +149,7 @@ func (c *Client) init() {
 		c.busy = map[int64]busyCache{}
 		c.contacts = map[contactKey]contactCache{}
 		c.warmed = map[int64]bool{}
+		c.ptokens = map[string]accessToken{}
 	}
 }
 
@@ -152,6 +164,26 @@ func randomString(n int) (string, error) {
 // AuthURL egasi uchun Google rozilik sahifasi havolasini yaratadi. state bir martalik,
 // 15 daqiqa amal qiladi va egaga bog'langan (PKCE verifier serverda qoladi).
 func (c *Client) AuthURL(owner int64) (string, error) {
+	return c.authURL(owner, "", Scopes)
+}
+
+// PluginAuthURL — plaginni (masalan, YouTube) Google akkaunti orqali ulash havolasi.
+func (c *Client) PluginAuthURL(owner int64, plugin string) (string, error) {
+	scopes, ok := PluginScopes[plugin]
+	if !ok || c.OnPluginToken == nil {
+		return "", errors.New("bu plaginni akkaunt orqali ulab bo'lmaydi")
+	}
+	return c.authURL(owner, plugin, scopes)
+}
+
+// StatePurpose — state qaysi ulanishga tegishli (bo'sh — asosiy Google yoki noma'lum).
+func (c *Client) StatePurpose(state string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.pending[state].plugin
+}
+
+func (c *Client) authURL(owner int64, plugin string, scopes []string) (string, error) {
 	state, err := randomString(32)
 	if err != nil {
 		return "", err
@@ -166,7 +198,7 @@ func (c *Client) AuthURL(owner int64) (string, error) {
 	c.mu.Lock()
 	c.init()
 	for k, p := range c.pending {
-		if now.After(p.exp) || p.owner == owner { // eskilar va shu egasining oldingi havolasi
+		if now.After(p.exp) || (p.owner == owner && p.plugin == plugin) { // eskilar va shu egasining oldingi havolasi
 			delete(c.pending, k)
 		}
 	}
@@ -174,17 +206,18 @@ func (c *Client) AuthURL(owner int64) (string, error) {
 		c.mu.Unlock()
 		return "", errors.New("juda ko'p kutilayotgan ulanish, birozdan keyin urinib ko'ring")
 	}
-	c.pending[state] = pendingAuth{owner: owner, verifier: verifier, exp: now.Add(stateTTL)}
+	c.pending[state] = pendingAuth{owner: owner, verifier: verifier, exp: now.Add(stateTTL), plugin: plugin}
 	c.mu.Unlock()
 
 	q := url.Values{
-		"client_id":              {c.ClientID},
-		"redirect_uri":           {c.RedirectURL},
-		"response_type":          {"code"},
-		"scope":                  {strings.Join(Scopes, " ")},
-		"access_type":            {"offline"},
-		"prompt":                 {"consent"}, // refresh token har safar qaytsin
-		"include_granted_scopes": {"true"},
+		"client_id":     {c.ClientID},
+		"redirect_uri":  {c.RedirectURL},
+		"response_type": {"code"},
+		"scope":         {strings.Join(scopes, " ")},
+		"access_type":   {"offline"},
+		"prompt":        {"consent"}, // refresh token har safar qaytsin
+		// Plagin tokeni faqat o'z ruxsati bilan (taqvim ruxsatlari unga qo'shilmasin).
+		"include_granted_scopes": {strconv.FormatBool(plugin == "")},
 		"state":                  {state},
 		"code_challenge":         {base64.RawURLEncoding.EncodeToString(sum[:])},
 		"code_challenge_method":  {"S256"},
@@ -227,6 +260,9 @@ func (c *Client) Callback(ctx context.Context, state, code string) (int64, error
 	if tr.RefreshToken == "" {
 		return p.owner, errors.New("google refresh token bermadi")
 	}
+	if p.plugin != "" {
+		return p.owner, c.pluginCallback(ctx, p, tr)
+	}
 	if !hasScope(tr.Scope, "https://www.googleapis.com/auth/calendar.events") {
 		c.revoke(ctx, tr.RefreshToken)
 		return p.owner, ErrNoScope
@@ -244,6 +280,56 @@ func (c *Client) Callback(ctx context.Context, state, code string) (int64, error
 	c.mu.Unlock()
 	c.Store.Audit(ctx, p.owner, "google_connected", "")
 	return p.owner, nil
+}
+
+// pluginCallback — plagin ruxsati olindi: kerakli ruxsat berilganini tekshirib, tokenni plaginga beradi.
+func (c *Client) pluginCallback(ctx context.Context, p pendingAuth, tr tokenResponse) error {
+	scopes := PluginScopes[p.plugin]
+	if len(scopes) == 0 || !hasScope(tr.Scope, scopes[len(scopes)-1]) || c.OnPluginToken == nil {
+		c.revoke(ctx, tr.RefreshToken)
+		return ErrNoScope
+	}
+	if err := c.OnPluginToken(ctx, p.owner, p.plugin, tr.RefreshToken, emailFromIDToken(tr.IDToken)); err != nil {
+		c.revoke(ctx, tr.RefreshToken)
+		return err
+	}
+	c.Store.Audit(ctx, p.owner, "plugin_connected", p.plugin)
+	return nil
+}
+
+// PluginAccessToken — plagin refresh tokeni bo'yicha access token (keshlanadi). Mijoz
+// ruxsatni Google'da olib tashlagan bo'lsa — ErrNotConnected.
+func (c *Client) PluginAccessToken(ctx context.Context, refreshToken string) (string, error) {
+	sum := sha256.Sum256([]byte(refreshToken))
+	key := string(sum[:])
+	c.mu.Lock()
+	c.init()
+	t, ok := c.ptokens[key]
+	c.mu.Unlock()
+	if ok && c.now().Before(t.exp) {
+		return t.token, nil
+	}
+	tr, err := c.tokenRequest(ctx, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refreshToken}})
+	if err != nil {
+		return "", err
+	}
+	c.mu.Lock()
+	if len(c.ptokens) >= maxCacheItems {
+		c.ptokens = map[string]accessToken{}
+	}
+	c.ptokens[key] = accessToken{token: tr.AccessToken, exp: c.now().Add(time.Duration(tr.ExpiresIn)*time.Second - time.Minute)}
+	c.mu.Unlock()
+	return tr.AccessToken, nil
+}
+
+// RevokeToken Google'da tokenni bekor qiladi (plagin uzilganda).
+func (c *Client) RevokeToken(ctx context.Context, token string) {
+	sum := sha256.Sum256([]byte(token))
+	c.mu.Lock()
+	c.init()
+	delete(c.ptokens, string(sum[:]))
+	c.mu.Unlock()
+	c.revoke(ctx, token)
 }
 
 func hasScope(granted, want string) bool {

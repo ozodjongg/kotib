@@ -80,3 +80,12 @@ func (r *Registry) EnabledFor(ctx context.Context, st store.Store, v Vault, owne
 	}
 	return out
 }
+
+// SaveAccount — akkaunt orqali ulangan plagin (OAuth) tokenini shifrlab saqlaydi va plaginni yoqadi.
+func SaveAccount(ctx context.Context, st store.Store, v Vault, owner int64, id, refreshToken, account string) error {
+	sealed, err := Seal(v, owner, id, Config{KeyRefreshToken: refreshToken, KeyAccount: account})
+	if err != nil {
+		return err
+	}
+	return st.SavePluginConfig(ctx, store.PluginConfig{OwnerID: owner, PluginID: id, Enabled: true, Config: sealed})
+}
