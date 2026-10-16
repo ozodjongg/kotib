@@ -14,6 +14,7 @@ import (
 )
 
 type fakeCtl struct {
+	canceled atomic.Int32
 	sent     atomic.Int32
 	revoked  atomic.Int32
 	sendErr  error
@@ -22,7 +23,7 @@ type fakeCtl struct {
 }
 
 func (f *fakeCtl) BeginLogin(context.Context, int64, string) error { return f.loginErr }
-func (f *fakeCtl) BeginQRLogin(context.Context, int64) error       { return f.loginErr }
+func (f *fakeCtl) CancelLogin(int64)                               { f.canceled.Add(1) }
 func (f *fakeCtl) SubmitCode(int64, string) error                  { return nil }
 func (f *fakeCtl) SubmitPassword(int64, string) error              { return nil }
 func (f *fakeCtl) LoginState(int64) LoginState                     { return LoginState{Step: "idle"} }

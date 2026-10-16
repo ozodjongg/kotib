@@ -35,7 +35,7 @@ func TestStoreContract(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if _, err := db.Exec(`TRUNCATE accounts, subscriptions, payments, usage_daily, google_links, actions, hooks, followups, referral_codes, referrals, linked_accounts, link_tokens, chat_activity, style_samples CASCADE`); err != nil {
+		if _, err := db.Exec(`TRUNCATE accounts, subscriptions, payments, usage_daily, google_links, actions, hooks, followups, referral_codes, referrals, linked_accounts, link_tokens, chat_activity, style_samples, schedules, plugin_configs CASCADE`); err != nil {
 			t.Fatal(err)
 		}
 		contract(t, store.NewPostgres(db))
@@ -292,6 +292,7 @@ func contract(t *testing.T, s store.Store) {
 	}
 	referralContract(t, s)
 	linkContract(t, s)
+	scheduleContract(t, s)
 	activityContract(t, s)
 }
 
@@ -521,4 +522,135 @@ func linkContract(t *testing.T, s store.Store) {
 	if es, _ := s.ListAuditSince(ctx, 210, []string{"auto_sent"}, now.Add(time.Hour), 0); len(es) != 0 {
 		t.Fatalf("since: %+v", es)
 	}
+}
+
+func scheduleContract(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	now := time.Now()
+	for _, id := range []int64{300, 301} {
+		if err := s.UpsertAccount(ctx, store.Account{OwnerID: id, Status: store.StatusActive, ConsentAt: &now}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.CreateSchedule(ctx, store.Schedule{OwnerID: 999, Title: "x", Prompt: "x", Kind: store.ScheduleDaily, At: "09:00"}); err == nil {
+		t.Fatal("akkauntsiz vazifa yaratilmasligi kerak")
+	}
+	due := now.Add(-time.Minute)
+	id, err := s.CreateSchedule(ctx, store.Schedule{OwnerID: 300, Title: "Ob-havo", Prompt: "bugungi ob-havo", Kind: store.ScheduleWeekly,
+		At: "07:30", Weekdays: 1<<1 | 1<<3, Enabled: true, NextRun: &due})
+	if err != nil {
+		t.Fatal(err)
+	}
+	later := now.Add(time.Hour)
+	id2, _ := s.CreateSchedule(ctx, store.Schedule{OwnerID: 300, Title: "Kurs", Prompt: "dollar", Kind: store.ScheduleOnce,
+		At: "10:00", Date: "2026-10-20", Enabled: true, NextRun: &later})
+	_, _ = s.CreateSchedule(ctx, store.Schedule{OwnerID: 301, Title: "O'chiq", Prompt: "x", Kind: store.ScheduleDaily, At: "08:00", Enabled: false, NextRun: &due})
+	got, err := s.GetSchedule(ctx, 300, id)
+	if err != nil || got.Title != "Ob-havo" || got.Kind != store.ScheduleWeekly || got.Weekdays != 10 || !got.Enabled ||
+		got.NextRun == nil || got.LastRun != nil || got.LastStatus != "" || got.CreatedAt.IsZero() {
+		t.Fatalf("get: %+v %v", got, err)
+	}
+	if _, err := s.GetSchedule(ctx, 301, id); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("boshqa egasining vazifasi ko'rinmasligi kerak")
+	}
+	if ls, _ := s.ListSchedules(ctx, 300); len(ls) != 2 || ls[0].ID != id || ls[1].ID != id2 {
+		t.Fatalf("list: %+v", ls)
+	}
+	dues, err := s.ListDueSchedules(ctx, now, 10)
+	if err != nil || len(dues) != 1 || dues[0].ID != id {
+		t.Fatalf("due (o'chiq va muddati kelmagan kirmaydi): %+v %v", dues, err)
+	}
+	next := now.Add(48 * time.Hour)
+	if ok, err := s.ClaimSchedule(ctx, 300, id, *dues[0].NextRun, &next, now); !ok || err != nil {
+		t.Fatalf("claim: %v %v", ok, err)
+	}
+	if ok, _ := s.ClaimSchedule(ctx, 300, id, *dues[0].NextRun, &next, now); ok {
+		t.Fatal("ikkinchi marta egallanmasligi kerak")
+	}
+	got, _ = s.GetSchedule(ctx, 300, id)
+	if got.LastStatus != "running" || got.LastRun == nil || got.NextRun == nil || got.NextRun.Sub(next).Abs() > time.Millisecond || !got.Enabled {
+		t.Fatalf("claim'dan keyin: %+v", got)
+	}
+	if ok, _ := s.MarkScheduleRunning(ctx, 300, id, now.Add(time.Minute)); ok {
+		t.Fatal("bajarilayotgan vazifa qayta boshlanmasligi kerak")
+	}
+	if ok, _ := s.MarkScheduleRunning(ctx, 300, id, now.Add(time.Hour)); !ok {
+		t.Fatal("qotib qolgan running holatidan keyin qayta boshlash mumkin")
+	}
+	if err := s.FinishSchedule(ctx, 300, id, "ok", "Toshkent +20"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := s.MarkScheduleRunning(ctx, 300, id, now.Add(time.Hour)); !ok {
+		t.Fatal("tugagan vazifani qo'lda boshlash mumkin")
+	}
+	_ = s.FinishSchedule(ctx, 300, id, "error", "xato")
+	got, _ = s.GetSchedule(ctx, 300, id)
+	if got.LastStatus != "error" || got.LastResult != "xato" || got.Runs != 2 {
+		t.Fatalf("finish: %+v", got)
+	}
+	if _, err := s.MarkScheduleRunning(ctx, 301, id, now); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("begona: %v", err)
+	}
+	// Bir martalik: egallanganda o'chadi.
+	if ok, _ := s.ClaimSchedule(ctx, 300, id2, *got2(t, s, id2).NextRun, nil, now); !ok {
+		t.Fatal("once claim")
+	}
+	if g := got2(t, s, id2); g.Enabled || g.NextRun != nil {
+		t.Fatalf("bir martalik o'chishi kerak: %+v", g)
+	}
+	// Tahrirlash: statistika saqlanadi.
+	got.Title, got.Prompt, got.Kind, got.At, got.Weekdays, got.Enabled, got.NextRun = "Yangi", "p2", store.ScheduleDaily, "08:15", 0, false, nil
+	if err := s.UpdateSchedule(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	if g := got2(t, s, id); g.Title != "Yangi" || g.Kind != store.ScheduleDaily || g.Enabled || g.NextRun != nil || g.Runs != 2 || g.LastResult != "xato" {
+		t.Fatalf("update: %+v", g)
+	}
+	got.OwnerID = 301
+	if err := s.UpdateSchedule(ctx, got); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("begona yangilay olmaydi")
+	}
+	if err := s.DeleteSchedule(ctx, 301, id); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("begona o'chira olmaydi")
+	}
+	if err := s.DeleteSchedule(ctx, 300, id); err != nil {
+		t.Fatal(err)
+	}
+
+	// Plaginlar
+	if err := s.SavePluginConfig(ctx, store.PluginConfig{OwnerID: 300, PluginID: "youtube", Enabled: true, Config: []byte{1, 2}}); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.SavePluginConfig(ctx, store.PluginConfig{OwnerID: 300, PluginID: "weather", Enabled: true})
+	_ = s.SavePluginConfig(ctx, store.PluginConfig{OwnerID: 300, PluginID: "youtube", Enabled: false, Config: []byte{3}})
+	ps, err := s.ListPluginConfigs(ctx, 300)
+	if err != nil || len(ps) != 2 || ps[0].PluginID != "weather" || ps[1].Enabled || len(ps[1].Config) != 1 || ps[1].Config[0] != 3 {
+		t.Fatalf("plugins: %+v %v", ps, err)
+	}
+	_ = s.DeletePluginConfig(ctx, 300, "weather")
+	if ps, _ := s.ListPluginConfigs(ctx, 300); len(ps) != 1 {
+		t.Fatalf("delete plugin: %+v", ps)
+	}
+	if ps, _ := s.ListPluginConfigs(ctx, 301); len(ps) != 0 {
+		t.Fatal("boshqa ega")
+	}
+	// Akkaunt o'chirilsa — vazifa va plaginlar ham.
+	if err := s.DeleteAccount(ctx, 300); err != nil {
+		t.Fatal(err)
+	}
+	if ls, _ := s.ListSchedules(ctx, 300); len(ls) != 0 {
+		t.Fatalf("vazifalar qoldi: %+v", ls)
+	}
+	if ps, _ := s.ListPluginConfigs(ctx, 300); len(ps) != 0 {
+		t.Fatal("plaginlar qoldi")
+	}
+}
+
+func got2(t *testing.T, s store.Store, id int64) store.Schedule {
+	t.Helper()
+	g, err := s.GetSchedule(context.Background(), 300, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return g
 }

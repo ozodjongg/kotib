@@ -11,7 +11,7 @@ internal/crypto/      AES-256-GCM envelope shifrlash (session uchun), kalit rota
 internal/guard/       kiruvchi xabar tasnifi (injection / sezgir mavzu), chiqish filtri
 internal/ratelimit/   token-bucket (global/chat/kunlik) + "odamga o'xshash" kechikish
 internal/config/      sozlamalar, qoidalar, kontakt bo'yicha qaror (Resolve), tinch soatlar
-internal/llm/         Gemini REST klienti + system prompt
+internal/llm/         Gemini REST klienti + system prompt, vazifa agenti (function calling), internet qidiruvi
 internal/userbot/     pipeline (Telegram'dan mustaqil), manager, login, gotd.go (build tag)
 internal/miniapp/     initData HMAC auth + HTTP API
 internal/store/       Store interfeysi, Postgres, Memory (dev)
@@ -19,6 +19,8 @@ internal/bot/         boshqaruv boti (/start, bildirishnoma)
 internal/billing/     Telegram Stars obunasi: sinov, to'lov tasdig'i, bekor qilish, refund, eslatmalar
 internal/google/      Google: OAuth (PKCE), Calendar (band vaqt, tadbir), Contacts (eslatma), Tasks
 internal/ics/         Google'siz taqvim: .ics fayl va imzolangan havola
+internal/schedule/    rejalashtirilgan AI vazifalar: jadval (bir marta/soat/kun/ish kunlari/hafta), bajaruvchi
+internal/plugin/      plaginlar (connector'lar): internet qidiruvi, YouTube, ob-havo, valyuta kursi; shifrlangan sozlama
 internal/botcmd/      bot buyruqlari (/status, /pause, /obuna, admin /stats, /refund) va to'lov hodisalari
 webapp/               Mini App (vanilla JS, innerHTML ishlatilmaydi; iliq fil suyagi/terrakota dizayn, yorug'/qorong'i)
 migrations/           Postgres sxema (binary ichiga joylangan, ishga tushganda avtomatik qo'llanadi)
@@ -99,6 +101,7 @@ Wordmark shrifti — Source Serif 4 (SIL Open Font License), matn vektor konturg
 | `TRIAL_DAILY_LIMIT` | sinovda kuniga ko'pi bilan nechta javob tayyorlanadi (default 50; 0 — cheksiz). To'langan obunada cheklov yo'q |
 | `ADMIN_IDS` | admin Telegram ID'lari, vergul bilan: `/stats`, `/refund`; adminlar uchun kotib bepul |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | ixtiyoriy: Google integratsiyasi (pastda). Bo'sh — o'chiq |
+| `YOUTUBE_API_KEY` | ixtiyoriy: YouTube plagini uchun umumiy kalit (YouTube Data API v3). Bo'sh — har mijoz o'z kalitini kiritadi |
 | `GOOGLE_REDIRECT_URL` | ixtiyoriy; default `<MINIAPP_URL domeni>/oauth/google/callback` |
 | `LISTEN` | aniq manzil (masalan `127.0.0.1:8080`); berilmasa `PORT` ishlatiladi |
 | `PORT` | platforma beradi (Railway); `0.0.0.0:$PORT` da tinglanadi. Ikkalasi ham bo'lmasa — `127.0.0.1:8080` |
@@ -196,6 +199,8 @@ yuboriladi va kotib rasm mazmuniga javob qoralamasini tayyorlaydi. Rasmdagi yozu
 | 📱 Telefon avtomatikasi (Shortcuts / MacroDroid havolasi) | — | ✅ |
 | 👥 Bir nechta Telegram akkaunt (+2 ta) | — | ✅ |
 | 📊 Kengaytirilgan statistika va haftalik hisobot | — | ✅ |
+| ⏰ Rejalashtirilgan AI vazifalar | ✅ | ✅ |
+| 🧩 Plaginlar (internet qidiruvi, YouTube, ob-havo, valyuta kursi) | — | ✅ |
 | 🛎 Shoshilinch xabarlar, javobsiz qolganlar, ertalabki brifing, bilim bazasi, kontakt eslatmalari | ✅ | ✅ |
 | 📝 AI xulosa, 🪞 o'qitish/soya rejimi, 🖼 rasmlar, 🎤 ovoz matni, 🎂 tabriklar, `/sor` | — | ✅ |
 
@@ -319,19 +324,53 @@ Xavfsizlik:
   bir necha haftagacha. Pullik xavfsizlik auditi (CASA) faqat restricted scope'lar (Gmail, Drive) uchun — bu yerda shart emas.
 - Maxfiylik siyosatida ko'rsating: band vaqtlar va kontakt eslatmasi javob tayyorlash uchun Gemini'ga yuboriladi.
 
+## Rejalashtirilgan vazifalar (Vazifalar bo'limi)
+
+Claude'dagi *Scheduled* kabi: mijoz AI'ga ko'rsatma (prompt) va vaqt yozadi — kotib o'sha vaqtda
+ko'rsatmani bajaradi va natijani bot chatiga «⏰ Nomi» bilan yuboradi.
+
+- **Takrorlanish**: bir marta (sana + vaqt), har soat (daqiqasi), har kuni, ish kunlari (Du–Ju),
+  haftaning tanlangan kunlari. Vaqt — egasining mintaqasida (Sozlamalar → Tinch soatlar), DST hisobga olinadi.
+- Har vazifani yoqish/o'chirish, tahrirlash, o'chirish va **«Hozir bajarish»** mumkin; oxirgi natija va
+  bajarilishlar soni ko'rinadi. Tayyor namunalar: ob-havo, valyuta kursi, kun yangiliklari, YouTube, motivatsiya.
+- AI vazifani bajarishda **yoqilgan plaginlar** vositalaridan foydalanadi (Gemini function calling,
+  ko'pi bilan 6 aylanish; vosita natijalari — faqat ma'lumot, ichidagi buyruqlar bajarilmaydi).
+- Server o'chiq turgan paytda o'tib ketgan takrorlar yig'ilmaydi: vazifa bir marta bajariladi, keyingisi hozirdan.
+  Har vazifa bazada atomar egallanadi (`ClaimSchedule`) — ikki marta bajarilmaydi.
+- **Tarif**: Advanced va Pro (sinovda ham ochiq). Obuna tugasa vazifalar bajarilmaydi, yaratish/tahrirlash/«Hozir bajarish» yopiladi (402); o'chirish mumkin.
+- Cheklovlar: egasida 20 ta vazifa, kuniga 60 ta bajarilish, ko'rsatma 2000 belgi.
+
+## Plaginlar (connector'lar)
+
+**Faqat Pro tarifda** (sinovda ham ochiq). Advanced'da vazifalar plaginsiz bajariladi; plaginni yoqish 402 qaytaradi, o'chirib qo'yish va uzish har doim mumkin.
+
+Vazifalar → «🧩 Plaginlar» (yoki Sozlamalar → Plaginlar). Har plagin AI'ga vosita beradi; mijoz uni
+yoqadi va sozlaydi. API kalitlari bazada `crypto.Vault` bilan shifrlanadi (AAD — egasi + plagin) va
+Mini App'ga qaytarilmaydi (faqat `••••1234`).
+
+| Plagin | Vosita | Sozlama |
+|---|---|---|
+| 🌐 Internet qidiruvi | `web_search` — Gemini Google Search grounding, manbalari bilan | — |
+| ▶️ YouTube | `youtube_search` — YouTube Data API v3 (nom, kanal, sana, havola) | API kalit (yoki server `YOUTUBE_API_KEY`), mintaqa, saralash |
+| 🌤 Ob-havo | `weather` — Open-Meteo (kalitsiz), 1–7 kun | asosiy shahar |
+| 💱 Valyuta kursi | `exchange_rates` — O'zbekiston Markaziy banki | kuzatiladigan valyutalar |
+| Tez orada | Gmail, Instagram, Notion, Google Drive | — |
+
+Yangi plagin qo'shish: `internal/plugin` da `Plugin` interfeysini (Info, Tools, Call) amalga oshirib,
+`plugin.Default` ro'yxatiga qo'shing — Mini App katalogi va sozlash formasi `Info.Fields` dan avtomatik chiziladi.
+
 ## Telegram akkauntini ulash
 
-Ikki yo'l bor (Mini App → ulash oynasi):
+Faqat **telefon raqam va kod** orqali (Mini App → ulash oynasi): Telegram kodni SMS yoki Telegram
+ilovasiga yuboradi, kod qayerga yuborilgani (Telegram chati, SMS, qo'ng'iroq, email) ko'rsatiladi.
+2FA paroli bo'lsa, alohida so'raladi (saqlanmaydi).
 
-1. **Kodsiz (tavsiya etiladi)** — Telegram Desktop'dagi QR-kirish kabi: server login token oladi
-   (`auth.exportLoginToken`), mijoz «Telegram'da tasdiqlash» tugmasini bosadi va Telegram ilovasida
-   kirishni tasdiqlaydi (`tg://login?token=…`). Tugma ishlamasa — boshqa qurilmadan QR skanerlash
-   (Sozlamalar → Qurilmalar → Kompyuterni ulash). Token ~30 soniyada yangilanadi. SMS/kod yetkazilmasa
-   ham ishlaydi; 2FA paroli bo'lsa, alohida so'raladi.
-2. **Telefon raqam va kod** — kod qayerga yuborilgani (Telegram chati, SMS, qo'ng'iroq, email) ko'rsatiladi.
+Har bosqichda **«Orqaga»** bor (Mini App tugmasi va Telegram BackButton): jarayondagi ulanish
+bekor qilinadi (`POST /api/login/cancel`) va raqam kiritish sahifasiga qaytiladi — kod kelmasa yoki
+raqam xato bo'lsa ilova qotib qolmaydi.
 
-Ikkala yo'lda ham tasdiqlangan akkaunt **Mini App'ni ochgan foydalanuvchining o'zi** bo'lishi shart
-(`self.id == owner`): havolani boshqa odam tasdiqlasa, sessiya darhol uziladi.
+Kirilgan akkaunt **Mini App'ni ochgan foydalanuvchining o'zi** bo'lishi shart (`self.id == owner`):
+boshqa odamning raqami kiritilsa, sessiya darhol uziladi.
 
 ## Telefon qulayliklari (iPhone va Android)
 
@@ -345,7 +384,7 @@ Ikkala yo'lda ham tasdiqlangan akkaunt **Mini App'ni ochgan foydalanuvchining o'
 | **Siri / Google Assistant** | — | `t.me/<bot>?start=pause` va `?start=resume` deep link'lari |
 | **Face ID / barmoq izi** | Hisob → Telefon | Mini App'dan yuborish, avto rejimni yoqish, Google'ni uzish, akkauntni o'chirishdan oldin (shu qurilmada) |
 | **Bosh ekranga qo'shish** | Hisob → Telefon | Telegram `addToHomeScreen` (Telegram 8.0+). Eski ilovada yoki qo'llamaydigan qurilmada qo'lda qo'shish yo'riqnomasi ko'rsatiladi: iPhone — Safari'da `t.me/<bot>?startapp` → «Bosh ekranga»; Android — bot chati ⋮ menyusi. `?startapp` ishlashi uchun @BotFather → Bot Settings → **Configure Mini App** (Main Mini App) yoqilgan bo'lishi kerak |
-| **Orqaga tugmasi** | — | Telegram BackButton (Android tizim tugmasi ham): bo'limdan Asosiy'ga |
+| **Orqaga tugmasi** | — | Telegram BackButton (Android tizim tugmasi ham): ichki sahifadan yoki bo'limdan Asosiy'ga; ulanish jarayonida — raqam kiritishga |
 | **Pastga surib yopilmaslik** | — | `disableVerticalSwipes`: matn yozayotganda ilova tasodifan yopilmaydi |
 
 Avtomatlashtirish havolasi parametrlari: `mode=draft|auto|off`, `away=<matn>` (bo'sh — tozalash), `for=<daqiqa>` (holat shuncha vaqtdan keyin o'zi tugaydi, 1440 gacha), `action=pause|resume`.

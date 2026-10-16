@@ -205,8 +205,8 @@ textarea { min-height: 96px; resize: vertical; line-height: 1.5; }
   padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
 }
 #nav[hidden] { display: none; }
-#nav .inner { max-width: 640px; margin: 0 auto; display: grid; grid-template-columns: repeat(5, 1fr); }
-#nav button { position: relative; border: 0; background: transparent; color: var(--muted); display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 0; font-size: 11px; font-weight: 600; border-radius: 10px; }
+#nav .inner { max-width: 640px; margin: 0 auto; display: grid; grid-template-columns: repeat(6, 1fr); }
+#nav button { position: relative; border: 0; background: transparent; color: var(--muted); display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 0; font-size: 10.5px; font-weight: 600; border-radius: 10px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #nav button.on { color: var(--accent); }
 #nav svg { width: 22px; height: 22px; }
 #nav .count { position: absolute; top: 2px; left: calc(50% + 6px); min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--accent); color: var(--on-accent); font-size: 11px; line-height: 18px; text-align: center; }
@@ -231,8 +231,6 @@ details { margin-top: 10px; }
 details summary { cursor: pointer; color: var(--accent); font-weight: 600; padding: 6px 0; }
 details ol { margin: 6px 0 0; padding-left: 20px; line-height: 1.55; }
 
-/* kodsiz kirish QR */
-img.qr { display: block; margin: 12px auto 4px; width: 220px; height: 220px; background: #fff; padding: 8px; border-radius: 12px; image-rendering: pixelated; }
 a.btn { display: flex; align-items: center; justify-content: center; text-decoration: none; }
 .break { overflow-wrap: anywhere; }
 
@@ -285,3 +283,10 @@ a.btn { display: flex; align-items: center; justify-content: center; text-decora
 .stats-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .stats-table th, .stats-table td { text-align: right; padding: 4px 6px; border-top: 1px solid var(--border); }
 .stats-table th:first-child, .stats-table td:first-child { text-align: left; }
+
+/* rejalashtirilgan vazifalar va plaginlar */
+.pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 6px 0 0; }
+.card .row .switch { margin-left: auto; }
+.plugin-soon { list-style: none; margin: 0; padding: 0; }
+.plugin-soon li + li { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+@media (max-width: 360px) { #nav button { font-size: 9.5px; } }
