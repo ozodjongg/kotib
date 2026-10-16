@@ -143,11 +143,24 @@ func (g *Gemini) generate(ctx context.Context, r Request, extra map[string]any) 
 // send so'rovni yuboradi: 429/5xx va tarmoq xatosida qayta urinadi; gen — body ichidagi
 // generationConfig (model o'ylash sozlamasini qo'llamasa, undan olib tashlanadi).
 func (g *Gemini) send(ctx context.Context, body, gen map[string]any) (string, error) {
+	var text string
+	err := g.retry(ctx, gen, func() error {
+		data, err := g.post(ctx, body)
+		if err == nil {
+			text, err = extractText(data)
+		}
+		return err
+	})
+	return text, err
+}
+
+// retry fn'ni 429/5xx va tarmoq xatosida qayta chaqiradi (ko'pi bilan 3 marta).
+func (g *Gemini) retry(ctx context.Context, gen map[string]any, fn func() error) error {
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
-		text, err := g.call(ctx, body)
+		err := fn()
 		if err == nil {
-			return text, nil
+			return nil
 		}
 		lastErr = err
 		if ctx.Err() != nil {
@@ -160,18 +173,18 @@ func (g *Gemini) send(ctx context.Context, body, gen map[string]any) (string, er
 			delete(gen, "thinkingConfig")
 		case errors.As(err, &se) && (se.code == http.StatusTooManyRequests || se.code >= 500):
 			if sleepCtx(ctx, time.Duration(attempt+1)*g.RetryDelay) != nil {
-				return "", lastErr
+				return lastErr
 			}
 		case errors.As(err, &se), errors.Is(err, ErrEmpty):
-			return "", err // qayta urinish foydasiz
+			return err // qayta urinish foydasiz
 		default:
 			// tarmoq xatosi yoki urinish vaqti tugadi — bir marta qayta urinamiz
 			if attempt >= 1 {
-				return "", err
+				return err
 			}
 		}
 	}
-	return "", lastErr
+	return lastErr
 }
 
 func inline(m *Media) map[string]any {
@@ -180,31 +193,35 @@ func inline(m *Media) map[string]any {
 	}}
 }
 
-func (g *Gemini) call(ctx context.Context, body map[string]any) (string, error) {
+// post bitta generateContent so'rovi: 200 bo'lsa javob tanasi.
+func (g *Gemini) post(ctx context.Context, body map[string]any) ([]byte, error) {
 	raw, _ := json.Marshal(body)
 	endpoint := fmt.Sprintf("%s/v1beta/models/%s:generateContent", strings.TrimRight(g.BaseURL, "/"), url.PathEscape(g.Model))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-goog-api-key", g.APIKey) // URL'da emas — loglarga tushmasin
 
 	resp, err := g.HTTP.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("gemini so'rov: %w", err)
+		return nil, fmt.Errorf("gemini so'rov: %w", err)
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
 		// Javob tanasini logga/mijozga qaytarmaymiz (kalit/kontent bo'lishi mumkin).
-		return "", &httpStatusError{code: resp.StatusCode}
+		return nil, &httpStatusError{code: resp.StatusCode}
 	}
+	return data, nil
+}
 
+// extractText javobdagi birinchi nomzodning matni (o'ylash qismlarisiz).
+func extractText(data []byte) (string, error) {
 	var out struct {
 		Candidates []struct {
-			FinishReason string `json:"finishReason"`
-			Content      struct {
+			Content struct {
 				Parts []struct {
 					Text    string `json:"text"`
 					Thought bool   `json:"thought"`

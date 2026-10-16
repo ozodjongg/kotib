@@ -33,6 +33,9 @@ type Memory struct {
 	chats    map[[2]int64]ChatActivity
 	samples  []StyleSample
 	sampleID int64
+
+	schedules map[int64]Schedule
+	plugins   map[pluginKey]PluginConfig
 }
 
 type usageKey struct {
@@ -128,6 +131,7 @@ func (m *Memory) DeleteAccount(_ context.Context, owner int64) error {
 	delete(m.settings, owner)
 	delete(m.google, owner)
 	delete(m.hooks, owner)
+	m.deleteOwnerSchedules(owner)
 	for k := range m.follow {
 		if k[0] == owner {
 			delete(m.follow, k)

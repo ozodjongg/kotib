@@ -24,6 +24,8 @@ import (
 	"github.com/ozodjongg/secretar_ai_agent/internal/ics"
 	"github.com/ozodjongg/secretar_ai_agent/internal/llm"
 	"github.com/ozodjongg/secretar_ai_agent/internal/miniapp"
+	"github.com/ozodjongg/secretar_ai_agent/internal/plugin"
+	"github.com/ozodjongg/secretar_ai_agent/internal/schedule"
 	"github.com/ozodjongg/secretar_ai_agent/internal/store"
 	"github.com/ozodjongg/secretar_ai_agent/internal/userbot"
 	"github.com/ozodjongg/secretar_ai_agent/migrations"
@@ -160,9 +162,10 @@ func run(log *slog.Logger) error {
 		log.Info("to'lov yoqilgan (Telegram Stars)", "price", price, "pro_price", proPrice, "trial_days", trialDays, "trial_daily_limit", trialDaily)
 	}
 
+	gem := llm.NewGemini(env("GEMINI_API_KEY"), env("GEMINI_MODEL"))
 	mgr := &userbot.Manager{
 		Store: st, Conn: conn, Log: log, Notify: notify,
-		LLM:      llm.NewGemini(env("GEMINI_API_KEY"), env("GEMINI_MODEL")),
+		LLM:      gem,
 		Entitled: bill.Entitled,
 		Quota:    bill.UseQuota,
 		// Kontekst: obunada oxirgi 20 ta, sinovda 8 ta xabar.
@@ -226,12 +229,17 @@ func run(log *slog.Logger) error {
 		Notify: func(ctx context.Context, owner int64, text string, openApp bool) { notify(ctx, owner, text, openApp) },
 	}
 
+	// ---- Plaginlar va rejalashtirilgan vazifalar ----
+	plugins := plugin.Default(plugin.Options{Search: gem, YouTubeKey: env("YOUTUBE_API_KEY")})
+	sched := &schedule.Runner{Store: st, AI: gem, Plugins: plugins, Vault: vault, Entitled: bill.Entitled, Log: log,
+		Notify: func(ctx context.Context, owner int64, text string) { notify(ctx, owner, text, false) }}
+
 	staticDir := env("STATIC_DIR")
 	if staticDir == "" {
 		staticDir = "./webapp"
 	}
 	api := &miniapp.Server{BotToken: env("BOT_TOKEN"), Store: st, Ctl: mgr, Log: log, StaticDir: staticDir,
-		PublicURL: publicURL(env("MINIAPP_URL")), ICS: icsSigner}
+		PublicURL: publicURL(env("MINIAPP_URL")), ICS: icsSigner, Schedules: sched, Plugins: plugins, Vault: vault}
 	if gcli != nil {
 		ctrlBot.Handler.(*botcmd.Handler).Google = gcli
 		api.Google = gcli
@@ -287,6 +295,7 @@ func run(log *slog.Logger) error {
 	}()
 	go janitor(ctx, st, bill, notify, log)
 	go insights(ctx, mgr, gate)
+	go sched.Loop(ctx, gate)
 	go func() {
 		if err := mgr.Start(ctx); err != nil && ctx.Err() == nil {
 			log.Error("sessiyalarni ishga tushirish", "err", err)
@@ -306,6 +315,7 @@ func run(log *slog.Logger) error {
 	defer cancel()
 	_ = srv.Shutdown(shCtx)
 	mgr.Shutdown()
+	sched.Wait()
 	releaseLock() // sessiyalar to'liq uzilgandan KEYIN — yangi nusxa shundan so'ng ulanadi
 	return nil
 }

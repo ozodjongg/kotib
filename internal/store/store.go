@@ -165,6 +165,46 @@ type LinkToken struct {
 	ExpiresAt time.Time
 }
 
+// ScheduleKind — rejalashtirilgan vazifaning takrorlanishi.
+type ScheduleKind string
+
+const (
+	ScheduleOnce     ScheduleKind = "once"
+	ScheduleHourly   ScheduleKind = "hourly"
+	ScheduleDaily    ScheduleKind = "daily"
+	ScheduleWeekdays ScheduleKind = "weekdays" // dushanba–juma
+	ScheduleWeekly   ScheduleKind = "weekly"   // Weekdays bitmaskidagi kunlar
+)
+
+// Schedule — egasi rejalashtirgan AI vazifa: o'sha vaqtda Prompt bajariladi, natija bot chatiga boradi.
+type Schedule struct {
+	ID       int64
+	OwnerID  int64
+	Title    string
+	Prompt   string
+	Kind     ScheduleKind
+	At       string // "HH:MM" egasining mintaqasida (hourly — faqat daqiqasi)
+	Date     string // "YYYY-MM-DD" (faqat once)
+	Weekdays int    // weekly: 1<<time.Weekday bitmaski
+	Enabled  bool
+	NextRun  *time.Time
+	LastRun  *time.Time
+	// LastStatus: "" (hali ishlamagan) | running | ok | error.
+	LastStatus string
+	LastResult string
+	Runs       int
+	CreatedAt  time.Time
+}
+
+// PluginConfig — egasida yoqilgan plagin. Config — shifrlangan JSON (crypto.Vault).
+type PluginConfig struct {
+	OwnerID   int64
+	PluginID  string
+	Enabled   bool
+	Config    []byte
+	UpdatedAt time.Time
+}
+
 type Store interface {
 	// Account
 	UpsertAccount(ctx context.Context, a Account) error
@@ -294,4 +334,28 @@ type Store interface {
 	HasHook(ctx context.Context, owner int64) (bool, error)
 	// OwnerByHook xesh bo'yicha egani topadi (topilmasa ErrNotFound).
 	OwnerByHook(ctx context.Context, tokenHash []byte) (int64, error)
+
+	// Rejalashtirilgan vazifalar (DeleteAccount o'chiradi)
+	CreateSchedule(ctx context.Context, s Schedule) (int64, error)
+	GetSchedule(ctx context.Context, owner, id int64) (Schedule, error)
+	// ListSchedules — egasining vazifalari (yaratilish tartibida).
+	ListSchedules(ctx context.Context, owner int64) ([]Schedule, error)
+	// UpdateSchedule egasi o'zgartiradigan maydonlarni (nom, prompt, jadval, yoqilgan, NextRun) yozadi.
+	UpdateSchedule(ctx context.Context, s Schedule) error
+	DeleteSchedule(ctx context.Context, owner, id int64) error
+	// ListDueSchedules — yoqilgan va NextRun <= before (barcha egalar, eng eskisidan).
+	ListDueSchedules(ctx context.Context, before time.Time, limit int) ([]Schedule, error)
+	// ClaimSchedule vazifani bajarish uchun atomar egallaydi: NextRun hali expected bo'lsa, uni next'ga
+	// (nil — o'chiriladi) o'tkazadi va holatni "running" qiladi. Boshqa nusxa/oqim egallagan bo'lsa false.
+	ClaimSchedule(ctx context.Context, owner, id int64, expected time.Time, next *time.Time, at time.Time) (bool, error)
+	// MarkScheduleRunning — qo'lda («Hozir bajarish») ishga tushirish: NextRun o'zgarmaydi;
+	// vazifa allaqachon bajarilayotgan bo'lsa false.
+	MarkScheduleRunning(ctx context.Context, owner, id int64, at time.Time) (bool, error)
+	// FinishSchedule natijani yozadi (status: ok | error) va Runs'ni oshiradi.
+	FinishSchedule(ctx context.Context, owner, id int64, status, result string) error
+
+	// Plaginlar (DeleteAccount o'chiradi)
+	ListPluginConfigs(ctx context.Context, owner int64) ([]PluginConfig, error)
+	SavePluginConfig(ctx context.Context, c PluginConfig) error
+	DeletePluginConfig(ctx context.Context, owner int64, pluginID string) error
 }

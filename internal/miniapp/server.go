@@ -24,6 +24,7 @@ import (
 	"github.com/ozodjongg/secretar_ai_agent/internal/config"
 	"github.com/ozodjongg/secretar_ai_agent/internal/google"
 	"github.com/ozodjongg/secretar_ai_agent/internal/ics"
+	"github.com/ozodjongg/secretar_ai_agent/internal/plugin"
 	"github.com/ozodjongg/secretar_ai_agent/internal/ratelimit"
 	"github.com/ozodjongg/secretar_ai_agent/internal/store"
 )
@@ -109,6 +110,11 @@ type Server struct {
 	BotUsername string
 	// PublicURL — tashqi manzil (https://domen), avtomatlashtirish havolasi uchun.
 	PublicURL string
+	// Schedules — rejalashtirilgan vazifalarni darhol bajarish (schedule.Runner); nil → funksiya o'chiq.
+	Schedules Scheduler
+	// Plugins — connector'lar katalogi; Vault — ularning sozlamalarini shifrlash. nil → o'chiq.
+	Plugins *plugin.Registry
+	Vault   plugin.Vault
 	// OnGoogle — ulanish natijasi haqida egasiga bot xabari (ixtiyoriy).
 	OnGoogle func(ctx context.Context, owner int64, err error)
 	Log      *slog.Logger
@@ -167,6 +173,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/hook", s.auth(s.handleHookDelete))
 	mux.HandleFunc("GET /hook/{token}", s.handleHook)
 	mux.HandleFunc("POST /hook/{token}", s.handleHook)
+	mux.HandleFunc("GET /api/schedules", s.auth(s.handleListSchedules))
+	mux.HandleFunc("POST /api/schedules", s.auth(s.handleCreateSchedule))
+	mux.HandleFunc("PUT /api/schedules/{id}", s.auth(s.handleUpdateSchedule))
+	mux.HandleFunc("DELETE /api/schedules/{id}", s.auth(s.handleDeleteSchedule))
+	mux.HandleFunc("POST /api/schedules/{id}/run", s.auth(s.handleRunSchedule))
+	mux.HandleFunc("GET /api/plugins", s.auth(s.handleListPlugins))
+	mux.HandleFunc("PUT /api/plugins/{id}", s.auth(s.handleSavePlugin))
+	mux.HandleFunc("DELETE /api/plugins/{id}", s.auth(s.handleDeletePlugin))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
 	if s.StaticDir != "" {
 		mux.Handle("GET /", staticFiles(s.StaticDir))

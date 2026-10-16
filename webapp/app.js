@@ -37,6 +37,8 @@ const EVENTS = {
   shadow_prepared: 'Soya rejimi: javob jim tayyorlandi', shadow_set: "Soya rejimi o'zgartirildi", shadow_report: 'Soya rejimi natijasi yuborildi',
   style_learn_started: "Uslub o'rganish boshlandi", style_learned: 'Uslub profili yangilandi', style_refine_run: "Uslub o'qitish tekshirildi",
   birthdays_checked: "Tug'ilgan kunlar tekshirildi", birthday_draft: "Tug'ilgan kun tabrigi tayyorlandi", ask_answered: '/sor savoliga javob berildi',
+  schedule_created: 'Rejalashtirilgan vazifa yaratildi', schedule_updated: "Vazifa o'zgartirildi", schedule_deleted: "Vazifa o'chirildi",
+  schedule_run: 'Rejalashtirilgan vazifa bajarildi', plugin_enabled: 'Plagin yoqildi', plugin_disabled: "Plagin o'chirildi", plugin_removed: 'Plagin uzildi',
 };
 
 const state = {
@@ -65,6 +67,7 @@ const ICONS = {
   rules: 'M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01',
   settings: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z',
   user: 'M20 21a8 8 0 0 0-16 0M12 13a5 5 0 1 0 0-10 5 5 0 0 0 0 10z',
+  clock: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3 2',
 };
 function icon(name) {
   const svg = document.createElementNS(SVG_NS, 'svg');
@@ -524,13 +527,14 @@ async function pollLogin() {
 
 // ---------- asosiy oyna ----------
 const TABS = [
-  ['home', 'Asosiy', 'home'], ['drafts', 'Qoralamalar', 'inbox'], ['rules', 'Qoidalar', 'rules'],
+  ['home', 'Asosiy', 'home'], ['drafts', 'Qoralama', 'inbox'], ['tasks', 'Vazifalar', 'clock'], ['rules', 'Qoidalar', 'rules'],
   ['settings', 'Sozlamalar', 'settings'], ['account', 'Hisob', 'user'],
 ];
 
 function go(tab) {
-  if (state.tab === tab) return;
+  if (state.tab === tab && !state.sub) return;
   state.tab = tab;
+  state.sub = null;
   haptic('tap');
   window.scrollTo(0, 0);
   renderMain();
@@ -546,12 +550,13 @@ function renderNav() {
 
 function renderMain() {
   renderNav();
-  try { if (tg && tg.BackButton) { if (state.tab === 'home') tg.BackButton.hide(); else tg.BackButton.show(); } } catch (_) { /* */ }
+  try { if (tg && tg.BackButton) { if (state.tab === 'home' && !state.sub) tg.BackButton.hide(); else tg.BackButton.show(); } } catch (_) { /* */ }
   const view = h('div', {});
   swap(root, view);
+  if (state.sub) { state.sub(view); return; } // ichki sahifa (plaginlar, vazifa tahriri)
   const bar = accountBar();
   if (bar) put(view, bar);
-  ({ home: viewHome, drafts: viewDrafts, rules: viewRules, settings: viewSettings, account: viewAccount, stats: viewStats })[state.tab](view);
+  ({ home: viewHome, drafts: viewDrafts, tasks: viewTasks, rules: viewRules, settings: viewSettings, account: viewAccount, stats: viewStats })[state.tab](view);
 }
 
 const STATUS = {
@@ -650,6 +655,7 @@ function viewHome(view) {
       h('ul', { class: 'perks' },
         h('li', {}, "«Sozlamalar»da ismingizni yozing — javoblar tabiiyroq chiqadi"),
         h('li', {}, "«Qoidalar»da oila yoki ishdagilar uchun alohida uslub bering"),
+        h('li', {}, "«Vazifalar»da AI'ga topshiriq rejalashtiring: masalan, har kuni 8:00 da ob-havo va valyuta kursi"),
         h('li', {}, 'Bot menyusidagi /pause — kotibni bir zumda to\'xtatadi'))),
   );
 }
@@ -701,6 +707,230 @@ function draftCard(d) {
         await api('POST', `/drafts/${d.id}/send`, { reply: text.value });
         removeCard(); toast('Yuborildi');
       }) }, 'Yuborish')));
+  return card;
+}
+
+// ---------- Rejalashtirilgan vazifalar ----------
+const KINDS = [['once', 'Bir marta'], ['hourly', 'Har soat'], ['daily', 'Har kuni'], ['weekdays', 'Ish kunlari'], ['weekly', 'Tanlangan kunlar']];
+const WEEK = [[1, 'Du'], [2, 'Se'], [3, 'Ch'], [4, 'Pa'], [5, 'Ju'], [6, 'Sh'], [0, 'Ya']];
+const TASK_TEMPLATES = [
+  ['🌤 Ertalabki ob-havo', 'daily', '07:30', "Bugungi ob-havo qanday? Qisqa ayt va nima kiyish haqida maslahat ber."],
+  ['💱 Valyuta kursi', 'weekdays', '10:00', "Dollar, yevro va rubl kursini kechagiga nisbatan o'zgarishi bilan ayt."],
+  ['📰 Kun yangiliklari', 'daily', '20:00', "O'zbekiston va dunyoning bugungi eng muhim 5 ta yangiligini qisqa xulosa qil, manbalari bilan."],
+  ['▶️ YouTube yangi videolar', 'weekly', '19:00', "YouTube'da oxirgi 7 kunda chiqqan Go dasturlash bo'yicha eng yaxshi 5 ta videoni top."],
+  ['💡 Motivatsiya', 'weekdays', '08:00', "Ish kunini boshlash uchun qisqa, samimiy motivatsiya yoz (2–3 jumla)."],
+];
+
+// fmtRun — vazifa vaqti egasining vaqt mintaqasida (Sozlamalar → Tinch soatlar), qurilmaniki emas.
+function fmtRun(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const o = { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' };
+  try { return d.toLocaleString('uz-UZ', Object.assign({ timeZone: state.taskTZ || undefined }, o)); } catch (_) { return d.toLocaleString('uz-UZ', o); }
+}
+
+function todayISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+async function viewTasks(view) {
+  const head = h('div', { class: 'card-head' }, h('h1', {}, 'Vazifalar'),
+    h('button', { class: 'btn ghost sm', onclick: () => openPlugins() }, '🧩 Plaginlar'));
+  put(view, head, h('p', { class: 'muted' }, "AI'ga topshiriq bering — kotib uni belgilangan vaqtda bajarib, natijani bot chatiga yuboradi. Bir martalik yoki takroriy."),
+    h('div', { class: 'skeleton' }));
+  let data;
+  try { data = await api('GET', '/schedules'); } catch (e) { swap(view, head, h('p', { class: 'err' }, e.message)); return; }
+  if (state.tab !== 'tasks' || state.sub) return;
+  state.taskTZ = data.tz;
+  const b = state.me.billing || {};
+  const items = data.items || [];
+  const kids = [head, h('p', { class: 'muted' }, "AI'ga topshiriq bering — kotib uni belgilangan vaqtda bajarib, natijani bot chatiga yuboradi. Bir martalik yoki takroriy.")];
+  if (b.enabled && !b.active) kids.push(h('div', { class: 'card accent' }, h('p', { class: 'small' }, "Obuna faol emas — vazifalar bajarilmaydi."),
+    h('button', { class: 'btn ghost sm', onclick: () => go('account') }, 'Obunani yoqish')));
+  kids.push(h('div', { class: 'card soft' },
+    h('p', { class: 'small' }, h('b', {}, 'Ulangan plaginlar: '), data.plugins && data.plugins.length ? data.plugins.join(', ') : "yo'q"),
+    h('p', { class: 'small muted' }, "Plaginlar AI'ga internetdan qidirish, YouTube, ob-havo, valyuta kursi kabi imkoniyatlar beradi."),
+    h('button', { class: 'btn ghost sm', onclick: () => openPlugins() }, 'Plaginlarni sozlash')));
+  if (!items.length) {
+    kids.push(h('div', { class: 'empty' }, h('div', { class: 'big' }, "Hali vazifa yo'q"), h('p', { class: 'muted' }, 'Quyidagi tayyor namunalardan boshlang yoki o\'zingiz yozing.')));
+  } else {
+    kids.push(...items.map((t) => taskCard(t)));
+  }
+  if (items.length < data.max) {
+    kids.push(h('button', { class: 'btn block', onclick: () => openTaskEditor(null) }, '+ Yangi vazifa'));
+    kids.push(h('h2', {}, 'Tayyor namunalar'),
+      h('div', { class: 'chips' }, TASK_TEMPLATES.map(([title, kind, at, prompt]) => h('button', { class: 'chip-btn', onclick: () =>
+        openTaskEditor({ title: title.replace(/^\S+\s/, ''), prompt, kind, at, weekdays: kind === 'weekly' ? 2 : 0, date: '', enabled: true }) }, title))));
+  } else {
+    kids.push(h('p', { class: 'muted small center' }, `Ko'pi bilan ${data.max} ta vazifa.`));
+  }
+  kids.push(h('p', { class: 'muted small center' }, `Vaqt mintaqasi: ${data.tz} (Sozlamalar → Tinch soatlar).`));
+  swap(view, kids);
+}
+
+function taskStatus(t) {
+  if (t.last_status === 'running') return h('span', { class: 'badge accent' }, 'Bajarilmoqda…');
+  if (!t.enabled) return h('span', { class: 'badge' }, t.runs && t.kind === 'once' ? 'Bajarildi' : "O'chiq");
+  if (t.last_status === 'error') return h('span', { class: 'badge bad' }, 'Xato');
+  return h('span', { class: 'badge ok' }, 'Faol');
+}
+
+function taskCard(t) {
+  const result = t.last_result ? h('details', {}, h('summary', { class: 'small' }, `Oxirgi natija · ${fmtRun(t.last_run)}`),
+    h('p', { class: 'small pre' }, t.last_result)) : null;
+  return h('div', { class: 'card' },
+    h('div', { class: 'card-head' }, h('h3', {}, t.title), taskStatus(t)),
+    h('p', { class: 'small muted' }, '🕒 ' + t.describe + (t.enabled && t.next_run ? ` · keyingisi ${fmtRun(t.next_run)}` : '') + (t.runs ? ` · ${t.runs} marta bajarildi` : '')),
+    result,
+    h('div', { class: 'row' },
+      h('button', { class: 'btn ghost sm', onclick: busy(async () => {
+        await api('POST', `/schedules/${t.id}/run`);
+        toast('Bajarilmoqda — natija bot chatiga keladi');
+        setTimeout(() => { if (state.tab === 'tasks' && !state.sub) renderMain(); }, 1500);
+      }) }, '▶ Hozir bajarish'),
+      h('button', { class: 'btn ghost sm', onclick: () => openTaskEditor(t) }, 'Tahrirlash'),
+      switchMini(t.enabled, async (on) => {
+        await api('PUT', `/schedules/${t.id}`, taskPayload(t, { enabled: on }));
+        toast(on ? 'Yoqildi' : "O'chirildi"); renderMain();
+      })));
+}
+
+// switchMini — kartadagi kichik yoqish/o'chirish tugmasi (xato bo'lsa holat qaytadi).
+function switchMini(checked, onchange) {
+  const input = h('input', { type: 'checkbox', checked: !!checked, 'aria-label': 'Yoqish', onchange: async (e) => {
+    haptic('tap');
+    const v = e.target.checked;
+    try { await onchange(v); } catch (err) { e.target.checked = !v; fail(err); }
+  } });
+  return h('label', { class: 'switch' }, input, h('span', {}));
+}
+
+function taskPayload(t, over) {
+  const p = { title: t.title || '', prompt: t.prompt || '', kind: t.kind, at: t.at, date: t.date || '', weekdays: t.weekdays || 0, enabled: !!t.enabled };
+  return Object.assign(p, over || {});
+}
+
+function openTaskEditor(t) {
+  state.sub = (view) => taskEditor(view, t);
+  haptic('tap'); window.scrollTo(0, 0); renderMain();
+}
+function closeSub() { state.sub = null; renderMain(); }
+
+function taskEditor(view, orig) {
+  const editing = !!(orig && orig.id);
+  const t = Object.assign({ title: '', prompt: '', kind: 'daily', at: '09:00', date: todayISO(), weekdays: 2, enabled: true }, orig || {});
+  if (!t.date) t.date = todayISO();
+  if (!t.weekdays) t.weekdays = 2;
+  const title = h('input', { type: 'text', maxlength: 80, value: t.title, placeholder: "Masalan: Ertalabki ob-havo" });
+  const prompt = h('textarea', { maxlength: 2000, rows: 5, placeholder: "AI nima qilsin? Masalan: «Bugungi Toshkent ob-havosini va dollar kursini ayt»" }, t.prompt);
+  const counter = h('div', { class: 'counter' });
+  const upd = () => { counter.textContent = prompt.value.length + ' / 2000'; };
+  prompt.addEventListener('input', upd); upd();
+  const when = h('div', {});
+  const kindSeg = h('div', { class: 'chips' });
+  const drawKind = () => {
+    swap(kindSeg, KINDS.map(([k, label]) => h('button', { class: 'chip-btn' + (t.kind === k ? ' on' : ''), onclick: () => { t.kind = k; haptic('tap'); drawKind(); } }, label)));
+    const time = h('input', { type: 'time', value: t.at, onchange: (e) => { t.at = e.target.value; } });
+    const parts = [];
+    if (t.kind === 'once') parts.push(field('Sana', h('input', { type: 'date', value: t.date, min: todayISO(), onchange: (e) => { t.date = e.target.value; } })));
+    if (t.kind === 'weekly') {
+      parts.push(field('Kunlar', h('div', { class: 'chips' }, WEEK.map(([d, label]) => h('button', { class: 'chip-btn' + (t.weekdays & (1 << d) ? ' on' : ''),
+        onclick: (e) => { t.weekdays ^= (1 << d); e.currentTarget.classList.toggle('on'); haptic('tap'); } }, label)))));
+    }
+    if (t.kind === 'hourly') {
+      const min = h('select', { onchange: (e) => { t.at = '00:' + e.target.value; } },
+        ['00', '05', '10', '15', '20', '25', '30', '35', '40', '45', '50', '55'].map((m) => h('option', { value: m, selected: t.at.slice(3) === m }, ':' + m)));
+      if (!/^00:(00|05|10|15|20|25|30|35|40|45|50|55)$/.test(t.at)) t.at = '00:00';
+      parts.push(field('Har soatning qaysi daqiqasida', min));
+    } else {
+      parts.push(field('Vaqt', time, "Sizning vaqt mintaqangizda (Sozlamalar → Tinch soatlar)."));
+    }
+    swap(when, parts);
+  };
+  drawKind();
+  const save = busy(async () => {
+    const body = taskPayload(t, { title: title.value, prompt: prompt.value, enabled: editing ? !!t.enabled : true });
+    if (t.kind === 'weekly' && !t.weekdays) throw new Error('Kamida bitta kunni tanlang');
+    if (editing) await api('PUT', `/schedules/${t.id}`, body); else await api('POST', '/schedules', body);
+    toast(editing ? 'Saqlandi' : 'Vazifa yaratildi');
+    closeSub();
+  });
+  put(view,
+    h('div', { class: 'card-head' }, h('h1', {}, editing ? 'Vazifani tahrirlash' : 'Yangi vazifa'),
+      h('button', { class: 'btn ghost sm', onclick: closeSub }, '← Orqaga')),
+    h('div', { class: 'card' },
+      field("AI uchun ko'rsatma", [prompt, counter], "Aniq yozing: nima kerak, qanday ko'rinishda. Kerak bo'lsa AI ulangan plaginlardan (internet, YouTube, ob-havo...) foydalanadi."),
+      field('Nomi (ixtiyoriy)', title)),
+    h('div', { class: 'card' }, field('Qachon', kindSeg), when),
+    h('button', { class: 'btn block', onclick: save }, editing ? 'Saqlash' : 'Yaratish'),
+    editing ? h('button', { class: 'btn danger-ghost block', onclick: busy(async () => {
+      if (!(await confirmBox(`«${t.title}» vazifasi o'chirilsinmi?`))) return;
+      await api('DELETE', `/schedules/${t.id}`); toast("O'chirildi"); closeSub();
+    }) }, "Vazifani o'chirish") : null);
+  setTimeout(() => { if (!editing && !t.prompt) prompt.focus(); }, 50);
+}
+
+// ---------- Plaginlar ----------
+function openPlugins() {
+  state.sub = viewPlugins;
+  haptic('tap'); window.scrollTo(0, 0); renderMain();
+}
+
+async function viewPlugins(view) {
+  const head = h('div', { class: 'card-head' }, h('h1', {}, 'Plaginlar'), h('button', { class: 'btn ghost sm', onclick: closeSub }, '← Orqaga'));
+  put(view, head, h('div', { class: 'skeleton' }));
+  let list;
+  try { list = await api('GET', '/plugins'); } catch (e) { swap(view, head, h('p', { class: 'err' }, e.message)); return; }
+  if (state.sub !== viewPlugins) return;
+  const ready = list.filter((p) => !p.soon), soon = list.filter((p) => p.soon);
+  swap(view, head,
+    h('p', { class: 'muted' }, "Plaginlar (connector'lar) kotibga tashqi xizmatlardan foydalanish imkonini beradi. Yoqilgan plaginlardan rejalashtirilgan vazifalar foydalanadi."),
+    ready.map(pluginCard),
+    soon.length ? h('h2', {}, 'Tez orada') : null,
+    soon.length ? h('div', { class: 'card soft' }, h('ul', { class: 'plugin-soon' }, soon.map((p) =>
+      h('li', {}, h('b', {}, `${p.icon} ${p.name}`), h('div', { class: 'small muted' }, p.description))))) : null);
+}
+
+function pluginCard(p) {
+  const card = h('div', { class: 'card' });
+  const draw = (open) => {
+    const inputs = {};
+    const fields = (p.fields || []).map((f) => {
+      let control;
+      if (f.type === 'select') {
+        control = h('select', {}, f.options.map((o) => h('option', { value: o.value, selected: (p.config[f.key] || f.default) === o.value }, o.label)));
+      } else {
+        control = h('input', { type: f.type === 'secret' ? 'password' : 'text', maxlength: 200, autocomplete: 'off',
+          value: f.type === 'secret' ? '' : (p.config[f.key] || ''),
+          placeholder: f.type === 'secret' && p.config[f.key] ? `Saqlangan: ${p.config[f.key]} (o'zgartirish uchun yangisini yozing)` : (f.placeholder || f.default || '') });
+      }
+      inputs[f.key] = control;
+      return field(f.label + (f.required ? '' : ' (ixtiyoriy)'), control, f.help);
+    });
+    const collect = () => Object.fromEntries(Object.entries(inputs).map(([k, el]) => [k, el.value]));
+    const saveWith = async (enabled) => {
+      const res = await api('PUT', `/plugins/${p.id}`, { enabled, config: collect() });
+      Object.assign(p, res); toast(enabled ? `${p.name} yoqildi` : `${p.name} o'chirildi`); draw(false);
+    };
+    swap(card,
+      h('div', { class: 'card-head' }, h('h3', {}, `${p.icon} ${p.name}`),
+        p.fields && p.fields.length && !p.configured && !open ? h('span', { class: 'badge' }, p.category) : switchMini(p.enabled, async (on) => {
+          if (on && p.fields && p.fields.some((f) => f.required) && !p.configured) { draw(true); throw new Error('Avval sozlang'); }
+          await saveWith(on);
+        })),
+      h('p', { class: 'small muted' }, p.description),
+      p.examples && p.examples.length ? h('p', { class: 'small' }, '💡 ' + p.examples[0]) : null,
+      open ? h('div', { class: 'stack' }, fields,
+        h('button', { class: 'btn block', onclick: busy(() => saveWith(true)) }, 'Saqlash va yoqish'),
+        p.configured ? h('button', { class: 'btn danger-ghost block', onclick: busy(async () => {
+          if (!(await confirmBox(`${p.name} uzilsinmi? Sozlamalari (API kalit) o'chiriladi.`))) return;
+          await api('DELETE', `/plugins/${p.id}`); Object.assign(p, { enabled: false, configured: false, config: {} }); toast('Uzildi'); draw(false);
+        }) }, 'Uzish') : null,
+        h('button', { class: 'btn ghost block', onclick: () => draw(false) }, 'Bekor qilish'))
+        : (p.fields && p.fields.length ? h('button', { class: 'btn ghost sm', onclick: () => draw(true) }, p.configured ? 'Sozlash' : 'Ulash') : null));
+  };
+  draw(false);
   return card;
 }
 
@@ -796,6 +1026,12 @@ function viewSettings(view) {
       switchRow('Qoralamalar bot chatida', "Qoralama botga tugmalar bilan keladi: bir bosishda yuborasiz yoki xabarga javob qilib matnni o'zgartirasiz. Matnlar bot chatida saqlanib qoladi.", s.drafts_in_bot, (v) => { s.drafts_in_bot = v; })),
     h('h2', {}, 'Kunlik yordamchi'),
     notifyCard(s),
+    h('h2', {}, 'Plaginlar'),
+    h('div', { class: 'card' },
+      h('p', { class: 'small muted' }, "Internet qidiruvi, YouTube, ob-havo, valyuta kursi — kotibga tashqi xizmatlarni ulang. Rejalashtirilgan vazifalar ulardan foydalanadi."),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn ghost sm', onclick: () => openPlugins() }, '🧩 Plaginlarni sozlash'),
+        h('button', { class: 'btn ghost sm', onclick: () => go('tasks') }, '🕒 Vazifalar'))),
     h('h2', {}, "O'qitish rejimi"),
     styleCard(s),
     h('h2', {}, 'Bilim bazasi'),
