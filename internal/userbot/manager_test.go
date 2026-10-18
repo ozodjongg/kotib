@@ -323,3 +323,27 @@ func TestCancelLoginReturnsToIdle(t *testing.T) {
 	m.CancelLogin(7)
 	m.CancelLogin(7) // ikki marta — xavfsiz
 }
+
+// Regressiya: Saved Messages'ga forward qilingan xabar (out=false) kiruvchi deb qabul qilinib,
+// kotib o'zi-o'ziga javob yozardi va har javobga yana javob — cheksiz zanjir.
+func TestRouteIgnoresSavedMessages(t *testing.T) {
+	p := &Pipeline{Debounce: time.Hour}
+	ctx := context.Background()
+	route(ctx, 7, p, Incoming{ChatID: 7, MsgID: 1, Text: "Salom, keyinroq o'zim yozaman."})
+	p.mu.Lock()
+	n := len(p.pending)
+	p.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("Saved Messages xabari pipeline'ga tushdi: pending=%d", n)
+	}
+	route(ctx, 7, p, Incoming{ChatID: 42, MsgID: 2, Text: "Salom"})
+	p.mu.Lock()
+	n = len(p.pending)
+	if pc := p.pending[42]; pc != nil && pc.timer != nil && pc.timer.Stop() {
+		p.wg.Done()
+	}
+	p.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("oddiy chat xabari pipeline'ga tushmadi: pending=%d", n)
+	}
+}

@@ -211,6 +211,9 @@ func (c *GotdConnector) Run(ctx context.Context, owner int64, onReady func(Teleg
 		if config.IsTelegramService(pu.UserID) {
 			return nil // login kodlari: pipeline'ga ham, AI'ga ham bormaydi
 		}
+		if pu.UserID == owner {
+			return nil // Saved Messages: forward qilingan xabarlar out=false keladi — javob yozilmaydi
+		}
 		if m.Out {
 			// Egasi o'zi (boshqa qurilmadan) yozdi: faollik va o'qitish rejimi uchun.
 			if m.Message != "" {
