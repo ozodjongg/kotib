@@ -237,7 +237,8 @@ async function boot() {
     swap(root, h('div', { class: 'empty' },
       h('img', { class: 'logo', src: 'logo.svg', alt: 'Kotib', width: 56, height: 56 }),
       h('div', { class: 'big' }, 'Ilovani Telegram ichidan oching'),
-      h('p', { class: 'muted' }, 'Kotib faqat Telegram bot orqali ishlaydi: botga /start yozing va «Ochish» tugmasini bosing.')));
+      h('p', { class: 'muted' }, 'Kotib faqat Telegram bot orqali ishlaydi: botga /start yozing va «Ochish» tugmasini bosing.'),
+      h('p', { class: 'small' }, legalLink('/privacy', 'Maxfiylik siyosati'), ' · ', legalLink('/terms', 'Foydalanish shartlari'))));
     return;
   }
   try { state.account = +localStorage.getItem(ACC_KEY) || null; } catch (_) { /* */ }
@@ -407,6 +408,13 @@ function render() {
   renderMain();
 }
 
+// legalLink — huquqiy sahifa havolasi: Telegram ichida tashqi brauzerda ochiladi.
+function legalLink(path, label) {
+  return h('a', { href: path, target: '_blank', rel: 'noopener', onclick: (e) => {
+    if (tg && tg.openLink) { e.preventDefault(); tg.openLink(location.origin + path); }
+  } }, label);
+}
+
 // ---------- rozilik ----------
 function steps(n) { return h('div', { class: 'steps' }, [1, 2, 3].map((i) => h('i', { class: i <= n ? 'on' : '' }))); }
 
@@ -435,7 +443,7 @@ function renderConsent() {
       b.enabled ? h('p', { class: 'muted' }, `Birinchi ${b.trial_days} kun bepul${b.trial_daily_limit ? ` (kuniga ${b.trial_daily_limit} tagacha javob)` : ''}, keyin oyiga ${b.price} ⭐ (Telegram Stars).`) : null),
     h('div', { class: 'card soft' },
       h('p', { class: 'small muted' }, "Muhim: Telegram avtomatik javoblarni cheklashi mumkin — akkauntingiz cheklanish xavfi doim mavjud. Suhbatdoshlaringizning xabarlari javob tayyorlash uchun AI xizmatiga (Google Gemini) yuboriladi. Javoblar siz nomidan ketadi — mas'uliyat sizda."),
-      h('label', { class: 'row' }, agree, h('span', { class: 'small' }, 'Tushundim va roziman'))),
+      h('label', { class: 'row nowrap' }, agree, h('span', { class: 'small' }, 'Tushundim va ', legalLink('/terms', 'Foydalanish shartlari'), ' hamda ', legalLink('/privacy', 'Maxfiylik siyosati'), 'ga roziman'))),
     go);
 }
 
