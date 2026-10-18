@@ -181,6 +181,20 @@ func (m *Manager) startWorker(owner int64) {
 	}()
 }
 
+// route kiruvchi xabarni pipeline'ga yo'naltiradi. "Saved Messages" (egasining o'zi bilan
+// chat) e'tiborsiz qoldiriladi: u yerga forward qilingan xabarlar Telegram'da kiruvchi
+// (out=false) bo'lib keladi va kotib ularga o'zi-o'ziga javob yozib, cheksiz zanjir hosil qilardi.
+func route(ctx context.Context, owner int64, pipe *Pipeline, in Incoming) {
+	if in.ChatID == owner {
+		return
+	}
+	if in.Outgoing {
+		pipe.OwnerMessage(ctx, in.ChatID, in.Text)
+		return
+	}
+	pipe.Submit(ctx, in)
+}
+
 // runLoop: ulanishni ushlab turadi; vaqtinchalik xatolarda eksponensial kutish bilan qayta ulanadi.
 func (m *Manager) runLoop(ctx context.Context, owner int64, w *worker) {
 	backoff := 5 * time.Second
@@ -193,13 +207,7 @@ func (m *Manager) runLoop(ctx context.Context, owner int64, w *worker) {
 				w.mu.Unlock()
 				w.pipe.SetTG(tg)
 			},
-			func(in Incoming) {
-				if in.Outgoing {
-					w.pipe.OwnerMessage(ctx, in.ChatID, in.Text)
-					return
-				}
-				w.pipe.Submit(ctx, in)
-			},
+			func(in Incoming) { route(ctx, owner, w.pipe, in) },
 		)
 		w.mu.Lock()
 		w.tg = nil
