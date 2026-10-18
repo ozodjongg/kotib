@@ -347,3 +347,23 @@ func TestRouteIgnoresSavedMessages(t *testing.T) {
 		t.Fatalf("oddiy chat xabari pipeline'ga tushmadi: pending=%d", n)
 	}
 }
+
+func TestBannedCannotResumeOrLogin(t *testing.T) {
+	m, st := newManager(&fakeConn{})
+	ctx := context.Background()
+	_ = st.UpsertAccount(ctx, store.Account{OwnerID: 7, Status: store.StatusPaused})
+	_ = st.SaveSession(ctx, 7, []byte("x"))
+	_ = st.SetBan(ctx, store.Ban{OwnerID: 7, By: 1})
+	if err := m.Resume(ctx, 7); !errors.Is(err, ErrBanned) {
+		t.Fatalf("resume: %v", err)
+	}
+	if err := m.BeginLogin(ctx, 7, "+998901234567"); !errors.Is(err, ErrBanned) {
+		t.Fatalf("login: %v", err)
+	}
+	m.mu.Lock()
+	_, running := m.workers[7]
+	m.mu.Unlock()
+	if running {
+		t.Fatal("bloklangan worker ishga tushdi")
+	}
+}

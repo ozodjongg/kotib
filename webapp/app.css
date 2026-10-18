@@ -292,3 +292,22 @@ a.btn { display: flex; align-items: center; justify-content: center; text-decora
 .plugin-soon { list-style: none; margin: 0; padding: 0; }
 .plugin-soon li + li { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
 @media (max-width: 360px) { #nav button { font-size: 9.5px; } }
+
+/* ---------- Admin paneli ---------- */
+h4 { font-size: 15px; margin: 18px 0 6px; }
+.row-between { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.adm-user { display: block; width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.adm-user .chips { margin: 8px 0 6px; }
+.adm-name { min-width: 0; overflow-wrap: anywhere; }
+.bar-list { list-style: none; margin: 0; padding: 0; }
+.bar-list li { padding: 7px 0; font-size: 14.5px; }
+.bar-list li.link { cursor: pointer; }
+.bar-list li.link span { text-decoration: underline; text-decoration-color: var(--border); text-underline-offset: 3px; }
+.bar-list .track { height: 6px; border-radius: 999px; background: var(--surface-2); margin-top: 5px; overflow: hidden; }
+.bar-list .fill { display: block; height: 100%; border-radius: 999px; background: var(--muted); }
+.bar-list .fill.ok { background: var(--ok); }
+.bar-list .fill.warn { background: var(--warn); }
+.bar-list .fill.bad { background: var(--danger); }
+.note-list { list-style: none; padding: 0; margin: 8px 0; }
+.note-list li { padding: 4px 0 4px 18px; position: relative; font-size: 14px; }
+.note-list li::before { content: "•"; position: absolute; left: 4px; color: var(--warn); font-weight: 700; }

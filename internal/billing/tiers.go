@@ -89,6 +89,9 @@ func (s *Service) Tier(ctx context.Context, owner int64) Tier {
 // HasPro — Pro funksiyalari (ovoz, Google, avtomatika) ochiqmi: Pro tarif, sinov, admin,
 // to'lov o'chiq yoki bitta tarif (ProPrice = 0) bo'lsa — faol obunada.
 func (s *Service) HasPro(ctx context.Context, owner int64) bool {
+	if s.Banned(ctx, owner) {
+		return false
+	}
 	switch s.Tier(ctx, owner) {
 	case TierPro, TierTrial:
 		return true

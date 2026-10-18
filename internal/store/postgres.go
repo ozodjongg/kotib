@@ -31,10 +31,10 @@ func (p *Postgres) UpsertAccount(ctx context.Context, a Account) error {
 func (p *Postgres) GetAccount(ctx context.Context, owner int64) (Account, error) {
 	var a Account
 	var st string
-	var consent sql.NullTime
+	var consent, seen sql.NullTime
 	err := p.DB.QueryRowContext(ctx,
-		`SELECT owner_id, status, status_note, consent_at, created_at FROM accounts WHERE owner_id = $1`, owner).
-		Scan(&a.OwnerID, &st, &a.StatusNote, &consent, &a.CreatedAt)
+		`SELECT owner_id, status, status_note, consent_at, created_at, tg_name, tg_username, seen_at FROM accounts WHERE owner_id = $1`, owner).
+		Scan(&a.OwnerID, &st, &a.StatusNote, &consent, &a.CreatedAt, &a.Name, &a.Username, &seen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Account{}, ErrNotFound
 	}
@@ -42,10 +42,7 @@ func (p *Postgres) GetAccount(ctx context.Context, owner int64) (Account, error)
 		return Account{}, err
 	}
 	a.Status = AccountStatus(st)
-	if consent.Valid {
-		t := consent.Time
-		a.ConsentAt = &t
-	}
+	a.ConsentAt, a.SeenAt = timePtr(consent), timePtr(seen)
 	return a, nil
 }
 

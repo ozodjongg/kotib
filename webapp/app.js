@@ -255,6 +255,7 @@ async function boot() {
       h('button', { class: 'btn', onclick: () => location.reload() }, 'Qayta urinish')));
     return;
   }
+  if (state.me.banned) { render(); return; }
   if (state.me.consented && needsConnect()) await resumeLogin();
   render();
   setInterval(backgroundRefresh, 20000);
@@ -278,6 +279,7 @@ function accountLabel() {
 
 async function loadAccountData() {
   await refreshMe();
+  if (state.me.banned) return; // bloklangan: faqat holat ko'rsatiladi (boshqa API yopiq)
   state.settings = await api('GET', '/settings');
   if (!Array.isArray(state.settings.rules)) state.settings.rules = [];
   state.savedMode = state.settings.mode;
@@ -394,6 +396,7 @@ async function cancelLogin() {
 }
 
 function render() {
+  if (state.me.banned) return renderBanned();
   if (!state.me.consented) return renderConsent();
   if (needsConnect()) {
     renderConnect();
@@ -406,6 +409,18 @@ function render() {
     return;
   }
   renderMain();
+}
+
+function renderBanned() {
+  nav.hidden = true;
+  const ban = state.me.banned;
+  swap(root, h('div', { class: 'empty' },
+    h('img', { class: 'logo', src: 'logo.svg', alt: 'Kotib', width: 56, height: 56 }),
+    h('div', { class: 'big' }, '⛔ Akkaunt bloklangan'),
+    h('p', { class: 'muted' }, "Administrator akkauntingizni blokladi — kotib ishlamaydi."),
+    ban.reason ? h('p', { class: 'small' }, 'Sabab: ' + ban.reason) : null,
+    h('p', { class: 'muted small' }, "Xato deb hisoblasangiz, administrator bilan bog'laning."),
+    h('p', { class: 'small' }, legalLink('/terms', 'Foydalanish shartlari'))));
 }
 
 // legalLink — huquqiy sahifa havolasi: Telegram ichida tashqi brauzerda ochiladi.
@@ -568,7 +583,7 @@ function renderMain() {
   if (state.sub) { state.sub(view); return; } // ichki sahifa (plaginlar, vazifa tahriri)
   const bar = accountBar();
   if (bar) put(view, bar);
-  ({ home: viewHome, drafts: viewDrafts, tasks: viewTasks, rules: viewRules, settings: viewSettings, account: viewAccount, stats: viewStats })[state.tab](view);
+  ({ home: viewHome, drafts: viewDrafts, tasks: viewTasks, rules: viewRules, settings: viewSettings, account: viewAccount, stats: viewStats, admin: viewAdmin })[state.tab](view);
 }
 
 const STATUS = {
@@ -627,6 +642,7 @@ function viewHome(view) {
   const running = me.status === 'active';
   const modeName = { draft: 'Qoralama', auto: 'Avtomatik', off: "O'chiq" }[state.settings.mode] || state.settings.mode;
 
+  if (me.admin && !isChild()) put(view, adminEntry());
   put(view, 
     h('div', { class: 'hero' },
       h('div', { class: 'eyebrow' }, 'Kotib'),
@@ -1671,8 +1687,12 @@ function plansBlock(b, switching) {
 
 function subscriptionCard(b) {
   if (b.exempt) {
-    return h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Obuna'), h('span', { class: 'badge ok' }, 'Admin')),
-      h('p', { class: 'muted small' }, "Siz administratorsiz — kotib siz uchun bepul ishlaydi."));
+    return h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, '👑 Admin obunasi'), h('span', { class: 'badge ok' }, 'Faol · muddatsiz')),
+      h('ul', { class: 'perks' },
+        h('li', {}, 'Barcha Pro funksiyalari ochiq'),
+        h('li', {}, 'Kunlik limit va to\'lov yo\'q'),
+        h('li', {}, "Faqat ADMIN_IDS ro'yxatidagilar uchun — sotib olinmaydi, boshqaga berilmaydi")),
+      state.me.admin ? h('button', { class: 'btn ghost block', onclick: () => openAdmin() }, '👑 Admin paneli') : null);
   }
   const total = b.paid ? 30 : Math.max(1, b.trial_days || 1);
   const pct = Math.max(0, Math.min(100, (b.days_left / total) * 100));
@@ -1696,7 +1716,7 @@ function subscriptionCard(b) {
       ? h('span', { class: 'badge ok' }, `Bonus · ${b.days_left} kun`)
       : h('span', { class: 'badge ' + (b.on_trial ? 'accent' : 'bad') }, b.on_trial ? `Sinov · ${b.days_left} kun` : 'Faol emas');
     body = [
-      b.bonus ? h('p', { class: 'small' }, `🎁 Do'st taklifi uchun bonus: ${fmtDate(b.bonus_until)} gacha cheklovsiz ishlaydi. Keyin davom ettirish uchun obuna bo'ling.`) : null,
+      b.bonus ? h('p', { class: 'small' }, `🎁 Bonus (sovg'a yoki do'st taklifi): ${fmtDate(b.bonus_until)} gacha cheklovsiz ishlaydi. Keyin davom ettirish uchun obuna bo'ling.`) : null,
       b.on_trial && tiered(b) ? h('p', { class: 'small muted' }, "Sinov davrida Pro funksiyalari ham ochiq. Tugagach, tarifni tanlang:") : null,
       ...(tiered(b) ? [
         b.on_trial ? h('div', { class: 'progress' }, h('i', { 'data-w': pct })) : null,
@@ -1801,6 +1821,274 @@ async function viewStats(view) {
           h('thead', {}, h('tr', {}, h('th', {}, 'Kun'), h('th', {}, 'Tayyorlangan'), h('th', {}, 'Yuborilgan'))),
           h('tbody', {}, series.slice().reverse().map((d) => h('tr', {}, h('td', {}, fmtDay(d.day)), h('td', {}, String(d.prepared)), h('td', {}, String(d.sent)))))))),
     h('p', { class: 'muted small center' }, "Har dushanba soat 9:00 da haftalik hisobot botga keladi (Sozlamalarda o'chirish mumkin)."));
+}
+
+// ---------- Admin paneli (faqat ADMIN_IDS) ----------
+const MODE_LABELS = { draft: 'Qoralama', auto: 'Avtomatik', shadow: 'Soya', off: "O'chiq" };
+const SAFETY = { safe: ['Xavfsiz', 'ok'], medium: ["O'rta xavf", 'warn'], high: ['Yuqori xavf', 'bad'] };
+const SIGNAL = { ok: ['Foydali', 'ok'], idle: ['Nofaol', ''], watch: ['Kuzatish kerak', 'warn'], suspicious: ['Shubhali', 'bad'] };
+const ADMIN_FILTERS = [['all', 'Hammasi'], ['active', 'Faol'], ['auto', 'Avtomatik'], ['risky', 'Xavfli'], ['paid', "To'laganlar"],
+  ['idle', 'Nofaol'], ['pending', 'Ulanmagan'], ['banned', 'Bloklangan']];
+const GRANT_DAYS = [[7, '7 kun'], [30, '1 oy'], [90, '3 oy'], [365, '1 yil'], [3650, 'Muddatsiz']];
+Object.assign(EVENTS, {
+  admin_grant: "Admin sovg'a obuna berdi", admin_revoke_grant: "Admin sovg'ani bekor qildi", admin_ban: 'Admin blokladi',
+  admin_unban: 'Admin blokni olib tashladi', admin_pause: "Admin to'xtatdi", admin_message: 'Admin xabar yubordi', admin_refund: "Admin to'lovni qaytardi",
+});
+
+function badge(map, key) { const [label, cls] = map[key] || [key || '—', '']; return h('span', { class: 'badge ' + cls }, label); }
+function userTitle(u) { return u.name || u.owner_name || (u.username ? '@' + u.username : 'ID ' + u.id); }
+
+function openAdmin(sub) {
+  state.tab = 'admin'; state.sub = sub || null;
+  haptic('tap'); window.scrollTo(0, 0); renderMain();
+}
+
+function adminEntry() {
+  return h('div', { class: 'card accent' },
+    h('div', { class: 'card-head' }, h('h3', {}, '👑 Admin paneli'), h('span', { class: 'badge accent' }, 'Admin')),
+    h('p', { class: 'small' }, "Foydalanuvchilar, xavfsizlik rejimlari, shubhali faollik, sovg'a obuna, bloklash va to'lovlar."),
+    h('button', { class: 'btn block', onclick: () => openAdmin() }, 'Panelni ochish'));
+}
+
+async function viewAdmin(view) {
+  const tab = state.adminTab || 'overview';
+  put(view, h('div', { class: 'card-head' }, h('h1', {}, '👑 Admin'), h('button', { class: 'btn ghost sm', onclick: () => go('home') }, '← Chiqish')),
+    h('div', { class: 'segmented' }, [['overview', 'Umumiy'], ['users', 'Foydalanuvchilar'], ['payments', "To'lovlar"], ['broadcast', 'Xabar']].map(([k, label]) =>
+      h('button', { class: k === tab ? 'on' : '', onclick: () => { state.adminTab = k; haptic('tap'); renderMain(); } }, label))));
+  const body = h('div', {}, h('div', { class: 'skeleton' }));
+  put(view, body);
+  try {
+    await ({ overview: adminOverview, users: adminUsers, payments: adminPayments, broadcast: adminBroadcast })[tab](body);
+  } catch (e) { swap(body, h('p', { class: 'err' }, e.message)); }
+}
+
+// barList — nom → son ro'yxati, bosilsa foydalanuvchilar filtri ochiladi.
+function barList(entries, total) {
+  return h('ul', { class: 'bar-list' }, entries.map(([label, n, cls, filter]) => {
+    const fill = h('i', { class: 'fill ' + (cls || ''), 'data-w': total ? Math.round((n / total) * 100) : 0 });
+    const li = h('li', filter ? { class: 'link', onclick: () => { state.adminTab = 'users'; state.adminFilter = filter; state.adminQ = ''; renderMain(); } } : {},
+      h('div', { class: 'row-between' }, h('span', {}, label), h('b', {}, String(n))), h('div', { class: 'track' }, fill));
+    return li;
+  }));
+}
+function applyWidths(el) { el.querySelectorAll('[data-w]').forEach((b) => { b.style.width = b.getAttribute('data-w') + '%'; }); }
+
+async function adminOverview(body) {
+  const o = await api('GET', '/admin/overview');
+  const st = o.status || {}, md = o.modes || {}, sf = o.safety || {}, sg = o.signals || {}, ev = o.events || {}, b = o.billing || {};
+  const n = o.users || 0;
+  swap(body,
+    h('div', { class: 'kpis' },
+      kpi(String(n), 'Foydalanuvchilar'), kpi(String(st.active || 0), 'Kotib faol'),
+      kpi(String(o.new_7d || 0), "Yangi (7 kun)"), kpi(String(o.seen_7d || 0), 'Ilovani ochgan (7 kun)')),
+    b.enabled ? h('div', { class: 'kpis' },
+      kpi(String(b.paid_active || 0), "To'lagan (faol)"), kpi((b.stars_total || 0) + ' ⭐', 'Jami tushum'),
+      kpi(String(b.referrals || 0), 'Taklif orqali kelgan'), kpi(String(b.ref_paid || 0), "Ulardan to'lagan")) : null,
+    h('div', { class: 'card' }, h('h3', {}, 'Xavfsizlik darajasi'),
+      h('p', { class: 'muted small' }, "Sozlamalarga qarab: avtomatik rejim, notanishlarga, botlarga javob, havolalar."),
+      barList([['🟢 Xavfsiz', sf.safe || 0, 'ok'], ["🟡 O'rta xavf", sf.medium || 0, 'warn'], ['🔴 Yuqori xavf', sf.high || 0, 'bad', 'risky']], n)),
+    h('div', { class: 'card' }, h('h3', {}, 'Ish rejimi'),
+      barList([['✍️ Qoralama', md.draft || 0], ['🤖 Avtomatik', md.auto || 0, 'warn', 'auto'], ['👀 Soya', md.shadow || 0], ["⏸ O'chiq", md.off || 0]], n)),
+    h('div', { class: 'card' }, h('h3', {}, 'Foydalanish (oxirgi 7 kun)'),
+      h('p', { class: 'muted small' }, "Hodisalar soniga qarab. Shubhali — Telegram cheklovi, ko'p rad etilgan javoblar yoki juda ko'p avtomatik xabar."),
+      barList([['✅ Foydali', sg.ok || 0, 'ok'], ['💤 Nofaol', sg.idle || 0, '', 'idle'], ['👁 Kuzatish kerak', sg.watch || 0, 'warn', 'risky'], ['⚠️ Shubhali', sg.suspicious || 0, 'bad', 'risky']], n)),
+    h('div', { class: 'card' }, h('h3', {}, 'Holat'),
+      barList([['Faol', st.active || 0, 'ok', 'active'], ["To'xtatilgan", st.paused || 0, 'warn'], ['Ulanmagan', st.pending || 0, '', 'pending'],
+        ['Uzilgan', st.revoked || 0], ["Xavfsizlik uchun to'xtatilgan", st.broken || 0, 'bad'], ['⛔ Bloklangan', o.banned || 0, 'bad', 'banned']], n)),
+    h('div', { class: 'card' }, h('h3', {}, 'Hodisalar (7 kun, hammasi)'),
+      h('ul', { class: 'top-list' },
+        [['draft_created', '✍️ Qoralama tayyorlandi'], ['auto_sent', '🤖 Avtomatik yuborildi'], ['draft_sent', '✅ Qoralamadan yuborildi'],
+          ['draft_rejected', '✖️ Rad etildi'], ['blocked', '🛡 Xavfli kiruvchi xabar'], ['output_rejected', '🚫 Filtr rad etgan javob'],
+          ['llm_error', '⚠️ AI xatosi'], ['flood_wait', '🐢 Telegram cheklovi'], ['circuit_breaker', "🧯 Favqulodda to'xtash"]]
+          .map(([k, label]) => h('li', {}, h('span', {}, label), h('b', {}, String(ev[k] || 0)))))));
+  applyWidths(body);
+}
+
+async function adminUsers(body) {
+  const filter = state.adminFilter || 'all';
+  const q = h('input', { type: 'search', placeholder: 'Ism, @username yoki ID', value: state.adminQ || '' });
+  let timer;
+  q.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(() => { state.adminQ = q.value; load(); }, 350); });
+  const chips = h('div', { class: 'chips' }, ADMIN_FILTERS.map(([k, label]) => h('button', { class: 'chip-btn' + (k === filter ? ' on' : ''),
+    onclick: () => { state.adminFilter = k; haptic('tap'); renderMain(); } }, label)));
+  const list = h('div', {}, h('div', { class: 'skeleton' }));
+  swap(body, q, chips, list);
+  const load = async () => {
+    const p = new URLSearchParams({ filter, q: state.adminQ || '' });
+    let r;
+    try { r = await api('GET', '/admin/users?' + p); } catch (e) { swap(list, h('p', { class: 'err' }, e.message)); return; }
+    swap(list, h('p', { class: 'muted small' }, `Topildi: ${r.total}` + (r.total > r.users.length ? ` (birinchi ${r.users.length} tasi)` : '')),
+      r.users.length ? r.users.map(userRow) : h('div', { class: 'card soft' }, h('p', { class: 'muted' }, "Hech kim topilmadi.")));
+  };
+  await load();
+}
+
+function userRow(u) {
+  const b = u.billing || {};
+  return h('button', { class: 'card adm-user', onclick: () => openAdmin((v) => viewAdminUser(v, u.id)) },
+    h('div', { class: 'row-between' },
+      h('div', { class: 'adm-name' }, h('b', {}, userTitle(u)), u.admin ? ' 👑' : null,
+        h('div', { class: 'muted small' }, [u.username ? '@' + u.username : null, 'ID ' + u.id].filter(Boolean).join(' · '))),
+      u.banned ? badge({ x: ['Bloklangan', 'bad'] }, 'x') : (() => { const [l, c] = STATUS[u.status] || [u.status, '']; return h('span', { class: 'badge ' + c }, l); })()),
+    h('div', { class: 'chips' },
+      h('span', { class: 'badge' }, MODE_LABELS[u.mode] || u.mode), badge(SAFETY, u.safety), badge(SIGNAL, u.signal),
+      b.enabled && !u.banned ? h('span', { class: 'badge accent' }, adminTierLabel(b)) : null),
+    h('div', { class: 'muted small' }, `7 kun: ${u.prepared} tayyorlangan · ${u.sent} yuborilgan` + (u.approval >= 0 ? ` · tasdiq ${u.approval}%` : '') +
+      ` · oxirgi faollik: ${u.last_event ? fmtAgo(u.last_event) : '—'}`));
+}
+
+function adminTierLabel(b) {
+  if (b.exempt) return '👑 Admin';
+  if (b.paid) return (TIER_NAMES[b.tier] || 'Obuna') + " · to'langan";
+  if (b.bonus) return "🎁 Sovg'a/bonus" + (b.tier === 'pro' ? ' · Pro' : '');
+  if (b.on_trial) return `Sinov · ${b.days_left} kun`;
+  return 'Obunasiz';
+}
+
+async function viewAdminUser(view, id) {
+  const head = h('div', { class: 'card-head' }, h('h1', {}, 'Foydalanuvchi'), h('button', { class: 'btn ghost sm', onclick: () => openAdmin() }, '← Orqaga'));
+  put(view, head, h('div', { class: 'skeleton' }));
+  let d;
+  try { d = await api('GET', '/admin/users/' + id); } catch (e) { swap(view, head, h('p', { class: 'err' }, e.message)); return; }
+  const u = d.user, b = u.billing || {}, s = d.settings || {}, c = d.counts || {}, c30 = d.counts30 || {};
+  const reload = () => openAdmin((v) => viewAdminUser(v, id));
+  const info = (label, value) => h('li', {}, h('span', {}, label), h('b', {}, value));
+  swap(view, head,
+    h('div', { class: 'card' },
+      h('div', { class: 'card-head' }, h('h3', {}, userTitle(u) + (u.admin ? ' 👑' : '')),
+        u.banned ? h('span', { class: 'badge bad' }, 'Bloklangan') : (() => { const [l, cl] = STATUS[u.status] || [u.status, '']; return h('span', { class: 'badge ' + cl }, l); })()),
+      h('ul', { class: 'top-list' },
+        info('Telegram ID', String(u.id)), u.username ? info('Username', '@' + u.username) : null,
+        u.owner_name ? info('Sozlamadagi ism', u.owner_name) : null,
+        info("Ro'yxatdan o'tgan", fmtDate(u.created_at)), info('Ilovani oxirgi ochgan', u.seen_at ? fmtAgo(u.seen_at) : '—'),
+        info('Oxirgi faollik', u.last_event ? fmtAgo(u.last_event) : '—'), info('Rozilik', u.consented ? 'berilgan' : "yo'q"),
+        u.note ? info('Holat izohi', u.note) : null,
+        info('Obuna', b.enabled ? adminTierLabel(b) + (b.until ? ` · ${fmtDate(b.until)} gacha` : '') : "to'lov o'chiq"),
+        info('Google', d.google ? 'ulangan' : "yo'q"), info("Qo'shimcha akkauntlar", String(d.linked || 0)), info('Vazifalar', String(d.schedules || 0)))),
+    d.ban ? h('div', { class: 'card danger' }, h('h3', {}, '⛔ Bloklangan'),
+      h('p', { class: 'small' }, (d.ban.reason ? 'Sabab: ' + d.ban.reason + ' · ' : '') + fmtDate(d.ban.at) + ` · admin ${d.ban.by}`)) : null,
+    h('div', { class: 'card' },
+      h('div', { class: 'card-head' }, h('h3', {}, 'Xavfsizlik'), badge(SAFETY, u.safety)),
+      h('p', { class: 'small' }, 'Rejim: ', h('b', {}, MODE_LABELS[u.mode] || u.mode)),
+      u.safety_notes.length ? h('ul', { class: 'note-list' }, u.safety_notes.map((x) => h('li', {}, x))) : h('p', { class: 'muted small' }, "Xavfli sozlama yo'q: javoblar faqat kontaktlarga, qoralama sifatida."),
+      h('p', { class: 'muted small' }, [`Til: ${s.language}`, `uslub: ${PERSONA_LABELS[s.persona] || s.persona}`, `qoidalar: ${s.rules}`, s.quiet ? 'tinch soatlar yoqiq' : 'tinch soatlar o\'chiq',
+        s.voice ? 'ovozga javob' : null, s.photos ? 'rasmga javob' : null, s.learn ? "o'qitish rejimi" : null, s.about ? "«O'zim haqimda» bor" : null,
+        s.routine ? `kun tartibi: ${s.routine}` : null, s.knowledge ? 'bilim bazasi bor' : null].filter(Boolean).join(' · '))),
+    h('div', { class: 'card' },
+      h('div', { class: 'card-head' }, h('h3', {}, 'Foydalanish'), badge(SIGNAL, u.signal)),
+      u.signal_notes.length ? h('ul', { class: 'note-list' }, u.signal_notes.map((x) => h('li', {}, x))) : null,
+      h('table', { class: 'stats-table' },
+        h('thead', {}, h('tr', {}, h('th', {}, 'Hodisa'), h('th', {}, '7 kun'), h('th', {}, '30 kun'))),
+        h('tbody', {}, [['draft_created', 'Qoralama'], ['auto_sent', 'Avtomatik yuborilgan'], ['draft_sent', 'Qoralamadan yuborilgan'], ['draft_rejected', 'Rad etilgan'],
+          ['skip', "O'tkazib yuborilgan"], ['blocked', 'Xavfli kiruvchi'], ['output_rejected', 'Filtr rad etgan'], ['llm_error', 'AI xatosi'],
+          ['flood_wait', 'Telegram cheklovi'], ['circuit_breaker', "Favqulodda to'xtash"], ['fatal', 'Sessiya xatosi']]
+          .map(([k, label]) => h('tr', {}, h('td', {}, label), h('td', {}, String(c[k] || 0)), h('td', {}, String(c30[k] || 0))))))),
+    adminActions(u, b, reload),
+    h('h2', {}, 'Oxirgi hodisalar'),
+    h('div', { class: 'card' }, d.events.length
+      ? h('ul', { class: 'timeline' }, d.events.slice(0, 25).map((e) => h('li', {}, h('i', { class: 'dot' }), h('div', {},
+        h('div', {}, EVENTS[e.event] || e.event, e.detail ? h('span', { class: 'muted small' }, ' · ' + e.detail) : null),
+        h('div', { class: 'when' }, fmtAgo(e.at))))))
+      : h('p', { class: 'muted' }, "Hodisa yo'q.")),
+    h('p', { class: 'muted small center' }, "Xabar matnlari ko'rsatilmaydi — faqat hodisalar va sozlamalar (maxfiylik)."));
+}
+
+function adminActions(u, b, reload) {
+  const card = h('div', { class: 'card' }, h('h3', {}, 'Amallar'));
+  // Sovg'a obuna
+  if (b.enabled && !u.admin) {
+    let days = 30, tier = 'pro', notify = true;
+    const daySel = h('div', { class: 'chips' }, GRANT_DAYS.map(([d, label]) => h('button', { class: 'chip-btn' + (d === days ? ' on' : ''),
+      onclick: (e) => { days = d; daySel.querySelectorAll('.chip-btn').forEach((x) => x.classList.remove('on')); e.currentTarget.classList.add('on'); haptic('tap'); } }, label)));
+    const tierSel = h('div', { class: 'segmented' }, [['advanced', '⭐ Advanced'], ['pro', '🚀 Pro']].map(([k, label]) => h('button', { class: k === tier ? 'on' : '',
+      onclick: (e) => { tier = k; tierSel.querySelectorAll('button').forEach((x) => x.classList.remove('on')); e.currentTarget.classList.add('on'); haptic('tap'); } }, label)));
+    put(card,
+      h('h4', {}, "🎁 Tekin (sovg'a) obuna"),
+      h('p', { class: 'muted small' }, "Sovg'a joriy sinov yoki to'langan muddatdan keyin qo'shiladi; Telegram pul yechmaydi."),
+      field('Muddat', daySel), field('Tarif', tierSel),
+      switchRow('Foydalanuvchiga xabar berish', null, notify, (v) => { notify = v; }, true),
+      h('button', { class: 'btn block', onclick: busy(async () => {
+        const label = (GRANT_DAYS.find(([d]) => d === days) || [0, days + ' kun'])[1];
+        if (!(await confirmBox(`${userTitle(u)} ga ${label} ${tier === 'pro' ? 'Pro' : 'Advanced'} obuna sovg'a qilinsinmi?`))) return;
+        await api('POST', `/admin/users/${u.id}/grant`, { days, tier, notify });
+        toast("Sovg'a berildi"); reload();
+      }) }, "Sovg'a qilish"),
+      b.bonus ? h('button', { class: 'btn ghost block', onclick: busy(async () => {
+        if (!(await confirmBox("Sovg'a/bonus kunlari darhol tugatilsinmi? To'langan muddat va sinov o'zgarmaydi."))) return;
+        await api('POST', `/admin/users/${u.id}/revoke-grant`);
+        toast("Sovg'a bekor qilindi"); reload();
+      }) }, "Sovg'ani bekor qilish") : null);
+  }
+  // Xabar
+  const msg = h('textarea', { maxlength: 2000, rows: 3, placeholder: 'Foydalanuvchiga bot orqali xabar' });
+  put(card, h('h4', {}, '📩 Xabar yuborish'), msg,
+    h('button', { class: 'btn ghost block', onclick: busy(async () => {
+      if (!msg.value.trim()) throw new Error('Matn kiriting');
+      await api('POST', `/admin/users/${u.id}/message`, { text: msg.value });
+      msg.value = ''; toast('Yuborildi');
+    }) }, 'Yuborish'));
+  if (u.admin) return card;
+  // To'xtatish va bloklash
+  if (u.status === 'active' && !u.banned) {
+    put(card, h('h4', {}, "⏸ Vaqtincha to'xtatish"),
+      h('p', { class: 'muted small' }, "Kotib to'xtaydi, foydalanuvchiga xabar boradi; u o'zi qayta yoqa oladi."),
+      h('button', { class: 'btn ghost block', onclick: busy(async () => {
+        if (!(await confirmBox("Kotib to'xtatilsinmi?"))) return;
+        await api('POST', `/admin/users/${u.id}/pause`); toast("To'xtatildi"); reload();
+      }) }, "To'xtatish"));
+  }
+  if (u.banned) {
+    put(card, h('h4', {}, '⛔ Blok'), h('button', { class: 'btn block', onclick: busy(async () => {
+      if (!(await confirmBox('Blok olib tashlansinmi? Foydalanuvchi kotibni qayta yoqa oladi.'))) return;
+      await api('DELETE', `/admin/users/${u.id}/ban`); toast('Blok olib tashlandi'); reload();
+    }) }, 'Blokni olib tashlash'));
+  } else {
+    const reason = h('input', { type: 'text', maxlength: 200, placeholder: 'Sabab (masalan: spam, firibgarlik)' });
+    let notify = true;
+    put(card, h('h4', {}, '⛔ Bloklash'),
+      h('p', { class: 'muted small' }, "Kotib darhol to'xtaydi, ilova va bot yopiladi, avtomatik to'lov bekor qilinadi. Akkauntni o'chirib qayta ochish blokni olib tashlamaydi."),
+      reason, switchRow('Foydalanuvchiga xabar berish', null, notify, (v) => { notify = v; }, true),
+      h('button', { class: 'btn danger block', onclick: busy(async () => {
+        if (!(await confirmBox(`${userTitle(u)} bloklansinmi?`))) return;
+        await api('POST', `/admin/users/${u.id}/ban`, { reason: reason.value, notify });
+        toast('Bloklandi'); reload();
+      }) }, 'Bloklash'));
+  }
+  return card;
+}
+
+async function adminPayments(body) {
+  const r = await api('GET', '/admin/payments');
+  const ps = r.payments || [];
+  if (!ps.length) { swap(body, h('div', { class: 'card soft' }, h('p', { class: 'muted' }, "Hozircha to'lov yo'q."))); return; }
+  swap(body, h('p', { class: 'muted small' }, `Oxirgi ${ps.length} ta to'lov`),
+    ps.map((p) => h('div', { class: 'card' },
+      h('div', { class: 'row-between' }, h('b', {}, `${p.amount} ⭐`),
+        p.refunded ? h('span', { class: 'badge warn' }, 'Qaytarilgan') : h('span', { class: 'badge ok' }, p.recurring ? 'Obuna' : "To'lov")),
+      h('div', { class: 'muted small' }, `${fmtDate(p.created_at)} · `, h('a', { href: '#', onclick: (e) => { e.preventDefault(); openAdmin((v) => viewAdminUser(v, p.owner_id)); } }, 'ID ' + p.owner_id)),
+      h('div', { class: 'muted small break' }, p.charge_id),
+      p.refunded ? null : h('button', { class: 'btn ghost sm', onclick: busy(async () => {
+        if (!(await confirmBox(`${p.amount} ⭐ foydalanuvchiga qaytarilsinmi? Shu to'lov bergan muddat darhol tugaydi.`))) return;
+        await api('POST', '/admin/refund', { charge_id: p.charge_id });
+        toast('Qaytarildi'); renderMain();
+      }) }, 'Qaytarish'))));
+}
+
+async function adminBroadcast(body) {
+  const ta = h('textarea', { maxlength: 2000, rows: 6, placeholder: 'Masalan: Kotibda yangi funksiya — «Kun tartibim»! Sozlamalarda sinab ko\'ring.' });
+  const counter = h('div', { class: 'counter' });
+  const upd = () => { counter.textContent = ta.value.length + ' / 2000'; };
+  ta.addEventListener('input', upd); upd();
+  swap(body, h('div', { class: 'card' },
+    h('h3', {}, '📢 Hammaga xabar'),
+    h('p', { class: 'muted small' }, "Rozilik bergan va bloklanmagan barcha foydalanuvchilarga bot orqali yuboriladi. Spam bo'lmasligi uchun kamdan-kam va faqat muhim xabarlar uchun ishlating."),
+    ta, counter,
+    h('button', { class: 'btn block', onclick: busy(async () => {
+      if (!ta.value.trim()) throw new Error('Matn kiriting');
+      if (!(await confirmBox('Xabar barcha foydalanuvchilarga yuborilsinmi? Buni qaytarib bo\'lmaydi.'))) return;
+      const r = await api('POST', '/admin/broadcast', { text: ta.value });
+      ta.value = ''; upd(); toast(`Yuborilmoqda: ${r.recipients} ta foydalanuvchi`);
+    }) }, 'Yuborish')));
 }
 
 // ---------- Do'stni taklif qilish ----------

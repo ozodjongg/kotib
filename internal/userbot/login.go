@@ -76,6 +76,9 @@ func (m *Manager) BeginLogin(ctx context.Context, owner int64, phone string) err
 
 func (m *Manager) beginLogin(ctx context.Context, owner int64, run func(context.Context, LoginIO) error) error {
 	m.init(ctx)
+	if m.banned(ctx, owner) {
+		return ErrBanned
+	}
 	m.mu.Lock()
 	if old := m.logins[owner]; old != nil && old.done != nil {
 		if st := old.get().Step; st != "done" && st != "error" {

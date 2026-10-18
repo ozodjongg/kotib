@@ -36,6 +36,7 @@ type Memory struct {
 
 	schedules map[int64]Schedule
 	plugins   map[pluginKey]PluginConfig
+	bans      map[int64]Ban
 }
 
 type usageKey struct {
@@ -67,6 +68,7 @@ func NewMemory() *Memory {
 		links:    map[int64]Link{},
 		chats:    map[[2]int64]ChatActivity{},
 		ltokens:  map[string]LinkToken{},
+		bans:     map[int64]Ban{},
 	}
 }
 
@@ -80,6 +82,7 @@ func (m *Memory) UpsertAccount(_ context.Context, a Account) error {
 		if a.ConsentAt == nil {
 			a.ConsentAt = old.ConsentAt
 		}
+		a.Name, a.Username, a.SeenAt = old.Name, old.Username, old.SeenAt
 	}
 	if a.CreatedAt.IsZero() {
 		a.CreatedAt = time.Now()

@@ -102,7 +102,17 @@ const helpText = `Kotib — Telegram'dagi shaxsiy xabarlaringizga AI yordamida j
 
 Sozlamalar, qoidalar va qoralamalar — "Ochish" tugmasi orqali ilovada.`
 
+// BannedText — bloklangan foydalanuvchiga bot javobi.
+const BannedText = "⛔ Akkauntingiz administrator tomonidan bloklangan, kotib ishlamaydi. Xato deb hisoblasangiz, administrator bilan bog'laning."
+
+func (h *Handler) banned(ctx context.Context, from int64) bool {
+	return !h.Admins[from] && h.Billing.Banned(ctx, from)
+}
+
 func (h *Handler) Command(ctx context.Context, from int64, cmd, args string) bot.Reply {
+	if h.banned(ctx, from) {
+		return bot.Reply{Text: BannedText}
+	}
 	switch cmd {
 	case "start":
 		// Deep link: t.me/<bot>?start=pause — Siri / Google Assistant / yorliq orqali.
@@ -384,6 +394,9 @@ func (h *Handler) refund(ctx context.Context, chargeID string) bot.Reply {
 }
 
 func (h *Handler) PreCheckout(ctx context.Context, from int64, currency string, amount int, payload string) error {
+	if h.banned(ctx, from) {
+		return errors.New("akkaunt bloklangan")
+	}
 	return h.Billing.PreCheckout(ctx, from, currency, amount, payload)
 }
 
@@ -421,6 +434,9 @@ func ActionButtons(id int64) []bot.Button {
 // Callback — amalni tasdiqlash/rad etish tugmalari. Amal faqat egasiga tegishli bo'lsa
 // topiladi; holat atomar o'zgaradi — ikki marta bosish ikki tadbir yaratmaydi.
 func (h *Handler) Callback(ctx context.Context, from int64, data string) bot.Answer {
+	if h.banned(ctx, from) {
+		return bot.Answer{Toast: "Akkaunt bloklangan"}
+	}
 	if strings.HasPrefix(data, "lnk:") {
 		return h.linkCallback(ctx, from, data)
 	}
@@ -558,6 +574,9 @@ var okWords = map[string]bool{"ok": true, "ок": true, "ha": true, "+": true, "
 
 // ReplyTo — qoralama kartasiga javob: "ok" — asl matn, boshqa matn — o'sha matn yuboriladi.
 func (h *Handler) ReplyTo(ctx context.Context, from int64, data, text string) (bot.Reply, string) {
+	if h.banned(ctx, from) {
+		return bot.Reply{}, ""
+	}
 	id, _, ok := parseDraftData(data)
 	if !ok {
 		return bot.Reply{}, ""

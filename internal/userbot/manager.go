@@ -300,6 +300,9 @@ func (m *Manager) Pause(owner int64) { m.stopWorker(owner) }
 
 func (m *Manager) Resume(ctx context.Context, owner int64) error {
 	m.init(ctx)
+	if m.banned(ctx, owner) {
+		return ErrBanned
+	}
 	if _, err := m.Store.LoadSession(ctx, owner); err != nil {
 		return errors.New("avval Telegram akkauntni ulang")
 	}
@@ -315,6 +318,14 @@ func (m *Manager) SendDraft(ctx context.Context, owner int64, d store.Draft) err
 		return errors.New("sessiya hozir ulanmagan")
 	}
 	return w.pipe.SendDraft(ctx, d)
+}
+
+// ErrBanned — admin bloklagan akkauntni ulab yoki yoqib bo'lmaydi.
+var ErrBanned = errors.New("akkauntingiz administrator tomonidan bloklangan")
+
+func (m *Manager) banned(ctx context.Context, owner int64) bool {
+	_, err := m.Store.GetBan(ctx, owner)
+	return err == nil
 }
 
 // ErrDraftGone — qoralama topilmadi yoki allaqachon hal qilingan.

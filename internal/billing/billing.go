@@ -111,6 +111,7 @@ type Status struct {
 	Until      *time.Time `json:"until"`
 	DaysLeft   int        `json:"days_left"`
 	TrialDaily int        `json:"trial_daily_limit"` // sinovda kuniga javoblar limiti; 0 — cheksiz
+	Banned     bool       `json:"banned"`            // admin bloklagan: xizmat ko'rsatilmaydi
 }
 
 func ptr(t time.Time) *time.Time {
@@ -121,6 +122,14 @@ func ptr(t time.Time) *time.Time {
 }
 
 func (s *Service) Status(ctx context.Context, owner int64) (Status, error) {
+	st, err := s.status(ctx, owner)
+	if s.Banned(ctx, owner) {
+		st.Active, st.HasPro, st.Banned = false, false, true
+	}
+	return st, err
+}
+
+func (s *Service) status(ctx context.Context, owner int64) (Status, error) {
 	if !s.Enabled() {
 		return Status{Active: true}, nil
 	}
@@ -163,6 +172,9 @@ func (s *Service) Status(ctx context.Context, owner int64) (Status, error) {
 // Entitled — AI javob tayyorlashi mumkinmi. Baza xatosida yopiq (false): to'lanmagan
 // xizmat ko'rsatilmasin; xato logga yoziladi.
 func (s *Service) Entitled(ctx context.Context, owner int64) bool {
+	if s.Banned(ctx, owner) {
+		return false
+	}
 	if !s.Enabled() || s.Exempt[owner] {
 		return true
 	}
