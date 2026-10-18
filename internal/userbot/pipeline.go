@@ -446,7 +446,9 @@ func (p *Pipeline) Handle(ctx context.Context, in Incoming) {
 		OwnerName: st.OwnerName, Persona: dec.Persona, Language: st.Language,
 		History: hist, Incoming: in.Text, Away: st.CurrentAway(p.Now()), Audio: audio, Image: image,
 		Knowledge: st.Knowledge, ContactNote: st.ContactNotes[in.ChatID],
+		About: st.About, Now: p.Now(), Loc: st.Location(),
 	}
+	req.Busy, req.BusyUntil, _ = st.Busy(req.Now)
 	var resp llm.Response
 	connected := pro && p.Google != nil && p.Google.Connected(ctx, p.Owner) // Google — Pro funksiyasi
 	if asst, ok := p.LLM.(llm.Assistant); ok && p.Propose != nil && !st.NoSuggest && (connected || p.CalendarFallback) {

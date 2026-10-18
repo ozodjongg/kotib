@@ -108,6 +108,12 @@ type Settings struct {
 	ShadowUntil *time.Time `json:"shadow_until,omitempty"`
 	// Knowledge — bilim bazasi (narxlar, ish vaqti, xizmatlar...): kotib javobda shundan foydalanadi.
 	Knowledge string `json:"knowledge,omitempty"`
+	// About — "O'zim haqimda": egasi kim, nima ish qiladi, oilasi, odatlari. Kotib javobni
+	// "keyinroq yozaman" o'rniga shu ma'lumot asosida mazmunli yozadi.
+	About string `json:"about,omitempty"`
+	// Routine — haftalik kun tartibi: qaysi kun, qaysi soatda nima qiladi. Kotib hozirgi
+	// vaqtdan egasi band yoki bo'shligini va qachon bo'shashini aniqlaydi.
+	Routine []RoutineSlot `json:"routine,omitempty"`
 	// ContactNotes: userID → egasining kontakt haqidagi eslatmasi ("onam", "loyiha X bo'yicha hamkor").
 	ContactNotes   map[int64]string `json:"contact_notes,omitempty"`
 	DefaultPersona string           `json:"default_persona"` // preset kaliti
@@ -124,6 +130,9 @@ type Settings struct {
 const (
 	MaxStyleProfile = 2000
 	MaxKnowledge    = 4000
+	MaxAbout        = 2000
+	MaxRoutine      = 40
+	MaxActivity     = 100
 	MaxContactNote  = 300
 	maxNotes        = 1000
 	// MaxShadowDays — soya rejimini bir martada shuncha kungacha yoqish mumkin.
@@ -240,6 +249,12 @@ func (s *Settings) Validate() error {
 	}
 	if utf8.RuneCountInString(s.Knowledge) > MaxKnowledge {
 		return errors.New("knowledge juda uzun")
+	}
+	if utf8.RuneCountInString(s.About) > MaxAbout {
+		return errors.New("about juda uzun")
+	}
+	if err := validRoutine(s.Routine); err != nil {
+		return err
 	}
 	if s.UnansweredHours < 0 || s.UnansweredHours > 48 {
 		return errors.New("unanswered_hours 0–48 bo'lishi kerak")
@@ -507,6 +522,79 @@ func (s *Settings) Location() *time.Location {
 		return loc
 	}
 	return time.FixedZone("Asia/Tashkent", 5*60*60)
+}
+
+// RoutineSlot — kun tartibidagi bitta band oraliq. Days: 0 — yakshanba ... 6 — shanba (Go
+// time.Weekday); bo'sh — har kuni. End < Start bo'lsa oraliq yarim tundan o'tadi (22:00–07:00).
+type RoutineSlot struct {
+	Days     []int  `json:"days,omitempty"`
+	Start    string `json:"start"`
+	End      string `json:"end"`
+	Activity string `json:"activity"` // "ishda", "darsda", "uxlayapman"
+}
+
+func validRoutine(r []RoutineSlot) error {
+	if len(r) > MaxRoutine {
+		return fmt.Errorf("kun tartibi %d qatordan oshmasligi kerak", MaxRoutine)
+	}
+	for i := range r {
+		sl := &r[i]
+		sl.Activity = strings.Join(strings.Fields(sl.Activity), " ")
+		if sl.Activity == "" || utf8.RuneCountInString(sl.Activity) > MaxActivity {
+			return fmt.Errorf("kun tartibi #%d: mashg'ulot bo'sh yoki juda uzun", i+1)
+		}
+		st, err1 := parseHM(sl.Start)
+		en, err2 := parseHM(sl.End)
+		if len(sl.Start) > 5 || len(sl.End) > 5 || err1 != nil || err2 != nil || st == en {
+			return fmt.Errorf("kun tartibi #%d: vaqt noto'g'ri", i+1)
+		}
+		if len(sl.Days) > 7 {
+			return fmt.Errorf("kun tartibi #%d: kunlar noto'g'ri", i+1)
+		}
+		for _, d := range sl.Days {
+			if d < 0 || d > 6 {
+				return fmt.Errorf("kun tartibi #%d: kunlar noto'g'ri", i+1)
+			}
+		}
+	}
+	return nil
+}
+
+// Busy — kun tartibi bo'yicha now paytidagi mashg'ulot va u tugaydigan vaqt (egasining
+// vaqt zonasida, "HH:MM"). Bo'sh bo'lsa ok=false. Bir nechta oraliq mos kelsa — birinchisi.
+func (s *Settings) Busy(now time.Time) (activity, until string, ok bool) {
+	l := now.In(s.Location())
+	cur := l.Hour()*60 + l.Minute()
+	today, yesterday := int(l.Weekday()), (int(l.Weekday())+6)%7
+	for _, sl := range s.Routine {
+		st, err1 := parseHM(sl.Start)
+		en, err2 := parseHM(sl.End)
+		if err1 != nil || err2 != nil || st == en {
+			continue
+		}
+		var hit bool
+		if st < en {
+			hit = onDay(sl.Days, today) && cur >= st && cur < en
+		} else { // yarim tundan o'tadi: kechqurun shu kun, ertalab — kechagi kun boshlangan oraliq
+			hit = (onDay(sl.Days, today) && cur >= st) || (onDay(sl.Days, yesterday) && cur < en)
+		}
+		if hit {
+			return sl.Activity, sl.End, true
+		}
+	}
+	return "", "", false
+}
+
+func onDay(days []int, d int) bool {
+	if len(days) == 0 {
+		return true
+	}
+	for _, x := range days {
+		if x == d {
+			return true
+		}
+	}
+	return false
 }
 
 // InQuiet — now tinch soatlarga to'g'ri keladimi.

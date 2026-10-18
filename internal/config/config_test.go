@@ -273,3 +273,54 @@ func TestQuietReason(t *testing.T) {
 		t.Fatalf("%+v", d)
 	}
 }
+
+func TestRoutineBusy(t *testing.T) {
+	s := Default()
+	s.Routine = []RoutineSlot{
+		{Days: []int{1, 2, 3, 4, 5}, Start: "09:00", End: "18:00", Activity: "ishda"},
+		{Start: "23:00", End: "07:00", Activity: "uxlayapman"},
+	}
+	if err := s.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	loc, _ := time.LoadLocation("Asia/Tashkent")
+	cases := []struct {
+		at            time.Time
+		activity, end string
+	}{
+		{noon(), "ishda", "18:00"},                                          // seshanba 12:00
+		{time.Date(2026, 10, 18, 12, 0, 0, 0, loc), "", ""},                 // yakshanba — ish yo'q
+		{time.Date(2026, 10, 13, 18, 0, 0, 0, loc), "", ""},                 // tugash vaqti — bo'sh
+		{time.Date(2026, 10, 13, 23, 30, 0, 0, loc), "uxlayapman", "07:00"}, // yarim tundan o'tadi
+		{time.Date(2026, 10, 14, 6, 59, 0, 0, loc), "uxlayapman", "07:00"},
+		{noon().UTC(), "ishda", "18:00"}, // vaqt zonasi egasiniki
+	}
+	for _, c := range cases {
+		a, end, ok := s.Busy(c.at)
+		if a != c.activity || end != c.end || ok != (c.activity != "") {
+			t.Errorf("%s: %q %q %v", c.at, a, end, ok)
+		}
+	}
+}
+
+func TestValidateRoutine(t *testing.T) {
+	bad := [][]RoutineSlot{
+		{{Start: "09:00", End: "18:00"}},                                     // mashg'ulot bo'sh
+		{{Start: "9", End: "18:00", Activity: "ish"}},                        // format
+		{{Start: "09:00", End: "09:00", Activity: "ish"}},                    // bo'sh oraliq
+		{{Days: []int{7}, Start: "09:00", End: "18:00", Activity: "ish"}},    // kun
+		{{Start: "09:00", End: "18:00", Activity: strings.Repeat("a", 101)}}, // uzun
+	}
+	for i, r := range bad {
+		s := Default()
+		s.Routine = r
+		if s.Validate() == nil {
+			t.Errorf("#%d qabul qilindi", i)
+		}
+	}
+	s := Default()
+	s.About = strings.Repeat("a", MaxAbout+1)
+	if s.Validate() == nil {
+		t.Error("uzun about qabul qilindi")
+	}
+}
