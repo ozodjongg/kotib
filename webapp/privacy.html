@@ -57,7 +57,7 @@ Murojaatlarga odatda 30 kun ichida javob beramiz.</p>
 <h2 id="uz-data">2. Qanday ma'lumotlar to'planadi</h2>
 <h3>2.1. Telegram akkaunt ma'lumotlari</h3>
 <ul>
-  <li><strong>Telegram identifikatori, ism va til</strong> — Mini App ochilganda Telegram tomonidan imzolangan holda beriladi; sizni tanish va sozlamalaringizni saqlash uchun.</li>
+  <li><strong>Telegram identifikatori, ism, username va til</strong> — Mini App ochilganda Telegram tomonidan imzolangan holda beriladi; sizni tanish, sozlamalaringizni saqlash va xizmatni boshqarish (administrator ko'rinishi) uchun. Mini App'ni oxirgi ochgan vaqtingiz ham saqlanadi.</li>
   <li><strong>Telefon raqami, tasdiqlash kodi va ikki bosqichli parol</strong> — faqat Telegram'ga kirish jarayonida Telegram'ga uzatish uchun ishlatiladi. Ular bazada <strong>saqlanmaydi</strong>.</li>
   <li><strong>Telegram sessiyasi</strong> — akkauntingizga ulanish kaliti. Faqat shifrlangan holda (AES-256-GCM) saqlanadi.</li>
 </ul>
@@ -151,6 +151,7 @@ Murojaatlarga odatda 30 kun ichida javob beramiz.</p>
 <tr><td>Chat faolligi (matnsiz)</td><td>Chatda 30 kun faollik bo'lmasa o'chiriladi</td></tr>
 <tr><td>Hodisalar jurnali (matnsiz)</td><td>90 kun</td></tr>
 <tr><td>Sozlamalar, uslub profili, Telegram sessiyasi, Google va plagin tokenlari, vazifalar</td><td>Akkauntni o'chirguningizcha</td></tr>
+<tr><td>Blok yozuvi (administrator bloklagan bo'lsa: ID, sabab, sana)</td><td>Akkaunt o'chirilgandan keyin ham, blok olib tashlanguncha — qoidabuzarlik takrorlanmasligi uchun</td></tr>
 <tr><td>To'lov yozuvlari (identifikator, summa, sana) va bepul sinov belgisi</td><td>Akkaunt o'chirilgandan keyin ham buxgalteriya, to'lovni qaytarish va sinovni qayta-qayta olishning oldini olish uchun saqlanadi; xabar matni yoki shaxsiy tarkib yo'q</td></tr>
 </tbody></table></div>
 <p>«Qoralamalar bot chatida» funksiyasini yoqsangiz, qoralama matni Telegram bot chatingizda qoladi — uni Telegram'da o'zingiz o'chirishingiz mumkin.</p>
@@ -205,7 +206,7 @@ Privacy requests: <a href="mailto:ozodjontirkachev010@gmail.com">ozodjontirkache
 <h2 id="en-data">2. Information we collect</h2>
 <h3>2.1. Telegram account</h3>
 <ul>
-  <li><strong>Telegram ID, name and language</strong>, provided and signed by Telegram when you open the Mini App — to identify you and store your settings.</li>
+  <li><strong>Telegram ID, name, username and language</strong>, provided and signed by Telegram when you open the Mini App — to identify you, store your settings and administer the service. The time you last opened the Mini App is also stored.</li>
   <li><strong>Phone number, login code and two-step verification password</strong> are only passed to Telegram during sign-in and are <strong>not stored</strong>.</li>
   <li><strong>Telegram session</strong> (the key that connects Kotib to your account) — stored only in encrypted form (AES-256-GCM).</li>
 </ul>
@@ -299,6 +300,7 @@ Privacy requests: <a href="mailto:ozodjontirkachev010@gmail.com">ozodjontirkache
 <tr><td>Chat activity (no text)</td><td>Deleted after 30 days of inactivity in the chat</td></tr>
 <tr><td>Event log (no text)</td><td>90 days</td></tr>
 <tr><td>Settings, style profile, Telegram session, Google and plugin tokens, tasks</td><td>Until you delete your account</td></tr>
+<tr><td>Ban record (if an administrator blocked you: ID, reason, date)</td><td>Kept after account deletion until the ban is lifted, to prevent repeated violations</td></tr>
 <tr><td>Payment records (ID, amount, date) and free-trial marker</td><td>Kept after account deletion for accounting, refunds and to prevent repeated free trials; contain no message text or personal content</td></tr>
 </tbody></table></div>
 <p>If you enable "Drafts in bot chat", draft text remains in your Telegram chat with the bot; you can delete it in Telegram yourself.</p>

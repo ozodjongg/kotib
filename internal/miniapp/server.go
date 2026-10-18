@@ -89,6 +89,11 @@ type Billing interface {
 	Cancel(ctx context.Context, owner int64) error
 	Renew(ctx context.Context, owner int64) error
 	Referral(ctx context.Context, owner int64) (billing.ReferralInfo, error)
+	// Admin paneli
+	Enabled() bool
+	Grant(ctx context.Context, owner int64, days int, tier billing.Tier) error
+	RevokeGrant(ctx context.Context, owner int64) error
+	Refund(ctx context.Context, chargeID string) (store.Payment, error)
 }
 
 // Google — Google akkauntini ulash (google.Client). nil → integratsiya o'chiq.
@@ -123,6 +128,10 @@ type Server struct {
 	// OnGoogle — ulanish natijasi haqida egasiga bot xabari (ixtiyoriy).
 	OnGoogle func(ctx context.Context, owner int64, err error)
 	Log      *slog.Logger
+	// Admins — admin paneliga kirish huquqi (ADMIN_IDS).
+	Admins map[int64]bool
+	// Notify — foydalanuvchiga bot orqali xabar (admin amallari); nil → xabar yuborilmaydi.
+	Notify func(ctx context.Context, owner int64, text string, openApp bool)
 	// Static — Mini App fayllari (index.html...) joylashgan papka.
 	StaticDir string
 
@@ -187,6 +196,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/plugins/{id}", s.auth(s.handleSavePlugin))
 	mux.HandleFunc("DELETE /api/plugins/{id}", s.auth(s.handleDeletePlugin))
 	mux.HandleFunc("POST /api/plugins/{id}/connect", s.auth(s.handleConnectPlugin))
+	s.adminRoutes(mux)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
 	if s.StaticDir != "" {
 		// Huquqiy sahifalar toza manzilda (Google OAuth consent screen havolalari).
@@ -289,6 +299,19 @@ func (s *Server) authWith(next func(http.ResponseWriter, *http.Request, int64), 
 			httpErr(w, http.StatusForbidden, "bu akkaunt asosiy akkauntingizdagi Kotib orqali boshqariladi")
 			return
 		}
+		// Bloklangan foydalanuvchi faqat holatini ko'radi va ma'lumotlarini o'chira oladi.
+		if !s.Admins[u.ID] && !bannedAllowed(r) {
+			if _, err := s.Store.GetBan(r.Context(), u.ID); err == nil {
+				httpErr(w, http.StatusForbidden, "akkauntingiz administrator tomonidan bloklangan")
+				return
+			}
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/api/me" {
+			// Admin ro'yxatida tanib olish uchun (akkaunt bo'lmasa — hech narsa yozilmaydi).
+			if err := s.Store.TouchAccount(r.Context(), u.ID, u.FirstName, u.Username, time.Now()); err != nil {
+				s.logger().Warn("touch account", "owner", u.ID, "err", err)
+			}
+		}
 		owner := u.ID
 		if v := r.Header.Get(AccountHeader); v != "" && !mainOnly {
 			id, err := strconv.ParseInt(v, 10, 64)
@@ -306,6 +329,12 @@ func (s *Server) authWith(next func(http.ResponseWriter, *http.Request, int64), 
 		}
 		next(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, u.ID)), owner)
 	}
+}
+
+// bannedAllowed — bloklangan foydalanuvchiga ruxsat etilgan so'rovlar.
+func bannedAllowed(r *http.Request) bool {
+	return (r.Method == http.MethodGet && r.URL.Path == "/api/me") ||
+		(r.Method == http.MethodDelete && r.URL.Path == "/api/account")
 }
 
 // AccountHeader — Mini App tanlagan akkaunt (bo'sh — asosiy).
@@ -409,6 +438,11 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request, owner int64) {
 		out["stats"] = map[string]any{"month_sent": n, "month_saved_min": int(saved / time.Minute), "month_saved": store.FormatSaved(saved)}
 	}
 	out["bot_username"] = s.BotUsername
+	main0 := mainOwner(r, owner)
+	out["admin"] = s.Admins[main0]
+	if b, err := s.Store.GetBan(r.Context(), main0); err == nil && !s.Admins[main0] {
+		out["banned"] = map[string]any{"reason": b.Reason, "at": b.At}
+	}
 	// Bir nechta akkaunt: tanlangan akkaunt va ro'yxat (almashtirgich uchun).
 	main := mainOwner(r, owner)
 	list, _ := s.accountList(r.Context(), main)

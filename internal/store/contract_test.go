@@ -18,7 +18,7 @@ import (
 // Bir xil xulq-atvor talablari Memory va Postgres uchun. Postgres qismi faqat
 // TEST_DATABASE_URL berilganda ishlaydi (CI'da postgres service bilan).
 func TestStoreContract(t *testing.T) {
-	t.Run("memory", func(t *testing.T) { contract(t, store.NewMemory()) })
+	t.Run("memory", func(t *testing.T) { s := store.NewMemory(); contract(t, s); adminContract(t, s) })
 	t.Run("postgres", func(t *testing.T) {
 		dsn := os.Getenv("TEST_DATABASE_URL")
 		if dsn == "" {
@@ -35,10 +35,11 @@ func TestStoreContract(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if _, err := db.Exec(`TRUNCATE accounts, subscriptions, payments, usage_daily, google_links, actions, hooks, followups, referral_codes, referrals, linked_accounts, link_tokens, chat_activity, style_samples, schedules, plugin_configs CASCADE`); err != nil {
+		if _, err := db.Exec(`TRUNCATE accounts, subscriptions, payments, usage_daily, google_links, actions, hooks, followups, referral_codes, referrals, linked_accounts, link_tokens, chat_activity, style_samples, schedules, plugin_configs, bans CASCADE`); err != nil {
 			t.Fatal(err)
 		}
 		contract(t, store.NewPostgres(db))
+		adminContract(t, store.NewPostgres(db))
 	})
 }
 
@@ -653,4 +654,84 @@ func got2(t *testing.T, s store.Store, id int64) store.Schedule {
 		t.Fatal(err)
 	}
 	return g
+}
+
+func adminContract(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	const a, b = 9001, 9002
+	for _, id := range []int64{a, b} {
+		if err := s.UpsertAccount(ctx, store.Account{OwnerID: id, Status: store.StatusActive}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// TouchAccount yo'q akkauntni yaratmaydi; UpsertAccount ism/username'ni o'chirmaydi.
+	if err := s.TouchAccount(ctx, 9999, "X", "x", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetAccount(ctx, 9999); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("touch akkaunt yaratdi: %v", err)
+	}
+	seen := time.Now().Truncate(time.Second)
+	if err := s.TouchAccount(ctx, a, "Ali", "ali", seen); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertAccount(ctx, store.Account{OwnerID: a, Status: store.StatusPaused}); err != nil {
+		t.Fatal(err)
+	}
+	acc, err := s.GetAccount(ctx, a)
+	if err != nil || acc.Name != "Ali" || acc.Username != "ali" || acc.SeenAt == nil || !acc.SeenAt.Equal(seen) {
+		t.Fatalf("touch: %+v %v", acc, err)
+	}
+	st := config.Default()
+	st.Mode = config.ModeAuto
+	if err := s.SaveSettings(ctx, a, st); err != nil {
+		t.Fatal(err)
+	}
+	s.Audit(ctx, a, "auto_sent", "chat=1")
+	s.Audit(ctx, a, "auto_sent", "chat=2")
+	s.Audit(ctx, a, "settings_saved", "")
+	if _, err := s.GetBan(ctx, b); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("ban yo'q: %v", err)
+	}
+	if err := s.SetBan(ctx, store.Ban{OwnerID: b, Reason: "spam", By: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if bn, err := s.GetBan(ctx, b); err != nil || bn.Reason != "spam" || bn.By != 1 {
+		t.Fatalf("ban: %+v %v", bn, err)
+	}
+	rows, err := s.ListAccounts(ctx, time.Now().Add(-time.Hour), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[int64]store.AccountRow{}
+	for _, r := range rows {
+		got[r.OwnerID] = r
+	}
+	ra, rb := got[a], got[b]
+	if ra.Settings.Mode != config.ModeAuto || ra.Counts["auto_sent"] != 2 || ra.Counts["settings_saved"] != 0 || ra.LastEventAt == nil || ra.Ban != nil || ra.Name != "Ali" {
+		t.Fatalf("a qatori: %+v", ra)
+	}
+	if rb.Ban == nil || rb.Ban.Reason != "spam" || rb.Settings.Mode != config.Default().Mode {
+		t.Fatalf("b qatori: %+v", rb)
+	}
+	// Ban akkaunt o'chirilgandan keyin ham qoladi.
+	if err := s.DeleteAccount(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetBan(ctx, b); err != nil {
+		t.Fatalf("ban o'chib ketdi: %v", err)
+	}
+	if err := s.DeleteBan(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetBan(ctx, b); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unban: %v", err)
+	}
+	if _, err := s.AddPayment(ctx, store.Payment{ChargeID: "adm-1", OwnerID: a, Amount: 5, Currency: "XTR"}); err != nil {
+		t.Fatal(err)
+	}
+	ps, err := s.ListPayments(ctx, 10)
+	if err != nil || len(ps) == 0 {
+		t.Fatalf("payments: %v %v", ps, err)
+	}
 }

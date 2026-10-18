@@ -408,6 +408,29 @@ boshqa odamning raqami kiritilsa, sessiya darhol uziladi.
 Avtomatlashtirish havolasi parametrlari: `mode=draft|auto|off`, `away=<matn>` (bo'sh — tozalash), `for=<daqiqa>` (holat shuncha vaqtdan keyin o'zi tugaydi, 1440 gacha), `action=pause|resume`.
 Masalan: `https://<domen>/hook/<token>?mode=auto&away=Hozir%20rulda`. GET ham, POST ham ishlaydi.
 
+## Admin paneli (`ADMIN_IDS`)
+
+`ADMIN_IDS` dagi foydalanuvchilar Mini App'da (Asosiy → «👑 Admin paneli», Hisob → «👑 Admin obunasi») panelni ko'radi;
+boshqalarga `/api/admin/*` 404 qaytaradi. Xabar matnlari ko'rsatilmaydi — faqat audit hodisalari soni va sozlamalar.
+
+| Bo'lim | Nima bor |
+|---|---|
+| **Umumiy** | foydalanuvchilar, faol, yangi va ilovani ochganlar (7 kun), to'lovlar/tushum/referal, xavfsizlik darajasi, ish rejimlari, foydalanish belgisi, holatlar, 7 kunlik hodisalar. Qatorni bosish — tegishli filtr |
+| **Foydalanuvchilar** | qidiruv (ism, @username, ID) va filtrlar: faol, avtomatik, xavfli, to'laganlar, nofaol, ulanmagan, bloklangan |
+| **Foydalanuvchi** | ma'lumot, obuna, sozlamalar xulosasi, 7/30 kunlik hodisalar, oxirgi hodisalar; amallar: 🎁 sovg'a obuna (7 kun – muddatsiz, Advanced/Pro) va uni bekor qilish, 📩 xabar, ⏸ to'xtatish, ⛔ bloklash / blokni olish |
+| **To'lovlar** | oxirgi 200 to'lov, «Qaytarish» (refund) |
+| **Xabar** | rozilik bergan va bloklanmaganlarga ommaviy xabar (fonda, ~20 xabar/s) |
+
+**Baholash** (taxminiy, admin e'tibori uchun — avtomatik jazo yo'q):
+- *Xavfsizlik darajasi* sozlamalardan: avtomatik rejim yoki avto qoidalar — o'rta; ular bilan birga notanishlarga/botlarga/guruhlarga javob yoki havolalar — yuqori.
+- *Foydalanish* oxirgi 7 kun hodisalaridan: Telegram flood cheklovi, favqulodda to'xtash, ≥10 filtr rad etgan javob yoki ≥700 avtomatik xabar — **shubhali**; ≥3 rad etilgan, ≥10 xavfli kiruvchi, ≥300 avtomatik xabar yoki sessiya xatosi — **kuzatish kerak**; hech narsa tayyorlanmagan — nofaol.
+
+**Bloklash**: `bans` jadvali (akkauntga FK yo'q — akkauntni o'chirib qayta ochish blokni olmaydi). Kotib darhol to'xtaydi (holat `paused`),
+avtomatik to'lov bekor qilinadi, `Entitled`/`HasPro` false (vazifalar, xulosalar to'xtaydi), Telegram'ni qayta ulash va `/resume` rad etiladi,
+Mini App'da faqat `GET /api/me` va akkauntni o'chirish ochiq, bot buyruqlari va to'lov (`pre_checkout`) rad etiladi. Adminni bloklab bo'lmaydi.
+**Sovg'a obuna** — `BonusUntil` (referal bonusi kabi): joriy sinov/to'langan muddatdan keyin qo'shiladi, Pro sovg'asi tarifni Pro qiladi.
+**Admin obunasi** — `ADMIN_IDS` uchun doimiy Pro, limitsiz va bepul (sotib olinmaydi). Har admin amali foydalanuvchi auditiga `admin=<id>` bilan va server logiga yoziladi.
+
 ## Bot buyruqlari
 
 | Buyruq | Kim | Vazifa |

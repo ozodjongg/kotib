@@ -29,6 +29,10 @@ type Account struct {
 	StatusNote string
 	ConsentAt  *time.Time // rozilik vaqti — rozilik bo'lmasa akkaunt ishga tushmaydi
 	CreatedAt  time.Time
+	// Name, Username, SeenAt — Telegram ismi, @username va Mini App'ni oxirgi ochgan vaqti
+	// (admin ro'yxati uchun; TouchAccount yozadi, UpsertAccount o'zgartirmaydi).
+	Name, Username string
+	SeenAt         *time.Time
 }
 
 type DraftStatus string
@@ -358,4 +362,17 @@ type Store interface {
 	ListPluginConfigs(ctx context.Context, owner int64) ([]PluginConfig, error)
 	SavePluginConfig(ctx context.Context, c PluginConfig) error
 	DeletePluginConfig(ctx context.Context, owner int64, pluginID string) error
+
+	// Admin paneli
+	// TouchAccount Telegram ismi, username va oxirgi kirish vaqtini yangilaydi (akkaunt yo'q bo'lsa — hech narsa).
+	TouchAccount(ctx context.Context, owner int64, name, username string, at time.Time) error
+	// ListAccounts — barcha akkauntlar (yangidan eskiga, ko'pi bilan limit ta), sozlamasi, bloki
+	// va since'dan keyingi AdminEvents hodisalari soni bilan.
+	ListAccounts(ctx context.Context, since time.Time, limit int) ([]AccountRow, error)
+	// ListPayments — oxirgi to'lovlar (yangidan eskiga).
+	ListPayments(ctx context.Context, limit int) ([]Payment, error)
+	// Bloklash (DeleteAccount o'chirmaydi)
+	SetBan(ctx context.Context, b Ban) error
+	GetBan(ctx context.Context, owner int64) (Ban, error)
+	DeleteBan(ctx context.Context, owner int64) error
 }

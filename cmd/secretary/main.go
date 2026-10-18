@@ -265,7 +265,8 @@ func run(log *slog.Logger) error {
 		staticDir = "./webapp"
 	}
 	api := &miniapp.Server{BotToken: env("BOT_TOKEN"), Store: st, Ctl: mgr, Log: log, StaticDir: staticDir,
-		PublicURL: publicURL(env("MINIAPP_URL")), ICS: icsSigner, Schedules: sched, Plugins: plugins, Vault: vault}
+		PublicURL: publicURL(env("MINIAPP_URL")), ICS: icsSigner, Schedules: sched, Plugins: plugins, Vault: vault,
+		Admins: admins, Notify: notify}
 	if gcli != nil {
 		ctrlBot.Handler.(*botcmd.Handler).Google = gcli
 		api.Google = gcli
