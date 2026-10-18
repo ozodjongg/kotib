@@ -48,7 +48,18 @@ func main() {
 	}
 }
 
-func env(key string) string { return os.Getenv(key) }
+// env muhit o'zgaruvchisini o'qiydi: chetidagi bo'sh joy va bir juft qo'shtirnoq olib tashlanadi.
+// Railway "Raw Editor" kabi joylarda KEY="qiymat" ko'rinishida kiritilgan qiymat qo'shtirnog'i bilan
+// keladi va, masalan, Google OAuth "invalid_client" xatosini beradi.
+func env(key string) string { return cleanEnv(os.Getenv(key)) }
+
+func cleanEnv(v string) string {
+	v = strings.TrimSpace(v)
+	if n := len(v); n >= 2 && (v[0] == '"' || v[0] == '\'') && v[n-1] == v[0] {
+		v = strings.TrimSpace(v[1 : n-1])
+	}
+	return v
+}
 
 func must(keys ...string) error {
 	for _, k := range keys {
