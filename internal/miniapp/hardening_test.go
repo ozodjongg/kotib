@@ -3,7 +3,9 @@ package miniapp
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/ozodjongg/secretar_ai_agent/internal/store"
@@ -79,6 +81,24 @@ func TestSecurityHeadersAndStatic(t *testing.T) {
 	for _, p := range []string{"/.env", "/sub/", "/api/nope"} {
 		if r, _ := do(t, "GET", srv.URL+p, "", ""); r.StatusCode != 404 {
 			t.Errorf("%s: %d (404 kutilgan)", p, r.StatusCode)
+		}
+	}
+}
+
+func TestLegalPages(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestServer(t, &Server{BotToken: tok, Store: store.NewMemory(), Ctl: &fakeCtl{}, StaticDir: dir})
+	writeFile(t, dir, "privacy.html", "<h1>Maxfiylik</h1>")
+	writeFile(t, dir, "terms.html", "<h1>Shartlar</h1>")
+	for p, want := range map[string]string{"/privacy": "Maxfiylik", "/terms": "Shartlar", "/privacy.html": "Maxfiylik"} {
+		r, err := http.Get(srv.URL + p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(r.Body)
+		r.Body.Close()
+		if r.StatusCode != 200 || !strings.Contains(string(body), want) || !strings.HasPrefix(r.Header.Get("Content-Type"), "text/html") {
+			t.Errorf("%s: %d %q %q", p, r.StatusCode, r.Header.Get("Content-Type"), body)
 		}
 	}
 }

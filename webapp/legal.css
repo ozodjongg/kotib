@@ -1,0 +1,54 @@
+/* Kotib — huquqiy sahifalar (/privacy, /terms). Ilova ranglari; inline uslub yo'q (CSP). */
+:root {
+  --bg: #faf9f5;
+  --surface: #ffffff;
+  --surface-2: #f3f1ea;
+  --border: #e6e3d8;
+  --text: #1f1e1d;
+  --muted: #6f6d66;
+  --accent: #c96442;
+  --accent-soft: #f6e5dc;
+  --serif: ui-serif, "New York", "Iowan Old Style", Georgia, Cambria, "Times New Roman", serif;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #262624;
+    --surface: #30302e;
+    --surface-2: #2b2b29;
+    --border: #3f3e3a;
+    --text: #f5f4ee;
+    --muted: #a8a59c;
+    --accent: #d97757;
+    --accent-soft: #4a3329;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.65 var(--sans); }
+.wrap { max-width: 760px; margin: 0 auto; padding: 24px 16px 64px; }
+header.top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+header.top img { width: 40px; height: 40px; }
+header.top .brand { font: 600 22px/1.2 var(--serif); color: var(--text); text-decoration: none; }
+header.top nav { margin-left: auto; display: flex; gap: 14px; flex-wrap: wrap; font-size: 14px; }
+a { color: var(--accent); text-underline-offset: 2px; }
+h1 { font: 600 32px/1.2 var(--serif); margin: 28px 0 6px; }
+h2 { font: 600 22px/1.3 var(--serif); margin: 36px 0 8px; scroll-margin-top: 16px; }
+h3 { font-size: 17px; margin: 22px 0 6px; }
+p, ul, ol { margin: 8px 0 12px; }
+ul, ol { padding-left: 22px; }
+li { margin: 4px 0; }
+.meta { color: var(--muted); font-size: 14px; }
+.lang { display: inline-flex; gap: 6px; margin: 14px 0 0; font-size: 14px; }
+.lang a { padding: 4px 12px; border: 1px solid var(--border); border-radius: 999px; text-decoration: none; color: var(--text); background: var(--surface); }
+.note { background: var(--accent-soft); border-radius: 12px; padding: 12px 16px; margin: 16px 0; }
+.toc { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 12px 20px; margin: 20px 0; }
+.toc ol { margin: 6px 0; }
+.table { overflow-x: auto; margin: 12px 0; }
+table { width: 100%; border-collapse: collapse; font-size: 15px; background: var(--surface); }
+th, td { text-align: left; vertical-align: top; padding: 8px 10px; border: 1px solid var(--border); }
+th { background: var(--surface-2); font-weight: 600; }
+code { font-size: 13px; background: var(--surface-2); padding: 1px 5px; border-radius: 6px; overflow-wrap: anywhere; }
+hr { border: 0; border-top: 1px solid var(--border); margin: 48px 0 8px; }
+footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--muted); font-size: 14px; }

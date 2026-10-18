@@ -13,6 +13,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -188,6 +189,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/plugins/{id}/connect", s.auth(s.handleConnectPlugin))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
 	if s.StaticDir != "" {
+		// Huquqiy sahifalar toza manzilda (Google OAuth consent screen havolalari).
+		for _, page := range []string{"privacy", "terms"} {
+			file := filepath.Join(s.StaticDir, page+".html")
+			mux.HandleFunc("GET /"+page, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				http.ServeFile(w, r, file)
+			})
+		}
 		mux.Handle("GET /", staticFiles(s.StaticDir))
 	}
 	return secureHeaders(mux)
