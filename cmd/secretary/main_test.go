@@ -87,3 +87,24 @@ func TestInstanceLockOneAtATime(t *testing.T) {
 		t.Fatal("eski nusxa to'xtagach yangisi qulfni olishi kerak")
 	}
 }
+
+func TestCleanEnv(t *testing.T) {
+	cases := map[string]string{
+		`abc`:          "abc",
+		`  abc  `:      "abc",
+		`"abc"`:        "abc",
+		`'abc'`:        "abc",
+		` "a b" `:      "a b",
+		`"abc`:         `"abc`,
+		`"abc'`:        `"abc'`,
+		`"`:            `"`,
+		`""`:           "",
+		`a"b"`:         `a"b"`,
+		"\"x.apps\"\n": "x.apps",
+	}
+	for in, want := range cases {
+		if got := cleanEnv(in); got != want {
+			t.Errorf("cleanEnv(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
