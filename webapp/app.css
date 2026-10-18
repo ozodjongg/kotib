@@ -122,6 +122,8 @@ button { font: inherit; cursor: pointer; }
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .row.end { justify-content: flex-end; }
 .row > .grow { flex: 1 1 auto; }
+.row.nowrap { flex-wrap: nowrap; }
+.row.nowrap > .grow { width: 0; min-width: 0; }
 .actions { display: flex; gap: 10px; margin-top: 12px; }
 .actions > * { flex: 1 1 0; }
 

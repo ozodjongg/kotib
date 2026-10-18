@@ -149,3 +149,23 @@ func TestGeminiSendsAudio(t *testing.T) {
 		t.Fatalf("audio yuborilmadi: %s", raw)
 	}
 }
+
+func TestSystemPromptAboutAndRoutine(t *testing.T) {
+	loc, _ := time.LoadLocation("Asia/Tashkent")
+	r := Request{
+		About: "O'qituvchiman, 5-maktabda ingliz tilidan dars beraman.",
+		Busy:  "darsda", BusyUntil: "15:00",
+		Now: time.Date(2026, 10, 13, 12, 4, 0, 0, time.UTC), Loc: loc,
+	}
+	p := SystemPrompt(r)
+	for _, want := range []string{"HOZIR: seshanba, 17:04", "darsda, taxminan 15:00 gacha", "5-maktabda", "<<<EGASI_HAQIDA"} {
+		if !strings.Contains(p, want) {
+			t.Errorf("promptda %q yo'q:\n%s", want, p)
+		}
+	}
+	// Qo'lda qo'yilgan holat kun tartibidan ustun.
+	r.Away = "rulda"
+	if p := SystemPrompt(r); strings.Contains(p, "darsda") || !strings.Contains(p, "EGASI HOZIR: rulda") {
+		t.Errorf("away ustun emas:\n%s", p)
+	}
+}

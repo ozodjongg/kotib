@@ -1122,6 +1122,10 @@ function viewSettings(view) {
         h('button', { class: 'btn ghost sm', onclick: () => go('tasks') }, '🕒 Vazifalar'))),
     h('h2', {}, "O'qitish rejimi"),
     styleCard(s),
+    h('h2', {}, "O'zim haqimda"),
+    aboutCard(s),
+    h('h2', {}, 'Kun tartibim'),
+    routineCard(s),
     h('h2', {}, 'Bilim bazasi'),
     knowledgeCard(s),
     h('h2', {}, 'Tinch soatlar'),
@@ -1199,6 +1203,45 @@ function knowledgeCard(s) {
   return h('div', { class: 'card' },
     h('p', { class: 'muted small' }, "Ko'p so'raladigan savollarga javoblar: narxlar, ish vaqti, xizmatlar, manzil. Kotib faqat shu ma'lumotdan foydalanadi, bazada yo'q narsani o'ylab topmaydi. Do'kon va biznes akkauntlari uchun qulay."),
     kb);
+}
+
+// ---------- O'zim haqimda ----------
+function aboutCard(s) {
+  const ta = h('textarea', { maxlength: 2000, rows: 6, placeholder: "Masalan:\nIsmim Alisher, 34 yoshdaman, Toshkentda yashayman.\nDasturchiman, «X» kompaniyasida ishlayman.\nTurmush o'rtog'im va 2 farzandim bor, qizim 5-maktabda o'qiydi.\nDo'stlarimga «sen», kattalarga «siz» deb yozaman." }, s.about || '');
+  const counter = h('div', { class: 'counter' });
+  const upd = () => { counter.textContent = ta.value.length + ' / 2000'; };
+  ta.addEventListener('input', () => { s.about = ta.value; upd(); markDirty(); }); upd();
+  return h('div', { class: 'card' },
+    h('p', { class: 'muted small' }, "Kotib siz haqingizda qancha ko'p bilsa, «keyinroq yozaman» o'rniga shuncha mazmunli javob yozadi. Kasbingiz, oilangiz, odatlaringiz, kimga qanday murojaat qilishingiz — xohlaganingizni yozing."),
+    ta, counter);
+}
+
+// ---------- Kun tartibi ----------
+function routineCard(s) {
+  s.routine = s.routine || [];
+  const list = h('div', {});
+  const draw = () => swap(list, s.routine.map((r, i) => {
+    r.days = r.days || [];
+    const days = h('div', { class: 'chips' }, WEEK.map(([d, label]) => h('button', { class: 'chip-btn' + (r.days.includes(d) ? ' on' : ''),
+      onclick: (e) => { r.days = r.days.includes(d) ? r.days.filter((x) => x !== d) : [...r.days, d]; e.currentTarget.classList.toggle('on'); haptic('tap'); markDirty(); } }, label)));
+    return h('div', { class: 'card soft' },
+      h('div', { class: 'row nowrap' },
+        h('input', { type: 'text', class: 'grow', maxlength: 100, value: r.activity || '', placeholder: 'Nima qilasiz? Masalan: ishda, darsda, sportzalda',
+          oninput: (e) => { r.activity = e.target.value; markDirty(); } }),
+        h('button', { class: 'btn danger-ghost sm', onclick: () => { s.routine.splice(i, 1); markDirty(); draw(); } }, '✖️')),
+      h('div', { class: 'two' },
+        field('Boshlanishi', h('input', { type: 'time', value: r.start, onchange: (e) => { r.start = e.target.value; markDirty(); } })),
+        field('Tugashi', h('input', { type: 'time', value: r.end, onchange: (e) => { r.end = e.target.value; markDirty(); } }))),
+      field('Kunlar', days, 'Hech biri tanlanmasa — har kuni.'));
+  }));
+  draw();
+  return h('div', { class: 'card' },
+    h('p', { class: 'muted small' }, "Qaysi kun, qaysi soatda nima qilishingizni kiriting. Kotib hozirgi vaqtga qarab band yoki bo'shligingizni aniqlaydi va kerak bo'lsa «hozir darsdaman, 15:00 dan keyin yozaman» kabi javob beradi. Vaqtlar Tinch soatlardagi vaqt mintaqasida."),
+    list,
+    h('button', { class: 'btn ghost sm', onclick: () => {
+      if (s.routine.length >= 40) { toast("40 tadan ko'p bo'lmaydi"); return; }
+      s.routine.push({ days: [1, 2, 3, 4, 5], start: '09:00', end: '18:00', activity: '' }); markDirty(); draw();
+    } }, "➕ Qo'shish"));
 }
 
 // ---------- Kontakt eslatmalari ----------
