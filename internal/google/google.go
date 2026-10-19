@@ -50,6 +50,7 @@ var Scopes = []string{
 var PluginScopes = map[string][]string{
 	"youtube": {"openid", "email", "https://www.googleapis.com/auth/youtube.readonly"},
 	"sheets":  {"openid", "email", "https://www.googleapis.com/auth/spreadsheets.readonly"},
+	"drive":   {"openid", "email", "https://www.googleapis.com/auth/drive.readonly"},
 }
 
 // Endpoints — Google manzillari (testda almashtiriladi).

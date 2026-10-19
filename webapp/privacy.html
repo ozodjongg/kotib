@@ -112,9 +112,10 @@ Murojaatlarga odatda 30 kun ichida javob beramiz.</p>
 <tr><td><code>tasks</code></td><td>Suhbatdan kelib chiqqan vazifani — faqat siz tasdiqlaganingizdan keyin — Google Tasks'ga qo'shish.</td></tr>
 <tr><td><code>youtube.readonly</code></td><td>YouTube plagini: video qidirish va obuna kanallaringizdagi yangi videolar ro'yxati.</td></tr>
 <tr><td><code>spreadsheets.readonly</code></td><td>Google Sheets plagini: siz ko'rsatgan jadval qatorlarini o'qish.</td></tr>
+<tr><td><code>drive.readonly</code></td><td>Google Drive plagini: rejalashtirilgan vazifa bajarilganda fayllaringizni qidirish va hujjat/jadval/taqdimot matnini o'qish. Drive'da hech narsa o'zgartirilmaydi.</td></tr>
 </tbody></table></div>
 <ul>
-  <li><strong>Saqlash:</strong> Google yangilash tokeni (refresh token) faqat shifrlangan holda (AES-256-GCM) saqlanadi; kirish tokeni (access token) faqat server xotirasida, qisqa muddat turadi. Google akkauntingiz email manzili ulanish holatini ko'rsatish uchun saqlanadi. Taqvim, kontakt, YouTube va jadval ma'lumotlari bazamizga yozilmaydi — kerak bo'lgan paytda o'qiladi va ishlatiladi. Kotib taklif qilgan, hali tasdiqlanmagan tadbir/vazifa (sarlavha va vaqt) 7 kundan keyin o'chiriladi.</li>
+  <li><strong>Saqlash:</strong> Google yangilash tokeni (refresh token) faqat shifrlangan holda (AES-256-GCM) saqlanadi; kirish tokeni (access token) faqat server xotirasida, qisqa muddat turadi. Google akkauntingiz email manzili ulanish holatini ko'rsatish uchun saqlanadi. Taqvim, kontakt, YouTube, jadval va Drive ma'lumotlari bazamizga yozilmaydi — kerak bo'lgan paytda o'qiladi va ishlatiladi. Kotib taklif qilgan, hali tasdiqlanmagan tadbir/vazifa (sarlavha va vaqt) 7 kundan keyin o'chiriladi.</li>
   <li><strong>AI'ga uzatish:</strong> sizga ko'rinadigan funksiya uchun zarur bo'lgan qismigina — masalan, band vaqt oraliqlari, kontakt ismi va eslatmasi, siz so'ragan jadval qatorlari yoki video ro'yxati — javob yoki vazifa natijasini tayyorlash uchun Google Gemini API'ga yuboriladi (<a href="#uz-ai">5-bo'lim</a>).</li>
   <li><strong>Inson tomonidan o'qilmaydi:</strong> Google ma'lumotlaringizni hech kim o'qimaydi, faqat: siz aniq rozilik bergan holatda, xavfsizlik maqsadida (masalan, suiiste'molni tekshirish), qonun talabiga ko'ra yoki ma'lumot anonimlashtirilgan va umumlashtirilgan holda ichki ish uchun.</li>
   <li><strong>Uzatilmaydi:</strong> Google ma'lumotlari sotilmaydi, reklama uchun ishlatilmaydi, ma'lumot brokerlariga berilmaydi, kredit qobiliyatini aniqlash yoki qarz berish uchun ishlatilmaydi va umumiy AI yoki ML modellarini yaratish, o'qitish yoki yaxshilash uchun ishlatilmaydi.</li>
@@ -137,9 +138,9 @@ Murojaatlarga odatda 30 kun ichida javob beramiz.</p>
 <tbody>
 <tr><td>Telegram</td><td>Xabarlarni o'qish va yuborish, bot, to'lovlar (Stars)</td><td>Akkaunt orqali amallar, bot xabarlari</td></tr>
 <tr><td>Google (Gemini API)</td><td>Javob va xulosalarni tayyorlash</td><td><a href="#uz-ai">5-bo'limda</a> ko'rsatilgan ma'lumotlar</td></tr>
-<tr><td>Google (Calendar, Contacts, Tasks, YouTube, Sheets)</td><td>Faqat siz ulagan integratsiyalar</td><td>So'rovlar va siz tasdiqlagan tadbir/vazifalar</td></tr>
+<tr><td>Google (Calendar, Contacts, Tasks, YouTube, Sheets, Drive)</td><td>Faqat siz ulagan integratsiyalar</td><td>So'rovlar va siz tasdiqlagan tadbir/vazifalar</td></tr>
 <tr><td>Railway</td><td>Server va ma'lumotlar bazasi (hosting)</td><td>Bazada saqlanadigan barcha ma'lumotlar (shifrlanganlari shifrlangan holda)</td></tr>
-<tr><td>Plagin manbalari: Open-Meteo, O'zbekiston Markaziy banki (cbu.uz), islomapi.uz, aladhan.com, yangiliklar saytlari (Kun.uz, Gazeta.uz, Daryo.uz, UzA, Spot.uz), amoCRM, Bitrix24</td><td>Faqat siz yoqqan plaginlar</td><td>Faqat so'rov uchun zarur parametr (masalan, shahar nomi) yoki sizning CRM akkauntingizga so'rov. Xabarlaringiz uzatilmaydi.</td></tr>
+<tr><td>Plagin manbalari: Open-Meteo, O'zbekiston Markaziy banki (cbu.uz), islomapi.uz, aladhan.com, yangiliklar saytlari (Kun.uz, Gazeta.uz, Daryo.uz, UzA, Spot.uz), ESPN (sport natijalari), amoCRM, Bitrix24, Notion</td><td>Faqat siz yoqqan plaginlar</td><td>Faqat so'rov uchun zarur parametr (masalan, shahar yoki liga nomi) yoki sizning CRM/Notion akkauntingizga so'rov (Notion'da — vazifa natijasini siz ko'rsatgan sahifaga yozish). Xabarlaringiz uzatilmaydi.</td></tr>
 </tbody></table></div>
 <p>Bundan tashqari ma'lumotlar faqat qonun talab qilganda (sud qarori, vakolatli organ so'rovi) yoki xizmat egasi o'zgarganda (bunda ushbu siyosat amal qilishda davom etadi va sizga oldindan xabar beriladi) oshkor qilinishi mumkin.</p>
 
@@ -262,9 +263,10 @@ Privacy requests: <a href="mailto:ozodjontirkachev010@gmail.com">ozodjontirkache
 <tr><td><code>tasks</code></td><td>Add a task arising from a conversation to Google Tasks — only after you confirm it.</td></tr>
 <tr><td><code>youtube.readonly</code></td><td>YouTube plugin: search videos and list new videos from channels you subscribe to.</td></tr>
 <tr><td><code>spreadsheets.readonly</code></td><td>Google Sheets plugin: read rows of the spreadsheet you specify.</td></tr>
+<tr><td><code>drive.readonly</code></td><td>Google Drive plugin: when a scheduled task runs, search your files and read the text of documents, spreadsheets and presentations. Nothing in Drive is changed.</td></tr>
 </tbody></table></div>
 <ul>
-  <li><strong>Storage:</strong> the Google refresh token is stored only in encrypted form (AES-256-GCM); access tokens are kept only in server memory for a short time. Your Google account email is stored to show the connection status. Calendar, contacts, YouTube and spreadsheet data are not written to our database — they are read when needed and used immediately. Suggested events/tasks that you have not confirmed (title and time) are deleted after 7 days.</li>
+  <li><strong>Storage:</strong> the Google refresh token is stored only in encrypted form (AES-256-GCM); access tokens are kept only in server memory for a short time. Your Google account email is stored to show the connection status. Calendar, contacts, YouTube, spreadsheet and Drive data are not written to our database — they are read when needed and used immediately. Suggested events/tasks that you have not confirmed (title and time) are deleted after 7 days.</li>
   <li><strong>Sharing with AI:</strong> only the part needed for a user-facing feature — for example busy time ranges, a contact's name and note, spreadsheet rows or a video list you asked for — is sent to the Google Gemini API to prepare a reply or task result (<a href="#en-ai">section 5</a>).</li>
   <li><strong>No human access:</strong> no one reads your Google data, except with your explicit consent, for security purposes (such as investigating abuse), to comply with applicable law, or when the data is aggregated and anonymized for internal operations.</li>
   <li><strong>No transfer:</strong> Google user data is not sold, not used for advertising, not transferred to data brokers, not used to determine creditworthiness or for lending, and not used to develop, improve or train generalized AI and/or ML models.</li>
@@ -287,9 +289,9 @@ Privacy requests: <a href="mailto:ozodjontirkachev010@gmail.com">ozodjontirkache
 <tbody>
 <tr><td>Telegram</td><td>Reading and sending messages, the bot, payments (Stars)</td><td>Actions on your account, bot messages</td></tr>
 <tr><td>Google (Gemini API)</td><td>Preparing replies and summaries</td><td>Data listed in <a href="#en-ai">section 5</a></td></tr>
-<tr><td>Google (Calendar, Contacts, Tasks, YouTube, Sheets)</td><td>Only integrations you connect</td><td>Requests and events/tasks you confirm</td></tr>
+<tr><td>Google (Calendar, Contacts, Tasks, YouTube, Sheets, Drive)</td><td>Only integrations you connect</td><td>Requests and events/tasks you confirm</td></tr>
 <tr><td>Railway</td><td>Server and database hosting</td><td>All stored data (encrypted items remain encrypted)</td></tr>
-<tr><td>Plugin sources: Open-Meteo, Central Bank of Uzbekistan (cbu.uz), islomapi.uz, aladhan.com, news sites (Kun.uz, Gazeta.uz, Daryo.uz, UzA, Spot.uz), amoCRM, Bitrix24</td><td>Only plugins you enable</td><td>Only the parameter needed for the request (e.g. a city name) or a request to your own CRM account. Your messages are not shared.</td></tr>
+<tr><td>Plugin sources: Open-Meteo, Central Bank of Uzbekistan (cbu.uz), islomapi.uz, aladhan.com, news sites (Kun.uz, Gazeta.uz, Daryo.uz, UzA, Spot.uz), ESPN (sports results), amoCRM, Bitrix24, Notion</td><td>Only plugins you enable</td><td>Only the parameter needed for the request (e.g. a city or league name) or a request to your own CRM/Notion account (for Notion — writing a task result to the page you specify). Your messages are not shared.</td></tr>
 </tbody></table></div>
 <p>Otherwise, information may be disclosed only when required by law (a court order or a request from a competent authority) or if the service changes ownership — in which case this policy continues to apply and you will be notified in advance.</p>
 
