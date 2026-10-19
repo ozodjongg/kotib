@@ -65,6 +65,9 @@ func (m *Manager) taskSendBlock(ctx context.Context, owner, chatID int64, st *co
 	if !m.chatAllowed(st, chatID) {
 		return "qoida bo'yicha bu kontaktga yozish o'chirilgan"
 	}
+	if pipe.isPeerSecretary(chatID) {
+		return PeerSecretaryReason
+	}
 	now := pipe.Now()
 	if now.Before(pipe.blockedUntilTime()) {
 		return "Telegram kutishni so'radi"
