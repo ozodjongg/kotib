@@ -544,7 +544,18 @@ func scheduleContract(t *testing.T, s store.Store) {
 	}
 	later := now.Add(time.Hour)
 	id2, _ := s.CreateSchedule(ctx, store.Schedule{OwnerID: 300, Title: "Kurs", Prompt: "dollar", Kind: store.ScheduleOnce,
-		At: "10:00", Date: "2026-10-20", Enabled: true, NextRun: &later})
+		At: "10:00", Date: "2026-10-20", Enabled: true, NextRun: &later, TargetID: 55, TargetName: "Onam", TargetAuto: true})
+	if g := got2(t, s, id2); g.TargetID != 55 || g.TargetName != "Onam" || !g.TargetAuto {
+		t.Fatalf("qabul qiluvchi: %+v", g)
+	}
+	g2 := got2(t, s, id2)
+	g2.TargetID, g2.TargetName, g2.TargetAuto = 0, "", false
+	if err := s.UpdateSchedule(ctx, g2); err != nil {
+		t.Fatal(err)
+	}
+	if g := got2(t, s, id2); g.TargetID != 0 || g.TargetName != "" || g.TargetAuto {
+		t.Fatalf("qabul qiluvchi o'chirilmadi: %+v", g)
+	}
 	_, _ = s.CreateSchedule(ctx, store.Schedule{OwnerID: 301, Title: "O'chiq", Prompt: "x", Kind: store.ScheduleDaily, At: "08:00", Enabled: false, NextRun: &due})
 	got, err := s.GetSchedule(ctx, 300, id)
 	if err != nil || got.Title != "Ob-havo" || got.Kind != store.ScheduleWeekly || got.Weekdays != 10 || !got.Enabled ||

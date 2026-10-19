@@ -28,6 +28,8 @@ type TaskRequest struct {
 	Now       time.Time // egasining mintaqasida
 	Tools     []ToolDecl
 	Call      ToolCaller
+	// Recipient — natija egasi nomidan shu kontaktga yuboriladi (bo'sh — egasining o'ziga).
+	Recipient string
 }
 
 // TaskResult — vazifa natijasi va chaqirilgan vositalar (tarix uchun).
@@ -76,6 +78,11 @@ func (g *Gemini) RunTask(ctx context.Context, r TaskRequest) (TaskResult, error)
 		"- Egasi qaysi tilda yozgan bo'lsa, shu tilda javob ber (o'zbekcha — lotin). Qisqa va aniq; markdown (*, #) ishlatma, " +
 		"ro'yxat uchun «•» ishlat. Havolalarni to'liq yoz.\n" +
 		"- 3000 belgidan oshirma."
+	if rcp := cleanTitle(r.Recipient, 80); rcp != "" {
+		system += "\nMUHIM: natija egasiga emas — egasining nomidan to'g'ridan-to'g'ri «" + safe(rcp) + "» kontaktiga Telegram xabari bo'lib ketadi. " +
+			"Faqat yuboriladigan xabar matnining o'zini yoz: izoh, sarlavha, «Mana xabar:» kabi so'zlar, qo'shtirnoq va variantlar yo'q. " +
+			"Xabarni egasining o'zi yozgandek, birinchi shaxsda yoz. Havola, karta, parol, pul o'tkazish haqida yozma."
+	}
 	user := "VAZIFA"
 	if t := cleanTitle(r.Title, 80); t != "" {
 		user += " «" + safe(t) + "»"

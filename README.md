@@ -338,6 +338,13 @@ ko'rsatmani bajaradi va natijani bot chatiga «⏰ Nomi» bilan yuboradi.
   Har vazifa bazada atomar egallanadi (`ClaimSchedule`) — ikki marta bajarilmaydi.
 - **Tarif**: Advanced va Pro (sinovda ham ochiq). Obuna tugasa vazifalar bajarilmaydi, yaratish/tahrirlash/«Hozir bajarish» yopiladi (402); o'chirish mumkin.
 - Cheklovlar: egasida 20 ta vazifa, kuniga 60 ta bajarilish, ko'rsatma 2000 belgi.
+- **Natijani kontaktga yuborish (Pro)**: «Natijani kimga yuborish» → «Kontaktga» — faqat egasining Telegram
+  kontaktlaridan bittasi (Saved Messages va Telegram xizmati emas). Xabar egasining akkauntidan, uning nomidan ketadi;
+  AI'ga «faqat xabar matnini, birinchi shaxsda yoz» ko'rsatmasi beriladi (`TaskRequest.Recipient`).
+  Standart — avval egasiga **qoralama** (bot/Mini App'da bir bosishda yuboriladi). «Tasdiqsiz yuborish» yoqilsa ham
+  quyidagilarda qoralama bo'ladi: javob filtri (havola, karta, parol...), qoida bu kontaktga yozishni o'chirgan,
+  Telegram FloodWait, tezlik limiti yoki kuniga 20 tadan ortiq (`MaxTaskSendsPerDay`). Sessiya ulanmagan bo'lsa natija
+  egasiga sabab bilan keladi. Har yuborilgan xabar auditga `schedule_sent` bo'lib yoziladi.
 
 ## Plaginlar (connector'lar)
 

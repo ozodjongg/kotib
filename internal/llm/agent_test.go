@@ -123,3 +123,18 @@ func TestWebSearchSources(t *testing.T) {
 		t.Fatal("google_search vositasi yoqilishi kerak")
 	}
 }
+
+func TestRunTaskRecipient(t *testing.T) {
+	g, bodies := scripted(t, `{"candidates":[{"content":{"parts":[{"text":"Xayrli tong, onajon!"}]}}]}`,
+		`{"candidates":[{"content":{"parts":[{"text":"x"}]}}]}`)
+	if _, err := g.RunTask(context.Background(), TaskRequest{Prompt: "Onamga xayrli tong tila", Recipient: "Onam"}); err != nil {
+		t.Fatal(err)
+	}
+	if b := bodies()[0]; !strings.Contains(b, "«Onam» kontaktiga") || !strings.Contains(b, "birinchi shaxsda") {
+		t.Fatalf("qabul qiluvchi ko'rsatmasi yo'q: %s", b)
+	}
+	_, _ = g.RunTask(context.Background(), TaskRequest{Prompt: "ob-havo"})
+	if strings.Contains(bodies()[1], "kontaktiga Telegram xabari") {
+		t.Fatal("egasiga vazifada qabul qiluvchi ko'rsatmasi bo'lmasligi kerak")
+	}
+}
