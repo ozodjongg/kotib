@@ -160,8 +160,8 @@ type Pipeline struct {
 	Debounce  time.Duration // ketma-ket xabarlarni birlashtirish oynasi (default 4s)
 	// Pro — Pro tarif funksiyalari (ovozli xabarlar, Google) ochiqmi; nil → ochiq.
 	Pro func(ctx context.Context, owner int64) bool
-	// PeerSecretary — chatdagi kontakt ham kotib ulangan foydalanuvchimi (sikl xavfi yuqori);
-	// nil → noma'lum.
+	// PeerSecretary — chatdagi kontakt ham kotib ulangan foydalanuvchimi: unga hech qachon
+	// avtomatik yozilmaydi, faqat qoralama (ikki kotib bir-biriga cheksiz javob yozmasin); nil → yo'q.
 	PeerSecretary func(chatID int64) bool
 
 	// testda almashtiriladi
@@ -400,6 +400,9 @@ func (p *Pipeline) Handle(ctx context.Context, in Incoming) {
 	}
 	if forced == "" && in.Contact.IsBot {
 		forced = "bot — faqat qoralama" // ikkinchi himoya qatlami (config.Resolve ham draft qiladi)
+	}
+	if forced == "" && p.isPeerSecretary(in.ChatID) {
+		forced = PeerSecretaryReason // ikki kotib o'zaro sikl hosil qilmasin
 	}
 	if forced == "" && now.Before(p.blockedUntilTime()) {
 		forced = "Telegram kutishni so'radi (FloodWait)" // kutamiz, faqat draft tayyorlaymiz

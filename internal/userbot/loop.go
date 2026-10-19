@@ -14,29 +14,33 @@ import (
 // ketma-ket yuborilgan avtomatik javoblar sanaladi; chegaradan oshsa avtomatik yuborish
 // to'xtaydi — keyingi javoblar qoralama bo'ladi va egasiga bildiriladi. Egasi o'zi yozsa
 // yoki qoralamani tasdiqlasa, hisob qayta boshlanadi.
+//
+// Qarshi tomon ham shu xizmatda kotib ulagan foydalanuvchi bo'lsa — eng xavfli holat — unga
+// avtomatik javob umuman yuborilmaydi: har doim faqat qoralama (PeerSecretaryReason).
 
 const (
 	// loopWindow — shu oyna ichidagi avtomatik javoblar sanaladi.
 	loopWindow = time.Hour
-	// loopMaxAuto — oddiy kontaktga egasi aralashmasdan ketma-ket avtomatik javoblar chegarasi.
+	// loopMaxAuto — egasi aralashmasdan bitta chatga ketma-ket avtomatik javoblar chegarasi.
 	loopMaxAuto = 5
-	// loopMaxPeer — qarshi tomon ham shu xizmatning (kotib ulangan) foydalanuvchisi bo'lsa:
-	// ikki kotib bir-biriga javob yozishi eng xavfli holat, chegara qattiqroq.
-	loopMaxPeer = 2
 	// loopNotifyEvery — bitta chat bo'yicha sikl ogohlantirishi shundan tez-tez yuborilmaydi.
 	loopNotifyEvery = time.Hour
 )
 
+// PeerSecretaryReason — qarshi tomon ham kotib ulagan foydalanuvchi: faqat qoralama.
+const PeerSecretaryReason = "qarshi tomonda ham kotib — faqat qoralama"
+
+// isPeerSecretary — chatdagi kontakt ham shu xizmatda kotib ulagan foydalanuvchimi.
+func (p *Pipeline) isPeerSecretary(chatID int64) bool {
+	return p.PeerSecretary != nil && p.PeerSecretary(chatID)
+}
+
 // autoLoopBlocked — bu chatga avtomatik javob yuborish sikl xavfi tufayli to'xtatilganmi.
 func (p *Pipeline) autoLoopBlocked(chatID int64) bool {
-	limit := loopMaxAuto
-	if p.PeerSecretary != nil && p.PeerSecretary(chatID) {
-		limit = loopMaxPeer
-	}
 	now := p.Now()
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return len(p.liveAutoSends(chatID, now)) >= limit
+	return len(p.liveAutoSends(chatID, now)) >= loopMaxAuto
 }
 
 // liveAutoSends — oyna ichidagi avtomatik javob vaqtlari (eskilari tashlanadi). p.mu ostida.

@@ -108,14 +108,36 @@ func TestLoopGuardWindowExpires(t *testing.T) {
 	}
 }
 
-func TestLoopGuardStricterForPeerSecretary(t *testing.T) {
+func TestPeerSecretaryOnlyDrafts(t *testing.T) {
 	e := newEnv(t, auto)
 	e.p.PeerSecretary = func(id int64) bool { return id == 100 }
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 3; i++ {
 		e.p.Handle(context.Background(), in("salom", true))
 	}
-	if got := e.tg.sentCount(); got != loopMaxPeer {
-		t.Fatalf("ikkinchi kotibga %d ta avto javob kutilgan, yuborildi: %d", loopMaxPeer, got)
+	if got := e.tg.sentCount(); got != 0 {
+		t.Fatalf("kotibi bor foydalanuvchiga avtomatik yuborilmasligi kerak, yuborildi: %d", got)
+	}
+	ds := e.drafts()
+	if len(ds) != 3 || ds[0].Reason != PeerSecretaryReason {
+		t.Fatalf("faqat qoralama kutilgan: %+v", ds)
+	}
+	// Oddiy kontaktga avtomatik javob odatdagidek.
+	other := Incoming{ChatID: 200, MsgID: 1, Text: "salom", Contact: config.Contact{UserID: 200, IsContact: true}}
+	e.p.Handle(context.Background(), other)
+	if got := e.tg.sentCount(); got != 1 {
+		t.Fatalf("oddiy kontaktga avto javob kutilgan, yuborildi: %d", got)
+	}
+}
+
+func TestDeliverToPeerSecretaryDrafts(t *testing.T) {
+	m, e := deliverEnv(t, nil)
+	e.p.PeerSecretary = func(id int64) bool { return id == 100 }
+	sent, err := m.Deliver(context.Background(), owner, 100, "Ali", "Tong", "Xayrli tong!", true)
+	if err != nil || sent || e.tg.sentCount() != 0 {
+		t.Fatalf("kotibi bor foydalanuvchiga vazifa ham faqat qoralama: sent=%v err=%v", sent, err)
+	}
+	if ds := e.drafts(); len(ds) != 1 || ds[0].Reason != PeerSecretaryReason {
+		t.Fatalf("draft: %+v", ds)
 	}
 }
 
@@ -195,7 +217,7 @@ func TestTwoAutoSecretariesDoNotLoop(t *testing.T) {
 		}
 		limit := loopMaxAuto
 		if peerKnown {
-			limit = loopMaxPeer
+			limit = 0 // bir-biriga faqat qoralama
 		}
 		if ta.sent > limit || tb.sent > limit {
 			t.Fatalf("peerKnown=%v: juda ko'p avto javob: A=%d, B=%d", peerKnown, ta.sent, tb.sent)
