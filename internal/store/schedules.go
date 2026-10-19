@@ -75,6 +75,7 @@ func (m *Memory) UpdateSchedule(_ context.Context, s Schedule) error {
 	}
 	cur.Title, cur.Prompt, cur.Kind, cur.At, cur.Date, cur.Weekdays = s.Title, s.Prompt, s.Kind, s.At, s.Date, s.Weekdays
 	cur.Enabled, cur.NextRun = s.Enabled, usecPtr(s.NextRun)
+	cur.TargetID, cur.TargetName, cur.TargetAuto = s.TargetID, s.TargetName, s.TargetAuto
 	m.schedules[s.ID] = cur
 	return nil
 }
@@ -213,14 +214,14 @@ func (m *Memory) deleteOwnerSchedules(owner int64) {
 // ---- Postgres ----
 
 const scheduleCols = `id, owner_id, title, prompt, kind, at, date, weekdays, enabled, next_run_at, last_run_at,
-	last_status, last_result, runs, created_at`
+	last_status, last_result, runs, created_at, target_id, target_name, target_auto`
 
 func scanSchedule(sc interface{ Scan(...any) error }) (Schedule, error) {
 	var s Schedule
 	var kind string
 	var next, last sql.NullTime
 	err := sc.Scan(&s.ID, &s.OwnerID, &s.Title, &s.Prompt, &kind, &s.At, &s.Date, &s.Weekdays, &s.Enabled,
-		&next, &last, &s.LastStatus, &s.LastResult, &s.Runs, &s.CreatedAt)
+		&next, &last, &s.LastStatus, &s.LastResult, &s.Runs, &s.CreatedAt, &s.TargetID, &s.TargetName, &s.TargetAuto)
 	if err != nil {
 		return s, err
 	}
@@ -263,9 +264,10 @@ func ptrNull(t *time.Time) sql.NullTime {
 func (p *Postgres) CreateSchedule(ctx context.Context, s Schedule) (int64, error) {
 	var id int64
 	err := p.DB.QueryRowContext(ctx, `
-		INSERT INTO schedules (owner_id, title, prompt, kind, at, date, weekdays, enabled, next_run_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
-		s.OwnerID, s.Title, s.Prompt, string(s.Kind), s.At, s.Date, s.Weekdays, s.Enabled, ptrNull(s.NextRun)).Scan(&id)
+		INSERT INTO schedules (owner_id, title, prompt, kind, at, date, weekdays, enabled, next_run_at, target_id, target_name, target_auto)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
+		s.OwnerID, s.Title, s.Prompt, string(s.Kind), s.At, s.Date, s.Weekdays, s.Enabled, ptrNull(s.NextRun),
+		s.TargetID, s.TargetName, s.TargetAuto).Scan(&id)
 	return id, err
 }
 
@@ -283,9 +285,11 @@ func (p *Postgres) ListSchedules(ctx context.Context, owner int64) ([]Schedule, 
 
 func (p *Postgres) UpdateSchedule(ctx context.Context, s Schedule) error {
 	res, err := p.DB.ExecContext(ctx, `
-		UPDATE schedules SET title = $3, prompt = $4, kind = $5, at = $6, date = $7, weekdays = $8, enabled = $9, next_run_at = $10
+		UPDATE schedules SET title = $3, prompt = $4, kind = $5, at = $6, date = $7, weekdays = $8, enabled = $9, next_run_at = $10,
+			target_id = $11, target_name = $12, target_auto = $13
 		WHERE id = $1 AND owner_id = $2`,
-		s.ID, s.OwnerID, s.Title, s.Prompt, string(s.Kind), s.At, s.Date, s.Weekdays, s.Enabled, ptrNull(s.NextRun))
+		s.ID, s.OwnerID, s.Title, s.Prompt, string(s.Kind), s.At, s.Date, s.Weekdays, s.Enabled, ptrNull(s.NextRun),
+		s.TargetID, s.TargetName, s.TargetAuto)
 	return affected(res, err)
 }
 

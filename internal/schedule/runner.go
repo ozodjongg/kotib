@@ -34,6 +34,9 @@ type Runner struct {
 	Vault   plugin.Vault
 	// Notify natijani egasiga bot orqali yuboradi.
 	Notify func(ctx context.Context, owner int64, text string)
+	// Deliver natijani egasining kontaktiga yuboradi (userbot.Manager.Deliver): sent=false — qoralama
+	// yaratildi (egasiga xabar boradi). nil → kontaktga yuborish o'chiq, natija faqat egasiga.
+	Deliver func(ctx context.Context, owner, chatID int64, name, title, text string, auto bool) (sent bool, err error)
 	// Entitled — obuna faolmi (billing.Service.Entitled); nil → doim.
 	Entitled func(ctx context.Context, owner int64) bool
 	// Pro — plaginlar ochiqmi (billing.Service.HasPro); nil → ochiq. Pro bo'lmasa vazifa plaginsiz bajariladi.
@@ -179,6 +182,12 @@ func (r *Runner) execute(ctx context.Context, s store.Schedule) {
 	st, _ := r.Store.GetSettings(ctx, s.OwnerID)
 	loc := st.Location()
 	req := llm.TaskRequest{OwnerName: st.OwnerName, Title: s.Title, Prompt: s.Prompt, Now: r.now().In(loc)}
+	if s.TargetID != 0 && r.Deliver != nil {
+		req.Recipient = s.TargetName
+		if req.Recipient == "" {
+			req.Recipient = "kontakt"
+		}
+	}
 	if r.Plugins != nil && r.Vault != nil && (r.Pro == nil || r.Pro(ctx, s.OwnerID)) {
 		req.Tools, req.Call = r.Plugins.Toolset(r.Plugins.EnabledFor(ctx, r.Store, r.Vault, s.OwnerID))
 	}
@@ -192,7 +201,32 @@ func (r *Runner) execute(ctx context.Context, s store.Schedule) {
 	}
 	text := clip(strings.TrimSpace(res.Text), MaxResult)
 	_ = r.Store.FinishSchedule(bg, s.OwnerID, s.ID, "ok", text)
+	if s.TargetID != 0 && r.Deliver != nil {
+		r.deliver(bg, s, text)
+		return
+	}
 	r.notify(bg, s.OwnerID, "⏰ "+s.Title+"\n\n"+text)
+}
+
+// deliver natijani vazifada tanlangan kontaktga yuboradi (Pro). Natija egasiga ham ma'lum qilinadi.
+func (r *Runner) deliver(ctx context.Context, s store.Schedule, text string) {
+	name := s.TargetName
+	if name == "" {
+		name = "kontakt"
+	}
+	if r.Pro != nil && !r.Pro(ctx, s.OwnerID) {
+		r.notify(ctx, s.OwnerID, "⏰ "+s.Title+"\n\n"+text+"\n\nℹ️ Kontaktga yuborish Pro tarifda — natija faqat sizga keldi.")
+		return
+	}
+	sent, err := r.Deliver(ctx, s.OwnerID, s.TargetID, s.TargetName, s.Title, text, s.TargetAuto)
+	switch {
+	case err != nil:
+		r.Log.Warn("schedule deliver", "owner", s.OwnerID, "schedule", s.ID, "err", err)
+		r.notify(ctx, s.OwnerID, "⏰ "+s.Title+"\n\n"+text+"\n\n⚠️ "+name+"ga yuborilmadi: "+err.Error())
+	case sent:
+		r.notify(ctx, s.OwnerID, "⏰ "+s.Title+" — "+name+"ga yuborildi ✅\n\n"+text)
+	}
+	// Qoralama bo'lsa — egasiga qoralama haqida xabar Deliver ichida boradi.
 }
 
 func (r *Runner) notify(ctx context.Context, owner int64, text string) {

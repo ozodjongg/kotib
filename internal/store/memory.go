@@ -37,6 +37,9 @@ type Memory struct {
 	schedules map[int64]Schedule
 	plugins   map[pluginKey]PluginConfig
 	bans      map[int64]Ban
+
+	// AuditNow — audit yozuvlari vaqti (testda soxta soat); nil → time.Now.
+	AuditNow func() time.Time
 }
 
 type usageKey struct {
@@ -257,7 +260,11 @@ func (m *Memory) ResolveDraft(_ context.Context, owner, id int64, st DraftStatus
 func (m *Memory) Audit(_ context.Context, owner int64, event, detail string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.audit = append(m.audit, auditRow{owner, time.Now(), event, detail})
+	at := time.Now()
+	if m.AuditNow != nil {
+		at = m.AuditNow()
+	}
+	m.audit = append(m.audit, auditRow{owner, at, event, detail})
 }
 
 func (m *Memory) ReopenDraft(_ context.Context, owner, id int64) error {

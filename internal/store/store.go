@@ -198,6 +198,11 @@ type Schedule struct {
 	LastResult string
 	Runs       int
 	CreatedAt  time.Time
+	// TargetID — natija shu kontaktga (egasining Telegram akkauntidan) yuboriladi; 0 — faqat egasiga.
+	// TargetAuto — tasdiqsiz yuborish (aks holda egasiga qoralama). TargetName — ko'rsatish uchun.
+	TargetID   int64
+	TargetName string
+	TargetAuto bool
 }
 
 // PluginConfig — egasida yoqilgan plagin. Config — shifrlangan JSON (crypto.Vault).
@@ -344,7 +349,7 @@ type Store interface {
 	GetSchedule(ctx context.Context, owner, id int64) (Schedule, error)
 	// ListSchedules — egasining vazifalari (yaratilish tartibida).
 	ListSchedules(ctx context.Context, owner int64) ([]Schedule, error)
-	// UpdateSchedule egasi o'zgartiradigan maydonlarni (nom, prompt, jadval, yoqilgan, NextRun) yozadi.
+	// UpdateSchedule egasi o'zgartiradigan maydonlarni (nom, prompt, jadval, yoqilgan, NextRun, qabul qiluvchi) yozadi.
 	UpdateSchedule(ctx context.Context, s Schedule) error
 	DeleteSchedule(ctx context.Context, owner, id int64) error
 	// ListDueSchedules — yoqilgan va NextRun <= before (barcha egalar, eng eskisidan).

@@ -826,6 +826,7 @@ function taskCard(t, allowed) {
   return h('div', { class: 'card' },
     h('div', { class: 'card-head' }, h('h3', {}, t.title), taskStatus(t)),
     h('p', { class: 'small muted' }, '🕒 ' + t.describe + (t.enabled && t.next_run ? ` · keyingisi ${fmtRun(t.next_run)}` : '') + (t.runs ? ` · ${t.runs} marta bajarildi` : '')),
+    t.target_id ? h('p', { class: 'small' }, `📨 ${t.target_name || 'Kontakt'}ga · ${t.target_auto ? 'tasdiqsiz yuboriladi' : 'avval sizga qoralama'}`) : null,
     result,
     !allowed ? h('div', { class: 'row' }, h('button', { class: 'btn danger-ghost sm', onclick: busy(async () => {
       if (!(await confirmBox(`«${t.title}» vazifasi o'chirilsinmi?`))) return;
@@ -834,7 +835,7 @@ function taskCard(t, allowed) {
     h('div', { class: 'row' },
       h('button', { class: 'btn ghost sm', onclick: busy(async () => {
         await api('POST', `/schedules/${t.id}/run`);
-        toast('Bajarilmoqda — natija bot chatiga keladi');
+        toast(t.target_id ? (t.target_auto ? `Bajarilmoqda — natija ${t.target_name || 'kontakt'}ga yuboriladi` : 'Bajarilmoqda — qoralama sizga keladi') : 'Bajarilmoqda — natija bot chatiga keladi');
         setTimeout(() => { if (state.tab === 'tasks' && !state.sub) renderMain(); }, 1500);
       }) }, '▶ Hozir bajarish'),
       h('button', { class: 'btn ghost sm', onclick: () => openTaskEditor(t) }, 'Tahrirlash'),
@@ -855,7 +856,8 @@ function switchMini(checked, onchange) {
 }
 
 function taskPayload(t, over) {
-  const p = { title: t.title || '', prompt: t.prompt || '', kind: t.kind, at: t.at, date: t.date || '', weekdays: t.weekdays || 0, enabled: !!t.enabled };
+  const p = { title: t.title || '', prompt: t.prompt || '', kind: t.kind, at: t.at, date: t.date || '', weekdays: t.weekdays || 0, enabled: !!t.enabled,
+    target_id: t.target_id || 0, target_auto: !!t.target_auto };
   return Object.assign(p, over || {});
 }
 
@@ -897,7 +899,10 @@ function taskEditor(view, orig) {
     swap(when, parts);
   };
   drawKind();
+  const target = targetPicker(t);
   const save = busy(async () => {
+    if (t.target_mode === 'contact' && !t.target_id) throw new Error('Kontaktni tanlang');
+    if (t.target_mode !== 'contact') { t.target_id = 0; t.target_auto = false; }
     const body = taskPayload(t, { title: title.value, prompt: prompt.value, enabled: editing ? !!t.enabled : true });
     if (t.kind === 'weekly' && !t.weekdays) throw new Error('Kamida bitta kunni tanlang');
     if (editing) await api('PUT', `/schedules/${t.id}`, body); else await api('POST', '/schedules', body);
@@ -911,12 +916,48 @@ function taskEditor(view, orig) {
       field("AI uchun ko'rsatma", [prompt, counter], "Aniq yozing: nima kerak, qanday ko'rinishda. Kerak bo'lsa AI ulangan plaginlardan (internet, YouTube, ob-havo...) foydalanadi."),
       field('Nomi (ixtiyoriy)', title)),
     h('div', { class: 'card' }, field('Qachon', kindSeg), when),
+    target,
     h('button', { class: 'btn block', onclick: save }, editing ? 'Saqlash' : 'Yaratish'),
     editing ? h('button', { class: 'btn danger-ghost block', onclick: busy(async () => {
       if (!(await confirmBox(`«${t.title}» vazifasi o'chirilsinmi?`))) return;
       await api('DELETE', `/schedules/${t.id}`); toast("O'chirildi"); closeSub();
     }) }, "Vazifani o'chirish") : null);
   setTimeout(() => { if (!editing && !t.prompt) prompt.focus(); }, 50);
+}
+
+// targetPicker — natija kimga: faqat menga (bot chati) yoki kontaktga (Pro), tasdiqli yoki tasdiqsiz.
+function targetPicker(t) {
+  t.target_mode = t.target_id ? 'contact' : 'me';
+  const card = h('div', { class: 'card' });
+  const draw = () => {
+    const seg = h('div', { class: 'segmented' }, [['me', 'Faqat menga'], ['contact', 'Kontaktga']].map(([k, label]) =>
+      h('button', { class: t.target_mode === k ? 'on' : '', onclick: () => { t.target_mode = k; haptic('tap'); draw(); } }, label)));
+    const parts = [field('Natijani kimga yuborish', seg, t.target_mode === 'me' ? 'Natija bot chatiga, faqat sizga keladi.' : null)];
+    if (t.target_mode === 'contact') {
+      if (needsPro()) {
+        parts.push(h('p', { class: 'small' }, "Natijani kontaktga yuborish Pro tarifda."),
+          h('button', { class: 'btn ghost block', onclick: () => go('account') }, `Pro tarifga o'tish · ${state.me.billing.pro_price} ⭐`));
+      } else if (!state.contacts) {
+        parts.push(h('div', { class: 'skeleton' }));
+        api('GET', '/contacts').then((cs) => { state.contacts = cs || []; }).catch(() => { state.contacts = []; }).finally(draw);
+      } else {
+        const opts = [['', 'Kontaktni tanlang…'], ...state.contacts.map((c) => [String(c.id), c.name])];
+        if (t.target_id && !state.contacts.some((c) => c.id === t.target_id)) opts.push([String(t.target_id), t.target_name || ('#' + t.target_id)]);
+        const sel = h('select', { onchange: (e) => {
+          t.target_id = +e.target.value || 0;
+          const c = state.contacts.find((x) => x.id === t.target_id);
+          t.target_name = c ? c.name : '';
+        } }, opts.map(([v, l]) => h('option', { value: v, selected: String(t.target_id || '') === v }, l)));
+        parts.push(field('Kontakt', sel, state.contacts.length ? "Faqat Telegram kontaktlaringiz. Xabar sizning akkauntingizdan, siz nomingizdan ketadi." : "Kontaktlar yuklanmadi — Telegram akkaunt ulanganini tekshiring."),
+          switchRow('Tasdiqsiz yuborish', "O'chiq bo'lsa, natija avval sizga qoralama bo'lib keladi va bir bosishda yuborasiz. Havola, pul yoki parol mavzusidagi matn har doim qoralama bo'ladi; kuniga 20 tadan ortig'i ham.",
+            t.target_auto, (v) => { t.target_auto = v; }, true),
+          h('p', { class: 'muted small' }, "Ko'rsatmani shu odamga yoziladigan xabar sifatida yozing, masalan: «Onamga xayrli tong tilagini yoz, iliq va qisqa»."));
+      }
+    }
+    swap(card, parts);
+  };
+  draw();
+  return card;
 }
 
 // ---------- Plaginlar ----------

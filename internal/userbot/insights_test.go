@@ -200,12 +200,15 @@ func TestSendWeeklyReports(t *testing.T) {
 	m, st, notes := runningManager(t, &histTG{})
 	ctx := context.Background()
 	loc, _ := time.LoadLocation("Asia/Tashkent")
-	// Audit vaqti — haqiqiy hozir; hisobot — keyingi dushanba 9:10 (o'tgan hafta hozirni o'z ichiga oladi).
+	// Hisobot — keyingi dushanba 9:10; faollik o'tgan hafta o'rtasida (payshanba), hisobot yozuvi — hisobot paytida.
+	// Audit vaqti soxta soatdan: test haftaning qaysi kunida ishga tushishiga bog'liq bo'lmasin.
 	n := time.Now().In(loc)
 	monday := time.Date(n.Year(), n.Month(), n.Day(), 9, 10, 0, 0, loc).AddDate(0, 0, 1)
 	for monday.Weekday() != time.Monday {
 		monday = monday.AddDate(0, 0, 1)
 	}
+	auditAt := monday.AddDate(0, 0, -4)
+	st.AuditNow = func() time.Time { return auditAt }
 	m.SendWeeklyReports(ctx, monday)
 	if len(*notes) != 0 {
 		t.Fatalf("faoliyatsiz hisobot: %v", *notes)
@@ -225,6 +228,7 @@ func TestSendWeeklyReports(t *testing.T) {
 		t.Fatal("Pro'siz hisobot yuborilmasligi kerak")
 	}
 	m.Pro = nil
+	auditAt = monday
 	m.SendWeeklyReports(ctx, monday)
 	if len(*notes) != 1 {
 		t.Fatalf("hisobot: %v", *notes)

@@ -257,7 +257,7 @@ func run(log *slog.Logger) error {
 		}
 	}
 	plugins := plugin.Default(popts)
-	sched := &schedule.Runner{Store: st, AI: gem, Plugins: plugins, Vault: vault, Entitled: bill.Entitled, Pro: bill.HasPro, Log: log,
+	sched := &schedule.Runner{Store: st, AI: gem, Plugins: plugins, Vault: vault, Entitled: bill.Entitled, Pro: bill.HasPro, Deliver: mgr.Deliver, Log: log,
 		Notify: func(ctx context.Context, owner int64, text string) { notify(ctx, owner, text, false) }}
 
 	staticDir := env("STATIC_DIR")

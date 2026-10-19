@@ -371,3 +371,46 @@ func TestTierGates(t *testing.T) {
 		t.Fatalf("pro holat: %v", m)
 	}
 }
+
+// Natijani kontaktga yuborish — faqat Pro va faqat egasining kontakti.
+func TestScheduleTarget(t *testing.T) {
+	st := store.NewMemory()
+	ctx := context.Background()
+	bill := &billing.Service{Store: st, API: &fakeStarsAPI{}, Price: 150, ProPrice: 250, TrialDays: 7}
+	ctl := &fakeCtl{contacts: []ContactInfo{{ID: 55, Name: "Onam"}}}
+	srv := httptest.NewServer((&Server{BotToken: tok, Store: st, Ctl: ctl, Billing: bill, Schedules: &fakeSched{}}).Handler())
+	t.Cleanup(srv.Close)
+	tier := func(id int64, tr string) {
+		_ = st.SaveSubscription(ctx, store.Subscription{OwnerID: id, PaidUntil: time.Now().Add(240 * time.Hour), Tier: tr})
+	}
+	a := userAuth("81")
+	do(t, "POST", srv.URL+"/api/consent", a, `{"accepted":true}`)
+	tier(81, "advanced")
+	body := `{"prompt":"xayrli tong tilagi","kind":"daily","at":"08:00","target_id":55,"target_auto":true}`
+	if r, m := do(t, "POST", srv.URL+"/api/schedules", a, body); r.StatusCode != 402 {
+		t.Fatalf("advanced'da kontaktga: %d %v", r.StatusCode, m)
+	}
+	tier(81, "pro")
+	for _, bad := range []string{
+		`{"prompt":"x","kind":"daily","at":"08:00","target_id":99}`, // kontakt emas
+		`{"prompt":"x","kind":"daily","at":"08:00","target_id":81}`, // o'zi
+	} {
+		if r, _ := do(t, "POST", srv.URL+"/api/schedules", a, bad); r.StatusCode != 400 {
+			t.Fatalf("%s: %d", bad, r.StatusCode)
+		}
+	}
+	r, m := do(t, "POST", srv.URL+"/api/schedules", a, body)
+	if r.StatusCode != 200 || m["target_id"] != float64(55) || m["target_name"] != "Onam" || m["target_auto"] != true {
+		t.Fatalf("yaratish: %d %v", r.StatusCode, m)
+	}
+	id := int64(m["id"].(float64))
+	// Eski klient (target maydonlarisiz) yangilasa — qabul qiluvchi saqlanib qoladi.
+	ctl.contacts = nil
+	url := srv.URL + "/api/schedules/" + strconv.FormatInt(id, 10)
+	if r, m := do(t, "PUT", url, a, `{"prompt":"x","kind":"daily","at":"09:00","enabled":false}`); r.StatusCode != 200 || m["target_id"] != float64(55) {
+		t.Fatalf("eski klient: %d %v", r.StatusCode, m)
+	}
+	if r, m := do(t, "PUT", url, a, `{"prompt":"x","kind":"daily","at":"09:00","target_id":0}`); r.StatusCode != 200 || m["target_id"] != float64(0) || m["target_auto"] != false {
+		t.Fatalf("faqat menga: %d %v", r.StatusCode, m)
+	}
+}

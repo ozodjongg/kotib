@@ -34,12 +34,16 @@ type scheduleOut struct {
 	LastStatus string     `json:"last_status"`
 	LastResult string     `json:"last_result"`
 	Runs       int        `json:"runs"`
+	TargetID   int64      `json:"target_id"`
+	TargetName string     `json:"target_name"`
+	TargetAuto bool       `json:"target_auto"`
 }
 
 func toScheduleOut(s store.Schedule) scheduleOut {
 	return scheduleOut{ID: s.ID, Title: s.Title, Prompt: s.Prompt, Kind: string(s.Kind), At: s.At, Date: s.Date,
 		Weekdays: s.Weekdays, Enabled: s.Enabled, Describe: schedule.Describe(s), NextRun: s.NextRun, LastRun: s.LastRun,
-		LastStatus: s.LastStatus, LastResult: s.LastResult, Runs: s.Runs}
+		LastStatus: s.LastStatus, LastResult: s.LastResult, Runs: s.Runs,
+		TargetID: s.TargetID, TargetName: s.TargetName, TargetAuto: s.TargetAuto}
 }
 
 type scheduleIn struct {
@@ -50,6 +54,9 @@ type scheduleIn struct {
 	Date     string `json:"date"`
 	Weekdays int    `json:"weekdays"`
 	Enabled  *bool  `json:"enabled"`
+	// TargetID — natijani yuborish uchun kontakt (0 — faqat menga); nil — o'zgarmaydi.
+	TargetID   *int64 `json:"target_id"`
+	TargetAuto *bool  `json:"target_auto"`
 }
 
 func (s *Server) schedulesOn(w http.ResponseWriter) bool {
@@ -119,6 +126,9 @@ func (s *Server) applySchedule(w http.ResponseWriter, r *http.Request, owner int
 	if in.Enabled != nil {
 		sc.Enabled = *in.Enabled
 	}
+	if !s.applyTarget(w, r, owner, sc, in) {
+		return false
+	}
 	err := schedule.Normalize(sc)
 	if err == nil {
 		err = schedule.Plan(sc, time.Now(), s.ownerLoc(r.Context(), owner))
@@ -132,6 +142,46 @@ func (s *Server) applySchedule(w http.ResponseWriter, r *http.Request, owner int
 		return false
 	}
 	return true
+}
+
+// applyTarget — natija qabul qiluvchisi: faqat egasining Telegram kontakti (Pro). Kontakt nomi
+// ro'yxatdan olinadi; o'zgarmagan qabul qiluvchi qayta tekshirilmaydi (sessiya uzilgan bo'lsa ham saqlash mumkin).
+func (s *Server) applyTarget(w http.ResponseWriter, r *http.Request, owner int64, sc *store.Schedule, in scheduleIn) bool {
+	if in.TargetAuto != nil {
+		sc.TargetAuto = *in.TargetAuto
+	}
+	if in.TargetID == nil || *in.TargetID == sc.TargetID {
+		if sc.TargetID == 0 {
+			sc.TargetAuto = false
+		}
+		return true
+	}
+	id := *in.TargetID
+	if id == 0 {
+		sc.TargetID, sc.TargetName, sc.TargetAuto = 0, "", false
+		return true
+	}
+	if !s.hasPro(r.Context(), owner) {
+		httpErr(w, http.StatusPaymentRequired, "natijani kontaktga yuborish Pro tarifda")
+		return false
+	}
+	if id == owner || id < 0 {
+		httpErr(w, 400, "qabul qiluvchi noto'g'ri")
+		return false
+	}
+	contacts, err := s.Ctl.Contacts(r.Context(), owner)
+	if err != nil {
+		httpErr(w, http.StatusConflict, "kontaktlar ro'yxati olinmadi — Telegram akkaunt ulanganini tekshiring")
+		return false
+	}
+	for _, c := range contacts {
+		if c.ID == id {
+			sc.TargetID, sc.TargetName = id, c.Name
+			return true
+		}
+	}
+	httpErr(w, 400, "faqat Telegram kontaktlaringizdan birini tanlash mumkin")
+	return false
 }
 
 func (s *Server) handleCreateSchedule(w http.ResponseWriter, r *http.Request, owner int64) {

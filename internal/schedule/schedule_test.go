@@ -316,3 +316,57 @@ func TestRunnerDailyLimit(t *testing.T) {
 		t.Fatalf("kunlik chegara: %v", err)
 	}
 }
+
+func TestRunnerDeliverToContact(t *testing.T) {
+	r, st, ai, n, clock := newRunner(t)
+	ctx := context.Background()
+	type call struct {
+		chat int64
+		auto bool
+	}
+	var mu sync.Mutex
+	var calls []call
+	result, deliverErr := true, error(nil)
+	r.Deliver = func(_ context.Context, owner, chatID int64, name, title, text string, auto bool) (bool, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		calls = append(calls, call{chatID, auto})
+		return result, deliverErr
+	}
+	id := create(t, st, store.Schedule{Title: "Tong", Prompt: "xayrli tong tilagi", Kind: store.ScheduleDaily, At: "09:30",
+		TargetID: 55, TargetName: "Onam", TargetAuto: true}, *clock)
+	if err := r.RunNow(ctx, 7, id); err != nil {
+		t.Fatal(err)
+	}
+	r.Wait()
+	if len(calls) != 1 || calls[0] != (call{55, true}) {
+		t.Fatalf("deliver: %+v", calls)
+	}
+	if rcp := ai.reqs[0].Recipient; rcp != "Onam" {
+		t.Fatalf("AI'ga qabul qiluvchi berilmadi: %q", rcp)
+	}
+	if msgs := n.all(); len(msgs) != 1 || !strings.Contains(msgs[0], "Onamga yuborildi") {
+		t.Fatalf("egasiga xabar: %q", msgs)
+	}
+	// Qoralama: runner o'zi xabar yubormaydi (Deliver yuboradi).
+	result = false
+	_ = r.RunNow(ctx, 7, id)
+	r.Wait()
+	if len(n.all()) != 1 {
+		t.Fatalf("qoralamada ortiqcha xabar: %q", n.all())
+	}
+	// Xato: natija egasiga sabab bilan.
+	deliverErr = errors.New("sessiya yo'q")
+	_ = r.RunNow(ctx, 7, id)
+	r.Wait()
+	if msgs := n.all(); len(msgs) != 2 || !strings.Contains(msgs[1], "yuborilmadi: sessiya yo'q") {
+		t.Fatalf("xato xabari: %q", msgs)
+	}
+	// Pro yo'q: kontaktga yuborilmaydi, natija egasiga.
+	r.Pro = func(context.Context, int64) bool { return false }
+	_ = r.RunNow(ctx, 7, id)
+	r.Wait()
+	if len(calls) != 3 || !strings.Contains(n.all()[2], "Pro tarifda") {
+		t.Fatalf("pro'siz: calls=%d %q", len(calls), n.all())
+	}
+}

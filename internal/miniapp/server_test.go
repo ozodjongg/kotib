@@ -18,6 +18,7 @@ type fakeCtl struct {
 	sent     atomic.Int32
 	revoked  atomic.Int32
 	paused   atomic.Int32
+	contacts []ContactInfo
 	sendErr  error
 	loginErr error
 	learnErr error
@@ -39,7 +40,7 @@ func (f *fakeCtl) SendDraft(context.Context, int64, store.Draft) error {
 	f.sent.Add(1)
 	return nil
 }
-func (f *fakeCtl) Contacts(context.Context, int64) ([]ContactInfo, error) { return nil, nil }
+func (f *fakeCtl) Contacts(context.Context, int64) ([]ContactInfo, error) { return f.contacts, nil }
 
 func setup(t *testing.T) (*httptest.Server, *store.Memory, *fakeCtl) {
 	t.Helper()
