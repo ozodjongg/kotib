@@ -27,7 +27,7 @@ type Options struct {
 	TelegramFeed TelegramFeed
 	HTTP         *http.Client
 	// Testlar uchun manzillar (bo'sh — haqiqiy xizmatlar).
-	YouTubeURL, GeoURL, WeatherURL, CBUURL, SheetsURL, DriveURL, NotionURL, SportURL string
+	YouTubeURL, GeoURL, WeatherURL, CBUURL, SheetsURL, DriveURL, NotionURL, SportURL, AirURL, GoldURL, CoinURL string
 }
 
 // Default — standart plaginlar reestri.
@@ -53,7 +53,13 @@ func Default(o Options) *Registry {
 		&AmoCRM{HTTP: o.HTTP},
 		&Bitrix24{HTTP: o.HTTP},
 		&Weather{HTTP: o.HTTP, GeoURL: o.GeoURL, BaseURL: o.WeatherURL},
+		&Air{HTTP: o.HTTP, GeoURL: o.GeoURL, BaseURL: o.AirURL},
+		&Sky{HTTP: o.HTTP, GeoURL: o.GeoURL, BaseURL: o.WeatherURL},
+		&Holidays{},
+		&Countdown{},
+		&Daily{},
 		&Currency{HTTP: o.HTTP, BaseURL: o.CBUURL},
+		&Markets{HTTP: o.HTTP, GoldURL: o.GoldURL, CoinURL: o.CoinURL, CBUURL: o.CBUURL},
 		soon("gmail", "Gmail", "📧", "Pochta", "Kiruvchi xatlarni o'qish, muhimlarini xulosa qilish."),
 		soon("instagram", "Instagram", "📸", "Ijtimoiy tarmoq", "Direct xabarlari va izohlarga javob qoralamalari."),
 	)
@@ -138,26 +144,10 @@ func (w *Weather) Call(ctx context.Context, cfg Config, _ string, args map[strin
 		city = "Toshkent"
 	}
 	days := argInt(args, "days", 1, 1, 7)
-	geo := w.GeoURL
-	if geo == "" {
-		geo = "https://geocoding-api.open-meteo.com/v1/search"
-	}
-	data, err := getBody(ctx, w.HTTP, geo+"?"+url.Values{"name": {city}, "count": {"1"}, "language": {"en"}}.Encode(), nil)
+	loc, err := geocode(ctx, w.HTTP, w.GeoURL, city)
 	if err != nil {
 		return "", err
 	}
-	var g struct {
-		Results []struct {
-			Name      string  `json:"name"`
-			Country   string  `json:"country"`
-			Latitude  float64 `json:"latitude"`
-			Longitude float64 `json:"longitude"`
-		} `json:"results"`
-	}
-	if json.Unmarshal(data, &g) != nil || len(g.Results) == 0 {
-		return "", fmt.Errorf("shahar topilmadi: %s", city)
-	}
-	loc := g.Results[0]
 	base := w.BaseURL
 	if base == "" {
 		base = "https://api.open-meteo.com/v1/forecast"
@@ -168,7 +158,8 @@ func (w *Weather) Call(ctx context.Context, cfg Config, _ string, args map[strin
 		"daily":         {"weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max"},
 		"forecast_days": {fmt.Sprint(days)},
 	}
-	if data, err = getBody(ctx, w.HTTP, base+"?"+q.Encode(), nil); err != nil {
+	data, err := getBody(ctx, w.HTTP, base+"?"+q.Encode(), nil)
+	if err != nil {
 		return "", err
 	}
 	var f struct {
@@ -203,6 +194,32 @@ func (w *Weather) Call(ctx context.Context, cfg Config, _ string, args map[strin
 		fmt.Fprintf(&b, "%s: %+.0f…%+.0f°C, %s%s\n", d, f.Daily.Min[i], f.Daily.Max[i], wmo[f.Daily.Code[i]], rain)
 	}
 	return b.String(), nil
+}
+
+// place — shahar koordinatalari (Open-Meteo geokodlash).
+type place struct {
+	Name      string  `json:"name"`
+	Country   string  `json:"country"`
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
+}
+
+// geocode shahar nomidan koordinatalarni topadi (Open-Meteo, kalitsiz). geoURL bo'sh — haqiqiy xizmat.
+func geocode(ctx context.Context, c *http.Client, geoURL, city string) (place, error) {
+	if geoURL == "" {
+		geoURL = "https://geocoding-api.open-meteo.com/v1/search"
+	}
+	data, err := getBody(ctx, c, geoURL+"?"+url.Values{"name": {city}, "count": {"1"}, "language": {"en"}}.Encode(), nil)
+	if err != nil {
+		return place{}, err
+	}
+	var g struct {
+		Results []place `json:"results"`
+	}
+	if json.Unmarshal(data, &g) != nil || len(g.Results) == 0 {
+		return place{}, fmt.Errorf("shahar topilmadi: %s", city)
+	}
+	return g.Results[0], nil
 }
 
 // ---- Valyuta kursi (O'zbekiston Markaziy banki) ----

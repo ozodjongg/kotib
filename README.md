@@ -369,6 +369,12 @@ foydalanuvchida Google'dan kvota oshirishni so'rang.
 | ▶️ YouTube | `youtube_search` — video qidirish; `youtube_subscriptions` — obuna kanallaridagi yangi videolar | **«YouTube akkauntini ulash»** tugmasi (Google OAuth, `youtube.readonly`) — API kalit kerak emas |
 | 🌤 Ob-havo | `weather` — Open-Meteo (kalitsiz), 1–7 kun | asosiy shahar |
 | 💱 Valyuta kursi | `exchange_rates` — O'zbekiston Markaziy banki | kuzatiladigan valyutalar |
+| 🪙 Oltin va kripto | `gold_price` — oltin/kumush (gold-api.com, zaxira — CoinGecko PAXG), grammi so'mda MB kursi bo'yicha; `crypto_price` — 12 ta tanlangan kripto, 24 soatlik o'zgarish (CoinGecko) | kuzatiladigan kriptovalyutalar (faqat ro'yxatdan) |
+| 🌫 Havo sifati | `air_quality` — AQI (AQSh shkalasi), PM2.5, PM10, bugun/ertaga eng yomon soat, maslahat (Open-Meteo, kalitsiz) | shahar |
+| 🌅 Quyosh va oy | `sun_moon` — quyosh chiqishi/botishi, kun uzunligi (Open-Meteo), oy fazasi va keyingi to'lin/yangi oy (mahalliy hisob, ±1 kun) | shahar |
+| 📅 Bayramlar | `holidays` — O'zbekiston bayramlari, dam olish kunlari, Ramazon oyi (internetsiz; hayit sanalari 2025–2030 jadvali, taxminiy) | — |
+| ⏳ Sanoq | `countdown` — muhim sanalargacha qolgan kunlar; yilsiz sana har yili takrorlanadi | 5 tagacha «Nomi, KK.OO.YYYY» |
+| 💡 Kun so'zi va maqoli | `daily_word` — inglizcha so'z (talaffuz, tarjima, misol) va o'zbek maqoli, ro'yxat tugaguncha takrorlanmaydi (internetsiz) | so'z / maqol / ikkalasi |
 | 📢 Telegram kanallar va guruhlar | `telegram_feed` — kotib ulangan sessiyadan kanal/guruhlardagi oxirgi xabarlar (arxivdagilarsiz, 30 tagacha chat, so'rovlar orasida 300 ms) | — (kalit kerak emas) |
 | 🕌 Namoz vaqtlari | `prayer_times` — islomapi.uz (O'zbekiston), ishlamasa aladhan.com (Hanafiy, taxminiy) | shahar |
 | 📰 Yangiliklar | `news_feed` — Kun.uz, Gazeta.uz, Daryo.uz, UzA, Spot.uz RSS (faqat shu ro'yxat — ixtiyoriy URL yo'q) | manbalar |
