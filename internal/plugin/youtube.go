@@ -77,30 +77,39 @@ func (y *YouTube) get(ctx context.Context, cfg Config, path string, q url.Values
 
 // oauthGet — akkaunt (Google OAuth) orqali ulangan plagin uchun GET so'rov va JSON javob.
 func oauthGet(ctx context.Context, c *http.Client, token func(context.Context, string) (string, error), cfg Config, name, u string, out any) error {
-	rt := cfg[KeyRefreshToken]
-	if rt == "" {
-		return fmt.Errorf("%s akkaunti ulanmagan (Plaginlar → %s → Ulash)", name, name)
-	}
-	tok, err := token(ctx, rt)
+	data, err := oauthRaw(ctx, c, token, cfg, name, u)
 	if err != nil {
-		return ErrAccountRevoked
-	}
-	data, err := getBody(ctx, c, u, map[string]string{"Authorization": "Bearer " + tok})
-	if err != nil {
-		switch {
-		case strings.Contains(err.Error(), "401"):
-			return ErrAccountRevoked
-		case strings.Contains(err.Error(), "403"):
-			return fmt.Errorf("%s so'rovni rad etdi (ruxsat yo'q yoki kunlik limit tugagan)", name)
-		case strings.Contains(err.Error(), "404"):
-			return fmt.Errorf("%s: topilmadi", name)
-		}
 		return err
 	}
 	if err := json.Unmarshal(data, out); err != nil {
 		return fmt.Errorf("%s javobini o'qib bo'lmadi", name)
 	}
 	return nil
+}
+
+// oauthRaw — akkaunt (Google OAuth) orqali ulangan plagin uchun GET so'rov, javob xom holda (1 MB gacha).
+func oauthRaw(ctx context.Context, c *http.Client, token func(context.Context, string) (string, error), cfg Config, name, u string) ([]byte, error) {
+	rt := cfg[KeyRefreshToken]
+	if rt == "" {
+		return nil, fmt.Errorf("%s akkaunti ulanmagan (Plaginlar → %s → Ulash)", name, name)
+	}
+	tok, err := token(ctx, rt)
+	if err != nil {
+		return nil, ErrAccountRevoked
+	}
+	data, err := getBody(ctx, c, u, map[string]string{"Authorization": "Bearer " + tok})
+	if err != nil {
+		switch {
+		case strings.Contains(err.Error(), "401"):
+			return nil, ErrAccountRevoked
+		case strings.Contains(err.Error(), "403"):
+			return nil, fmt.Errorf("%s so'rovni rad etdi (ruxsat yo'q yoki kunlik limit tugagan)", name)
+		case strings.Contains(err.Error(), "404"):
+			return nil, fmt.Errorf("%s: topilmadi", name)
+		}
+		return nil, err
+	}
+	return data, nil
 }
 
 func (y *YouTube) Call(ctx context.Context, cfg Config, tool string, args map[string]any) (string, error) {

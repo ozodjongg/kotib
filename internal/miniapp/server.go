@@ -1071,6 +1071,8 @@ func pluginName(id string) string {
 		return "YouTube"
 	case "sheets":
 		return "Google Sheets"
+	case "drive":
+		return "Google Drive"
 	}
 	return "Plagin"
 }

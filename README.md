@@ -20,7 +20,7 @@ internal/billing/     Telegram Stars obunasi: sinov, to'lov tasdig'i, bekor qili
 internal/google/      Google: OAuth (PKCE), Calendar (band vaqt, tadbir), Contacts (eslatma), Tasks
 internal/ics/         Google'siz taqvim: .ics fayl va imzolangan havola
 internal/schedule/    rejalashtirilgan AI vazifalar: jadval (bir marta/soat/kun/ish kunlari/hafta), bajaruvchi
-internal/plugin/      plaginlar (connector'lar): internet qidiruvi, YouTube, ob-havo, valyuta kursi; shifrlangan sozlama
+internal/plugin/      plaginlar (connector'lar): internet qidiruvi, YouTube, Google Sheets/Drive, Notion, sport, ob-havo, valyuta kursi; shifrlangan sozlama
 internal/botcmd/      bot buyruqlari (/status, /pause, /obuna, admin /stats, /refund) va to'lov hodisalari
 webapp/               Mini App (vanilla JS, innerHTML ishlatilmaydi; iliq fil suyagi/terrakota dizayn, yorug'/qorong'i)
 migrations/           Postgres sxema (binary ichiga joylangan, ishga tushganda avtomatik qo'llanadi)
@@ -320,7 +320,7 @@ Xavfsizlik:
   ulanishi **7 kunda tugaydi** (Google refresh tokenni bekor qiladi). Sinov uchun yetarli, sotuv uchun emas.
 - *In production* uchun sensitive scope'lar bo'yicha Google tekshiruvidan o'tish kerak: tasdiqlangan domen,
   maxfiylik siyosati (Google ma'lumotlari qanday ishlatilishi, Gemini'ga yuborilishi), demo video. Odatda bir necha kundan
-  bir necha haftagacha. Pullik xavfsizlik auditi (CASA) faqat restricted scope'lar (Gmail, Drive) uchun — bu yerda shart emas.
+  bir necha haftagacha. Pullik xavfsizlik auditi (CASA) faqat restricted scope'lar (Gmail, Drive) uchun — asosiy funksiyalar uchun shart emas, lekin Google Drive plagini (`drive.readonly`) production'da ishlashi uchun kerak bo'ladi.
 - Maxfiylik siyosatida ko'rsating: band vaqtlar va kontakt eslatmasi javob tayyorlash uchun Gemini'ga yuboriladi.
 
 ## Rejalashtirilgan vazifalar (Vazifalar bo'limi)
@@ -373,13 +373,28 @@ foydalanuvchida Google'dan kvota oshirishni so'rang.
 | 🕌 Namoz vaqtlari | `prayer_times` — islomapi.uz (O'zbekiston), ishlamasa aladhan.com (Hanafiy, taxminiy) | shahar |
 | 📰 Yangiliklar | `news_feed` — Kun.uz, Gazeta.uz, Daryo.uz, UzA, Spot.uz RSS (faqat shu ro'yxat — ixtiyoriy URL yo'q) | manbalar |
 | 📊 Google Sheets | `sheets_read` — jadval qatorlari (faqat o'qish) | **«Google Sheets'ni ulash»** (OAuth, `spreadsheets.readonly`) + jadval havolasi (3 tagacha) |
+| 📁 Google Drive | `drive_search` — fayl qidirish (nom/matn, oxirgi N kun); `drive_read` — Docs/Slides matni, Sheets CSV, matn fayllari (PDF/rasm emas) | **«Google Drive'ni ulash»** (OAuth, `drive.readonly`) |
+| 🗒 Notion | `notion_search` — sahifa/bazalar; `notion_read` — sahifa matni yoki baza qatorlari; `notion_append` — **faqat sozlamadagi bitta sahifa** oxiriga yozish | integratsiya tokeni (`ntn_…`) + ixtiyoriy «yozish uchun sahifa» havolasi |
+| ⚽ Sport natijalari | `sport_scores` — natija/taqvim (−7…+7 kun, jamoa filtri, Toshkent vaqti); `sport_standings` — turnir jadvali. ESPN ochiq API, kalitsiz | liga (faqat ro'yxatdan: top-5 + RPL, Turkiya, UCL, UEL, JCh, NBA, NHL) + sevimli jamoa |
 | 💼 amoCRM / Kommo | `amocrm` — yangi lidlar, bajarilmagan vazifalar | akkaunt manzili + uzoq muddatli token |
 | 🏢 Bitrix24 | `bitrix24` — lidlar, bitimlar, vazifalar | kiruvchi vebhuk (faqat `https://*.bitrix24.*/rest/<id>/<kalit>/` — SSRF himoyasi) |
-| Tez orada | Gmail, Instagram, Notion, Google Drive, sport natijalari | — |
+| Tez orada | Gmail, Instagram | — |
 
 Google Sheets uchun Google Cloud Console'da **Google Sheets API**ni yoqing va consent screen'ga
 `spreadsheets.readonly` scope'ini qo'shing (sensitive, restricted emas). Telegram plagini guruh xabarlarini ham
 xulosa uchun AI'ga yuboradi — mijozga Mini App'da shu haqida yozilgan.
+
+**Google Drive** uchun **Google Drive API**ni yoqing va consent screen'ga `drive.readonly` scope'ini qo'shing.
+Diqqat: bu **restricted** scope — *Testing* holatida (100 tagacha test foydalanuvchi) darhol ishlaydi, lekin
+*In production* uchun Google tekshiruvi va yillik xavfsizlik auditi (CASA) talab qilinadi. Hujjat matni vazifa
+natijasini tayyorlash uchun Gemini'ga yuboriladi.
+
+**Notion** — Notion'da *Internal integration* yarating va kerakli sahifalarga ⋯ → *Connections* orqali qo'shing:
+kotib faqat shu sahifalarni ko'radi. `notion_append` faqat mijoz sozlamada ko'rsatgan sahifaga yozadi (vosita
+ID'ni modeldan qabul qilmaydi) — boshqa manbadan kelgan matn AI'ni boshqa sahifaga yozdira olmaydi.
+
+**Sport** — ESPN'ning ochiq (hujjatlashtirilmagan) API'si: kalit kerak emas, lekin format oldindan aytilmasdan
+o'zgarishi mumkin. Liga faqat ro'yxatdan tanlanadi (ixtiyoriy URL yo'q).
 
 Yangi plagin qo'shish: `internal/plugin` da `Plugin` interfeysini (Info, Tools, Call) amalga oshirib,
 `plugin.Default` ro'yxatiga qo'shing — Mini App katalogi va sozlash formasi `Info.Fields` dan avtomatik chiziladi.

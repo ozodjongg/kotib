@@ -21,11 +21,13 @@ type Options struct {
 	YouTubeToken func(ctx context.Context, refreshToken string) (string, error)
 	// SheetsToken — Google Sheets akkaunti uchun (xuddi shunday); nil → «tez orada».
 	SheetsToken func(ctx context.Context, refreshToken string) (string, error)
+	// DriveToken — Google Drive akkaunti uchun (xuddi shunday); nil → «tez orada».
+	DriveToken func(ctx context.Context, refreshToken string) (string, error)
 	// TelegramFeed — egasining kanal/guruh xabarlari (userbot.Manager.Feed); nil → plagin yo'q.
 	TelegramFeed TelegramFeed
 	HTTP         *http.Client
 	// Testlar uchun manzillar (bo'sh — haqiqiy xizmatlar).
-	YouTubeURL, GeoURL, WeatherURL, CBUURL, SheetsURL string
+	YouTubeURL, GeoURL, WeatherURL, CBUURL, SheetsURL, DriveURL, NotionURL, SportURL string
 }
 
 // Default — standart plaginlar reestri.
@@ -45,15 +47,15 @@ func Default(o Options) *Registry {
 		&Prayer{HTTP: o.HTTP},
 		&News{HTTP: o.HTTP},
 		sheetsPlugin(o),
+		drivePlugin(o),
+		&Notion{HTTP: o.HTTP, BaseURL: o.NotionURL},
+		&Sport{HTTP: o.HTTP, BaseURL: o.SportURL},
 		&AmoCRM{HTTP: o.HTTP},
 		&Bitrix24{HTTP: o.HTTP},
 		&Weather{HTTP: o.HTTP, GeoURL: o.GeoURL, BaseURL: o.WeatherURL},
 		&Currency{HTTP: o.HTTP, BaseURL: o.CBUURL},
 		soon("gmail", "Gmail", "📧", "Pochta", "Kiruvchi xatlarni o'qish, muhimlarini xulosa qilish."),
 		soon("instagram", "Instagram", "📸", "Ijtimoiy tarmoq", "Direct xabarlari va izohlarga javob qoralamalari."),
-		soon("notion", "Notion", "🗒", "Hujjatlar", "Eslatma va vazifalarni Notion sahifalariga yozish."),
-		soon("drive", "Google Drive", "📁", "Hujjatlar", "Fayllarni qidirish va hujjatlar xulosasi."),
-		soon("sport", "Sport natijalari", "⚽", "Kundalik", "Sevimli jamoangiz o'yinlari, hisob va jadval."),
 	)
 	r, err := NewRegistry(ps...)
 	if err != nil {

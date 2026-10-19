@@ -245,7 +245,7 @@ func run(log *slog.Logger) error {
 	// Telegram kanallar/guruhlar plagini kotib allaqachon ulangan sessiyadan o'qiydi.
 	popts := plugin.Options{Search: gem, TelegramFeed: mgr.Feed}
 	if gcli != nil {
-		popts.YouTubeToken, popts.SheetsToken = gcli.PluginAccessToken, gcli.PluginAccessToken
+		popts.YouTubeToken, popts.SheetsToken, popts.DriveToken = gcli.PluginAccessToken, gcli.PluginAccessToken, gcli.PluginAccessToken
 		gcli.OnPluginToken = func(ctx context.Context, owner int64, id, refreshToken, account string) error {
 			// Qayta ulanishda eski token Google'da bekor qilinadi.
 			if _, cfgs, err := plugin.Load(ctx, st, vault, owner); err == nil {
@@ -275,6 +275,7 @@ func run(log *slog.Logger) error {
 			text := map[string]string{
 				"youtube": "▶️ YouTube akkauntingiz ulandi ✅ Endi rejalashtirilgan vazifalar YouTube'dan qidira oladi va obunalaringizdagi yangi videolarni ko'radi.",
 				"sheets":  "📊 Google Sheets ulandi ✅ Endi ilovada Plaginlar → Google Sheets → «Sozlash»da jadval havolasini kiriting.",
+				"drive":   "📁 Google Drive ulandi ✅ Endi rejalashtirilgan vazifalar Drive'dagi fayllaringizni qidirib, hujjatlar xulosasini tayyorlay oladi.",
 			}[id]
 			if err != nil || text == "" {
 				text = "Plagin ulanmadi. Ilovada Plaginlar bo'limida «Ulash»ni qayta bosing va ruxsat bering."
