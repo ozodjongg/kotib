@@ -156,6 +156,7 @@ func (m *Manager) startWorker(owner int64) {
 		Owner: owner, Store: m.Store, LLM: m.LLM, Notify: m.Notify, Log: m.Log,
 		Limiter: ratelimit.NewLimiter(m.Limits), Entitled: m.Entitled, Quota: m.Quota, HistoryLimit: m.HistoryLimit, Google: m.Google, Propose: m.Propose,
 		DraftCard: m.DraftCard, CalendarFallback: m.CalendarFallback, Pro: m.Pro,
+		PeerSecretary: m.isSecretary,
 	}
 	w.pipe.OnFatal = func(reason string) { go m.breaker(owner, reason) }
 	m.workers[owner] = w
@@ -179,6 +180,14 @@ func (m *Manager) startWorker(owner int64) {
 		}
 		m.runLoop(ctx, owner, w)
 	}()
+}
+
+// isSecretary — id shu xizmatda Telegram akkaunti ulangan (kotibi ishlayotgan) foydalanuvchimi.
+func (m *Manager) isSecretary(id int64) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.workers[id]
+	return ok
 }
 
 // route kiruvchi xabarni pipeline'ga yo'naltiradi. "Saved Messages" (egasining o'zi bilan

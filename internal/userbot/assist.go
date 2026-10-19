@@ -157,6 +157,7 @@ func (p *Pipeline) OwnerMessage(ctx context.Context, chatID int64, text string) 
 	if p.isOwnSend(chatID, text) {
 		return // kotibning o'z xabari qaytib keldi
 	}
+	p.resetAutoStreak(chatID)
 	now := p.Now()
 	_ = p.Store.ChatOut(ctx, p.Owner, chatID, now)
 	p.mu.Lock()

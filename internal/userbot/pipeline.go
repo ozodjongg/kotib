@@ -160,6 +160,9 @@ type Pipeline struct {
 	Debounce  time.Duration // ketma-ket xabarlarni birlashtirish oynasi (default 4s)
 	// Pro — Pro tarif funksiyalari (ovozli xabarlar, Google) ochiqmi; nil → ochiq.
 	Pro func(ctx context.Context, owner int64) bool
+	// PeerSecretary — chatdagi kontakt ham kotib ulangan foydalanuvchimi (sikl xavfi yuqori);
+	// nil → noma'lum.
+	PeerSecretary func(chatID int64) bool
 
 	// testda almashtiriladi
 	Now   func() time.Time
@@ -167,9 +170,10 @@ type Pipeline struct {
 
 	sem          chan struct{} // bir vaqtda LLM chaqiruvlari cheklovi
 	shadow       map[int64]shadowGuess
-	ownSent      map[int64][]sentMark // kotib yuborgan xabarlar (egasining xabari deb qayta qayd etilmasin)
-	proposals    *ratelimit.Bucket    // egasiga yuboriladigan takliflar (bot xabarlari) cheklovi
-	chatMu       map[int64]*chatLock  // bitta chat xabarlari qat'iy navbat bilan
+	ownSent      map[int64][]sentMark  // kotib yuborgan xabarlar (egasining xabari deb qayta qayd etilmasin)
+	autoSends    map[int64][]time.Time // chat bo'yicha egasi aralashmagan avtomatik javoblar (sikl himoyasi)
+	proposals    *ratelimit.Bucket     // egasiga yuboriladigan takliflar (bot xabarlari) cheklovi
+	chatMu       map[int64]*chatLock   // bitta chat xabarlari qat'iy navbat bilan
 	tgMu         sync.RWMutex
 	mu           sync.Mutex
 	pending      map[int64]*pendingChat
@@ -231,6 +235,7 @@ func (p *Pipeline) init() {
 		p.chatMu = map[int64]*chatLock{}
 		p.shadow = map[int64]shadowGuess{}
 		p.ownSent = map[int64][]sentMark{}
+		p.autoSends = map[int64][]time.Time{}
 	}
 }
 
@@ -490,6 +495,11 @@ func (p *Pipeline) Handle(ctx context.Context, in Incoming) {
 }
 
 func (p *Pipeline) sendAuto(ctx context.Context, tg Telegram, in Incoming, reply string) {
+	if p.autoLoopBlocked(in.ChatID) {
+		p.loopStopped(ctx, in)
+		p.makeDraft(ctx, in, reply, "sikl xavfi: ketma-ket ko'p avtomatik javob")
+		return
+	}
 	if !p.Limiter.Allow(in.ChatID) {
 		p.makeDraft(ctx, in, reply, "tezlik limiti")
 		return
@@ -507,6 +517,7 @@ func (p *Pipeline) sendAuto(ctx context.Context, tg Telegram, in Incoming, reply
 		return
 	}
 	p.Store.Audit(ctx, p.Owner, "auto_sent", fmt.Sprintf("chat=%d", in.ChatID))
+	p.noteAutoSend(in.ChatID)
 	p.markSent(ctx, in.ChatID, reply)
 	p.trackPromise(ctx, in.ChatID, reply)
 }
@@ -529,6 +540,7 @@ func (p *Pipeline) SendDraft(ctx context.Context, d store.Draft) error {
 		p.handleTGErr(ctx, err)
 		return err
 	}
+	p.resetAutoStreak(d.ChatID) // egasi o'zi tasdiqladi
 	p.markSent(ctx, d.ChatID, d.Reply)
 	p.learnFromEdit(ctx, d)
 	p.trackPromise(ctx, d.ChatID, d.Reply)
