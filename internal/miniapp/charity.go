@@ -15,9 +15,13 @@ import (
 
 func (s *Server) charityOn() bool { return s.Billing != nil && s.Billing.CharityEnabled() }
 
-func (s *Server) handleCharity(w http.ResponseWriter, r *http.Request, _ int64) {
+func (s *Server) handleCharity(w http.ResponseWriter, r *http.Request, owner int64) {
+	type out struct {
+		billing.CharityReport
+		Mine int64 `json:"mine"` // so'rovchining hissasi: obunalaridan ulush + xayriyalari
+	}
 	if s.Billing == nil {
-		writeJSON(w, 200, billing.CharityReport{Payouts: []billing.CharityPayoutView{}})
+		writeJSON(w, 200, out{CharityReport: billing.CharityReport{Payouts: []billing.CharityPayoutView{}}})
 		return
 	}
 	rep, err := s.Billing.CharityReport(r.Context())
@@ -26,7 +30,11 @@ func (s *Server) handleCharity(w http.ResponseWriter, r *http.Request, _ int64) 
 		httpErr(w, 500, "xatolik")
 		return
 	}
-	writeJSON(w, 200, rep)
+	mine, err := s.Billing.MyCharity(r.Context(), owner)
+	if err != nil {
+		s.logger().Warn("my charity", "owner", owner, "err", err)
+	}
+	writeJSON(w, 200, out{rep, mine})
 }
 
 func (s *Server) handleCharityDonate(w http.ResponseWriter, r *http.Request, owner int64) {

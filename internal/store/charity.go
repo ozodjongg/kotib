@@ -68,6 +68,35 @@ func (m *Memory) PaymentSums(_ context.Context, from, to time.Time) (int64, int6
 	return subs, dons, nil
 }
 
+func (m *Memory) SubscriberSums(_ context.Context, from, to time.Time) (map[int64]int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := map[int64]int64{}
+	for _, p := range m.payments {
+		if !p.Refunded && !p.IsDonation() && !p.CreatedAt.Before(from) && p.CreatedAt.Before(to) {
+			out[p.OwnerID] += int64(p.Amount)
+		}
+	}
+	return out, nil
+}
+
+func (m *Memory) OwnerPaymentSums(_ context.Context, owner int64, from, to time.Time) (int64, int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var subs, dons int64
+	for _, p := range m.payments {
+		if p.OwnerID != owner || p.Refunded || p.CreatedAt.Before(from) || !p.CreatedAt.Before(to) {
+			continue
+		}
+		if p.IsDonation() {
+			dons += int64(p.Amount)
+		} else {
+			subs += int64(p.Amount)
+		}
+	}
+	return subs, dons, nil
+}
+
 func (m *Memory) AddCharityPayout(_ context.Context, p CharityPayout) (int64, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -127,6 +156,35 @@ func (p *Postgres) PaymentSums(ctx context.Context, from, to time.Time) (int64, 
 		SELECT COALESCE(sum(amount) FILTER (WHERE payload NOT LIKE 'don:%'), 0),
 		       COALESCE(sum(amount) FILTER (WHERE payload LIKE 'don:%'), 0)
 		FROM payments WHERE NOT refunded AND created_at >= $1 AND created_at < $2`, from, to).Scan(&subs, &dons)
+	return subs, dons, err
+}
+
+func (p *Postgres) SubscriberSums(ctx context.Context, from, to time.Time) (map[int64]int64, error) {
+	rows, err := p.DB.QueryContext(ctx, `
+		SELECT owner_id, sum(amount) FROM payments
+		WHERE NOT refunded AND payload NOT LIKE 'don:%' AND created_at >= $1 AND created_at < $2
+		GROUP BY owner_id`, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]int64{}
+	for rows.Next() {
+		var owner, sum int64
+		if err := rows.Scan(&owner, &sum); err != nil {
+			return nil, err
+		}
+		out[owner] = sum
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) OwnerPaymentSums(ctx context.Context, owner int64, from, to time.Time) (int64, int64, error) {
+	var subs, dons int64
+	err := p.DB.QueryRowContext(ctx, `
+		SELECT COALESCE(sum(amount) FILTER (WHERE payload NOT LIKE 'don:%'), 0),
+		       COALESCE(sum(amount) FILTER (WHERE payload LIKE 'don:%'), 0)
+		FROM payments WHERE owner_id = $1 AND NOT refunded AND created_at >= $2 AND created_at < $3`, owner, from, to).Scan(&subs, &dons)
 	return subs, dons, err
 }
 

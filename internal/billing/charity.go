@@ -328,7 +328,77 @@ func (s *Service) MarkCharityPaid(ctx context.Context, id int64, proof string, a
 		return err
 	}
 	s.log().Info("charity paid", "id", id, "admin", admin)
+	if all, err := s.Store.ListCharityPayouts(ctx, 0); err == nil {
+		for _, p := range all {
+			if p.ID == id && p.Kind == store.CharityMonthly {
+				go s.notifySubscribers(context.WithoutCancel(ctx), p)
+			}
+		}
+	}
 	return nil
+}
+
+// charityNotifyPause — Telegram bot limiti (~30 xabar/s) ichida.
+var charityNotifyPause = 50 * time.Millisecond
+
+var monthNames = [...]string{"yanvar", "fevral", "mart", "aprel", "may", "iyun", "iyul", "avgust", "sentabr", "oktabr", "noyabr", "dekabr"}
+
+// periodName — "2026-10" → "oktabr 2026".
+func periodName(period string) string {
+	t, err := ParseCharityStart(period)
+	if err != nil || t.IsZero() {
+		return period
+	}
+	return fmt.Sprintf("%s %d", monthNames[t.Month()-1], t.Year())
+}
+
+// notifySubscribers — oylik summa o'tkazilgach, shu oyda obuna to'lagan har mijozga uning to'lovidan
+// ajratilgan ulush tashkilotga yetib borgani haqida xabar (faqat obunachilar: qoida — obuna narxining foizi).
+func (s *Service) notifySubscribers(ctx context.Context, p store.CharityPayout) {
+	if s.Notify == nil {
+		return
+	}
+	from, err := ParseCharityStart(p.Period)
+	if err != nil || from.IsZero() {
+		return
+	}
+	subs, err := s.Store.SubscriberSums(ctx, from, from.AddDate(0, 1, 0))
+	if err != nil {
+		s.log().Warn("charity subscribers", "period", p.Period, "err", err)
+		return
+	}
+	to := ""
+	if s.CharityName != "" {
+		to = " («" + s.CharityName + "»)"
+	}
+	sent := 0
+	for owner, amount := range subs {
+		share := s.CharityShare(int(amount))
+		if share <= 0 || s.Banned(ctx, owner) {
+			continue
+		}
+		if _, err := s.Store.GetAccount(ctx, owner); err != nil {
+			continue // akkauntini o'chirgan
+		}
+		s.Notify(ctx, owner, fmt.Sprintf("💚 %s oyidagi obuna to'lovingizdan ajratilgan %d ⭐ hayriyaga%s o'tkazildi. Rahmat!\n\nIsbot: %s\nHisobot: /hayriya",
+			periodName(p.Period), share, to, p.Proof), false)
+		sent++
+		time.Sleep(charityNotifyPause)
+	}
+	s.log().Info("charity subscribers notified", "period", p.Period, "sent", sent)
+}
+
+// MyCharity — egasining hissasi (hisob boshlanganidan beri): obunalaridan ulush + xayriyalari.
+func (s *Service) MyCharity(ctx context.Context, owner int64) (int64, error) {
+	if !s.CharityEnabled() {
+		return 0, nil
+	}
+	start, err := s.charityStart(ctx)
+	if err != nil {
+		return 0, err
+	}
+	subs, dons, err := s.Store.OwnerPaymentSums(ctx, owner, start, s.now().Add(time.Second))
+	return subs*int64(s.CharityPercent)/100 + dons, err
 }
 
 // AddManualCharity — admin o'z hisobidan (pul/TON bilan, Stars'siz) qilgan xayriyani yozadi.

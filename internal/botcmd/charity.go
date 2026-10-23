@@ -62,6 +62,9 @@ func (h *Handler) charity(ctx context.Context, from int64, args string) bot.Repl
 		links = append(links, bot.Link{Text: fmt.Sprintf("💚 %d ⭐", n), URL: link})
 	}
 	text := charityText(r)
+	if mine, err := h.Billing.MyCharity(ctx, from); err == nil && mine > 0 {
+		text = strings.Replace(text, "O'tkazilgan:", fmt.Sprintf("Sizning hissangiz: %d ⭐\n\nO'tkazilgan:", mine), 1)
+	}
 	if h.Admins[from] {
 		for _, p := range r.Payouts {
 			if !p.Paid && p.Stars > 0 {

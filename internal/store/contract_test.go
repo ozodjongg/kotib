@@ -782,6 +782,15 @@ func charityContract(t *testing.T, s store.Store) {
 	if subs, dons, _ := s.PaymentSums(ctx, time.Now().Add(time.Minute), time.Now().Add(time.Hour)); subs != 0 || dons != 0 {
 		t.Fatalf("bo'sh oraliq: %d %d", subs, dons)
 	}
+	if m, err := s.SubscriberSums(ctx, from, to); err != nil || m[5] != 150 || m[6] != 0 {
+		t.Fatalf("subscriber sums (xayriya va refund kirmaydi): %v %v", m, err)
+	}
+	if subs, dons, err := s.OwnerPaymentSums(ctx, 6, from, to); err != nil || subs != 0 || dons != 40 {
+		t.Fatalf("owner 6: %d %d %v", subs, dons, err)
+	}
+	if subs, dons, _ := s.OwnerPaymentSums(ctx, 5, from, to); subs != 150 || dons != 0 {
+		t.Fatalf("owner 5: %d %d", subs, dons)
+	}
 	if p, _ := s.GetPayment(ctx, "ch-d1"); !p.IsDonation() {
 		t.Fatal("xayriya belgisi")
 	}

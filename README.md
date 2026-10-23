@@ -303,8 +303,12 @@ Bot API'da Stars'ni boshqa akkauntga o'tkazadigan metod yo'q: Stars bot balansid
    va keyinroq qaytarilgan (refund) to'lov keyingi oyda «tuzatish» sifatida ayiriladi. Qaytarilgan xayriya ham hisobdan chiqadi.
 3. **Admin** Stars'ni @BotFather → Balance (Fragment) orqali yechib, tashkilotga o'tkazadi va isbotini kiritadi:
    Mini App → Admin → **Hayriya** → «O'tkazildi» yoki `/hayriya paid <#id> <tx hash yoki havola>`.
-4. **Shaffoflik**: Mini App → Hisob → **💚 Hayriya** va `/hayriya` — foiz, o'tkazilgan, kutilayotgan, shu oy yig'ilayotgan
-   summa va har oylik o'tkazma isboti bilan.
+4. **Obunachilarga xabar**: oylik summa «O'tkazildi» deb belgilangach, shu oyda obuna to'lagan har mijozga bot yozadi:
+   «💚 oktabr 2026 oyidagi obuna to'lovingizdan ajratilgan 15 ⭐ hayriyaga o'tkazildi. Isbot: …». Xabar faqat
+   obunachilarga (qoida — obuna narxining foizi); qaytarilgan to'lovlar, bloklangan va akkauntini o'chirganlar kirmaydi.
+   Stars'siz qo'shimcha xayriya (manual) xabar yubormaydi.
+5. **Shaffoflik**: Mini App → Hisob → **💚 Hayriya** va `/hayriya` — foiz, «Sizning hissangiz» (obunalaringizdan ulush +
+   xayriyalaringiz), o'tkazilgan, kutilayotgan, shu oy yig'ilayotgan summa va har oylik o'tkazma isboti bilan.
 
 Xayriya qilish:
 - **Stars bilan** (hamma): Mini App'dagi 50/100/500 ⭐ yoki ixtiyoriy summa, botda `/hayriya 250` — bir martalik invoice
