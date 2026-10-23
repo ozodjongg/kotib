@@ -20,6 +20,7 @@ import (
 	"github.com/ozodjongg/secretar_ai_agent/internal/billing"
 	"github.com/ozodjongg/secretar_ai_agent/internal/bot"
 	"github.com/ozodjongg/secretar_ai_agent/internal/botcmd"
+	"github.com/ozodjongg/secretar_ai_agent/internal/control"
 	"github.com/ozodjongg/secretar_ai_agent/internal/crypto"
 	"github.com/ozodjongg/secretar_ai_agent/internal/google"
 	"github.com/ozodjongg/secretar_ai_agent/internal/ics"
@@ -314,6 +315,12 @@ func run(log *slog.Logger) error {
 	}
 	if bill.Enabled() {
 		api.Billing = bill
+	}
+	// Bot chatidagi erkin matn: kotib Mini App amallarini function calling bilan bajaradi.
+	{
+		h := ctrlBot.Handler.(*botcmd.Handler)
+		h.Agent = &control.Agent{API: api, LLM: gem, Store: st, Ask: h.Answer, Log: log}
+		h.Typing = ctrlBot.Typing
 	}
 
 	{

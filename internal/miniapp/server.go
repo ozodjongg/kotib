@@ -146,6 +146,9 @@ type Server struct {
 	limiters  map[int64]*limiterEntry
 	lastSweep time.Time
 	authFails *ratelimit.Bucket // noto'g'ri initData bilan so'rovlar oqimini cheklaydi
+
+	invokeOnce sync.Once
+	invokeMux  *http.ServeMux // bot chatidan chaqiruvlar (Invoke)
 }
 
 type limiterEntry struct {
@@ -157,54 +160,13 @@ type ctxKey struct{}
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/me", s.auth(s.handleMe))
-	mux.HandleFunc("POST /api/consent", s.authMain(s.handleConsent))
-	mux.HandleFunc("GET /api/settings", s.auth(s.handleGetSettings))
-	mux.HandleFunc("PUT /api/settings", s.auth(s.handlePutSettings))
-	mux.HandleFunc("POST /api/login/phone", s.auth(s.handleLoginPhone))
-	mux.HandleFunc("POST /api/login/cancel", s.auth(s.handleLoginCancel))
-	mux.HandleFunc("POST /api/login/code", s.auth(s.handleLoginCode))
-	mux.HandleFunc("POST /api/login/password", s.auth(s.handleLoginPassword))
-	mux.HandleFunc("GET /api/login/state", s.auth(s.handleLoginState))
-	mux.HandleFunc("GET /api/contacts", s.auth(s.handleContacts))
-	mux.HandleFunc("POST /api/pause", s.auth(s.handlePause))
-	mux.HandleFunc("POST /api/resume", s.auth(s.handleResume))
-	mux.HandleFunc("GET /api/drafts", s.auth(s.handleListDrafts))
-	mux.HandleFunc("POST /api/drafts/{id}/send", s.auth(s.handleSendDraft))
-	mux.HandleFunc("POST /api/drafts/{id}/reject", s.auth(s.handleRejectDraft))
-	mux.HandleFunc("DELETE /api/account", s.auth(s.handleDeleteAccount))
-	mux.HandleFunc("GET /api/activity", s.auth(s.handleActivity))
-	mux.HandleFunc("GET /api/billing", s.authMain(s.handleBilling))
-	mux.HandleFunc("POST /api/billing/invoice", s.authMain(s.handleInvoice))
-	mux.HandleFunc("POST /api/billing/cancel", s.authMain(s.handleBillingCancel))
-	mux.HandleFunc("POST /api/billing/renew", s.authMain(s.handleBillingRenew))
-	mux.HandleFunc("GET /api/referral", s.authMain(s.handleReferral))
-	mux.HandleFunc("GET /api/charity", s.authMain(s.handleCharity))
-	mux.HandleFunc("POST /api/charity/donate", s.authMain(s.handleCharityDonate))
-	mux.HandleFunc("POST /api/away", s.auth(s.handleAway))
-	mux.HandleFunc("POST /api/style/learn", s.auth(s.handleStyleLearn))
-	mux.HandleFunc("POST /api/style/shadow", s.auth(s.handleStyleShadow))
-	mux.HandleFunc("GET /api/stats", s.auth(s.handleStats))
-	mux.HandleFunc("GET /api/accounts", s.authMain(s.handleAccounts))
-	mux.HandleFunc("POST /api/accounts/link", s.authMain(s.handleAccountLink))
-	mux.HandleFunc("DELETE /api/accounts/{id}", s.authMain(s.handleAccountUnlink))
-	mux.HandleFunc("POST /api/google/connect", s.auth(s.handleGoogleConnect))
-	mux.HandleFunc("POST /api/google/disconnect", s.auth(s.handleGoogleDisconnect))
+	for _, rt := range s.apiRoutes() {
+		mux.HandleFunc(rt.pattern, s.authWith(rt.h, rt.main))
+	}
 	mux.HandleFunc("GET /oauth/google/callback", s.handleGoogleCallback)
 	mux.HandleFunc("GET /ics/{owner}/{id}/{sig}", s.handleICS)
-	mux.HandleFunc("POST /api/hook", s.auth(s.handleHookCreate))
-	mux.HandleFunc("DELETE /api/hook", s.auth(s.handleHookDelete))
 	mux.HandleFunc("GET /hook/{token}", s.handleHook)
 	mux.HandleFunc("POST /hook/{token}", s.handleHook)
-	mux.HandleFunc("GET /api/schedules", s.auth(s.handleListSchedules))
-	mux.HandleFunc("POST /api/schedules", s.auth(s.handleCreateSchedule))
-	mux.HandleFunc("PUT /api/schedules/{id}", s.auth(s.handleUpdateSchedule))
-	mux.HandleFunc("DELETE /api/schedules/{id}", s.auth(s.handleDeleteSchedule))
-	mux.HandleFunc("POST /api/schedules/{id}/run", s.auth(s.handleRunSchedule))
-	mux.HandleFunc("GET /api/plugins", s.auth(s.handleListPlugins))
-	mux.HandleFunc("PUT /api/plugins/{id}", s.auth(s.handleSavePlugin))
-	mux.HandleFunc("DELETE /api/plugins/{id}", s.auth(s.handleDeletePlugin))
-	mux.HandleFunc("POST /api/plugins/{id}/connect", s.auth(s.handleConnectPlugin))
 	s.adminRoutes(mux)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
 	if s.StaticDir != "" {
@@ -219,6 +181,63 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("GET /", staticFiles(s.StaticDir))
 	}
 	return secureHeaders(mux)
+}
+
+// apiRoute — egasi nomidan bajariladigan API marshruti; main — har doim asosiy akkaunt.
+type apiRoute struct {
+	pattern string
+	h       func(http.ResponseWriter, *http.Request, int64)
+	main    bool
+}
+
+// apiRoutes — Mini App API'si: brauzerdan (initData bilan, Handler) va bot chatidan (Invoke) bir xil.
+func (s *Server) apiRoutes() []apiRoute {
+	return []apiRoute{
+		{"GET /api/me", s.handleMe, false},
+		{"POST /api/consent", s.handleConsent, true},
+		{"GET /api/settings", s.handleGetSettings, false},
+		{"PUT /api/settings", s.handlePutSettings, false},
+		{"POST /api/login/phone", s.handleLoginPhone, false},
+		{"POST /api/login/cancel", s.handleLoginCancel, false},
+		{"POST /api/login/code", s.handleLoginCode, false},
+		{"POST /api/login/password", s.handleLoginPassword, false},
+		{"GET /api/login/state", s.handleLoginState, false},
+		{"GET /api/contacts", s.handleContacts, false},
+		{"POST /api/pause", s.handlePause, false},
+		{"POST /api/resume", s.handleResume, false},
+		{"GET /api/drafts", s.handleListDrafts, false},
+		{"POST /api/drafts/{id}/send", s.handleSendDraft, false},
+		{"POST /api/drafts/{id}/reject", s.handleRejectDraft, false},
+		{"DELETE /api/account", s.handleDeleteAccount, false},
+		{"GET /api/activity", s.handleActivity, false},
+		{"GET /api/billing", s.handleBilling, true},
+		{"POST /api/billing/invoice", s.handleInvoice, true},
+		{"POST /api/billing/cancel", s.handleBillingCancel, true},
+		{"POST /api/billing/renew", s.handleBillingRenew, true},
+		{"GET /api/referral", s.handleReferral, true},
+		{"GET /api/charity", s.handleCharity, true},
+		{"POST /api/charity/donate", s.handleCharityDonate, true},
+		{"POST /api/away", s.handleAway, false},
+		{"POST /api/style/learn", s.handleStyleLearn, false},
+		{"POST /api/style/shadow", s.handleStyleShadow, false},
+		{"GET /api/stats", s.handleStats, false},
+		{"GET /api/accounts", s.handleAccounts, true},
+		{"POST /api/accounts/link", s.handleAccountLink, true},
+		{"DELETE /api/accounts/{id}", s.handleAccountUnlink, true},
+		{"POST /api/google/connect", s.handleGoogleConnect, false},
+		{"POST /api/google/disconnect", s.handleGoogleDisconnect, false},
+		{"POST /api/hook", s.handleHookCreate, false},
+		{"DELETE /api/hook", s.handleHookDelete, false},
+		{"GET /api/schedules", s.handleListSchedules, false},
+		{"POST /api/schedules", s.handleCreateSchedule, false},
+		{"PUT /api/schedules/{id}", s.handleUpdateSchedule, false},
+		{"DELETE /api/schedules/{id}", s.handleDeleteSchedule, false},
+		{"POST /api/schedules/{id}/run", s.handleRunSchedule, false},
+		{"GET /api/plugins", s.handleListPlugins, false},
+		{"PUT /api/plugins/{id}", s.handleSavePlugin, false},
+		{"DELETE /api/plugins/{id}", s.handleDeletePlugin, false},
+		{"POST /api/plugins/{id}/connect", s.handleConnectPlugin, false},
+	}
 }
 
 // staticFiles Mini App fayllarini beradi: papka ro'yxati (directory listing) va
@@ -298,46 +317,52 @@ func (s *Server) authWith(next func(http.ResponseWriter, *http.Request, int64), 
 			httpErr(w, http.StatusUnauthorized, "initData yaroqsiz")
 			return
 		}
-		if !s.allow(u.ID) {
-			httpErr(w, http.StatusTooManyRequests, "juda tez-tez so'rov")
-			return
-		}
-		r.Body = http.MaxBytesReader(w, r.Body, 256<<10)
-		// Qo'shimcha akkaunt Mini App'ni o'zi ochsa — boshqaruv asosiy akkauntda.
-		if _, err := s.Store.GetLink(r.Context(), u.ID); err == nil {
-			httpErr(w, http.StatusForbidden, "bu akkaunt asosiy akkauntingizdagi Kotib orqali boshqariladi")
-			return
-		}
-		// Bloklangan foydalanuvchi faqat holatini ko'radi va ma'lumotlarini o'chira oladi.
-		if !s.Admins[u.ID] && !bannedAllowed(r) {
-			if _, err := s.Store.GetBan(r.Context(), u.ID); err == nil {
-				httpErr(w, http.StatusForbidden, "akkauntingiz administrator tomonidan bloklangan")
-				return
-			}
-		}
 		if r.Method == http.MethodGet && r.URL.Path == "/api/me" {
 			// Admin ro'yxatida tanib olish uchun (akkaunt bo'lmasa — hech narsa yozilmaydi).
 			if err := s.Store.TouchAccount(r.Context(), u.ID, u.FirstName, u.Username, time.Now()); err != nil {
 				s.logger().Warn("touch account", "owner", u.ID, "err", err)
 			}
 		}
-		owner := u.ID
-		if v := r.Header.Get(AccountHeader); v != "" && !mainOnly {
-			id, err := strconv.ParseInt(v, 10, 64)
-			if err != nil {
-				httpErr(w, 400, "akkaunt noto'g'ri")
+		s.serveAs(w, r, u.ID, next, mainOnly)
+	}
+}
+
+// serveAs — tasdiqlangan foydalanuvchi (user) nomidan API handler'ini chaqiradi: tezlik
+// cheklovi, qo'shimcha/bloklangan akkaunt tekshiruvi va tanlangan akkaunt (AccountHeader).
+func (s *Server) serveAs(w http.ResponseWriter, r *http.Request, user int64, next func(http.ResponseWriter, *http.Request, int64), mainOnly bool) {
+	if !s.allow(user) {
+		httpErr(w, http.StatusTooManyRequests, "juda tez-tez so'rov")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 256<<10)
+	// Qo'shimcha akkaunt Mini App'ni o'zi ochsa — boshqaruv asosiy akkauntda.
+	if _, err := s.Store.GetLink(r.Context(), user); err == nil {
+		httpErr(w, http.StatusForbidden, "bu akkaunt asosiy akkauntingizdagi Kotib orqali boshqariladi")
+		return
+	}
+	// Bloklangan foydalanuvchi faqat holatini ko'radi va ma'lumotlarini o'chira oladi.
+	if !s.Admins[user] && !bannedAllowed(r) {
+		if _, err := s.Store.GetBan(r.Context(), user); err == nil {
+			httpErr(w, http.StatusForbidden, "akkauntingiz administrator tomonidan bloklangan")
+			return
+		}
+	}
+	owner := user
+	if v := r.Header.Get(AccountHeader); v != "" && !mainOnly {
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			httpErr(w, 400, "akkaunt noto'g'ri")
+			return
+		}
+		if id != user {
+			if l, err := s.Store.GetLink(r.Context(), id); err != nil || l.ParentID != user {
+				httpErr(w, http.StatusForbidden, "bu akkaunt sizga tegishli emas")
 				return
 			}
-			if id != u.ID {
-				if l, err := s.Store.GetLink(r.Context(), id); err != nil || l.ParentID != u.ID {
-					httpErr(w, http.StatusForbidden, "bu akkaunt sizga tegishli emas")
-					return
-				}
-				owner = id
-			}
+			owner = id
 		}
-		next(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, u.ID)), owner)
 	}
+	next(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, user)), owner)
 }
 
 // bannedAllowed — bloklangan foydalanuvchiga ruxsat etilgan so'rovlar.

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ozodjongg/secretar_ai_agent/internal/bot"
 	"github.com/ozodjongg/secretar_ai_agent/internal/store"
 	"github.com/ozodjongg/secretar_ai_agent/internal/userbot"
 )
@@ -115,5 +116,62 @@ func TestShadowCallback(t *testing.T) {
 	}
 	if len(ai.choices) != 1 || ai.choices[0] != "2:"+userbot.ShadowAuto {
 		t.Fatalf("%v", ai.choices)
+	}
+}
+
+type fakeAgent struct {
+	mu    sync.Mutex
+	allow bool
+	got   []string
+	err   error
+}
+
+func (f *fakeAgent) Allow(int64) bool { return f.allow }
+func (f *fakeAgent) Handle(_ context.Context, user int64, text string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.got = append(f.got, text)
+	return "Bajarildi: " + text, f.err
+}
+
+func TestFreeTextGoesToAgent(t *testing.T) {
+	h, _, _, _ := setup(t)
+	var mu sync.Mutex
+	var notes []string
+	h.Notify = func(_ context.Context, _ int64, text string, _ bool) {
+		mu.Lock()
+		notes = append(notes, text)
+		mu.Unlock()
+	}
+	ctx := context.Background()
+	// Agent yo'q — oddiy matn avvalgidek /sor savoli.
+	h.AI = &fakeAI{}
+	if r := h.Command(ctx, 1, bot.TextCommand, "Aziz bilan nima kelishdik?"); !strings.Contains(r.Text, "o'qiyapman") {
+		t.Fatalf("agentsiz: %q", r.Text)
+	}
+	waitNotes(t, &mu, &notes, 1)
+
+	ag := &fakeAgent{allow: true}
+	h.Agent = ag
+	typing := make(chan int64, 10)
+	h.Typing = func(_ context.Context, chat int64) error { typing <- chat; return nil }
+	if r := h.Command(ctx, 1, bot.TextCommand, "avto rejimni yoq"); r.Text != "" {
+		t.Fatalf("darhol xabar bo'lmasligi kerak: %q", r.Text)
+	}
+	if got := waitNotes(t, &mu, &notes, 2); got[1] != "Bajarildi: avto rejimni yoq" {
+		t.Fatalf("%v", got)
+	}
+	if c := <-typing; c != 1 {
+		t.Fatal("typing")
+	}
+	ag.allow = false
+	if r := h.Command(ctx, 1, bot.TextCommand, "yana"); !strings.Contains(r.Text, "kuting") {
+		t.Fatalf("limit: %q", r.Text)
+	}
+	// Bloklangan foydalanuvchi agentga yetmaydi.
+	ag.allow = true
+	_ = h.Store.SetBan(ctx, store.Ban{OwnerID: 1, Reason: "x"})
+	if r := h.Command(ctx, 1, bot.TextCommand, "salom"); r.Text != BannedText {
+		t.Fatalf("ban: %q", r.Text)
 	}
 }

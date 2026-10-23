@@ -138,3 +138,31 @@ func TestRunTaskRecipient(t *testing.T) {
 		t.Fatal("egasiga vazifada qabul qiluvchi ko'rsatmasi bo'lmasligi kerak")
 	}
 }
+
+func TestControlConversation(t *testing.T) {
+	call := `{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"update_settings","args":{"changes_json":"{\"mode\":\"auto\"}"}}}]}}]}`
+	final := `{"candidates":[{"content":{"parts":[{"text":"Avto rejim yoqildi."}]}}]}`
+	g, bodies := scripted(t, call, final)
+	var got string
+	res, err := g.Control(context.Background(), ControlRequest{
+		OwnerName: "Shavkat", Now: time.Date(2026, 10, 23, 9, 0, 0, 0, time.UTC),
+		History: []ChatTurn{{Text: "salom (model boshlagan — tashlanadi)"}, {FromOwner: true, Text: "qoralamalar bormi?"}, {Text: "2 ta bor."}},
+		Message: "avto rejimni yoq",
+		Tools:   []ToolDecl{{Name: "update_settings", Description: "sozlama"}},
+		Call: func(_ context.Context, name string, args map[string]any) (string, error) {
+			got = name + ":" + args["changes_json"].(string)
+			return "saqlandi: mode", nil
+		},
+	})
+	if err != nil || res.Text != "Avto rejim yoqildi." || got != `update_settings:{"mode":"auto"}` {
+		t.Fatalf("%+v %v %q", res, err, got)
+	}
+	b := bodies()[0]
+	if strings.Contains(b, "model boshlagan") || !strings.Contains(b, "qoralamalar bormi?") || !strings.Contains(b, "2 ta bor.") ||
+		!strings.Contains(b, "avto rejimni yoq") || !strings.Contains(b, "Shavkat") || !strings.Contains(b, "functionDeclarations") {
+		t.Fatalf("so'rov: %s", b)
+	}
+	if _, err := g.Control(context.Background(), ControlRequest{Message: " "}); err != ErrEmpty {
+		t.Fatal("bo'sh xabar")
+	}
+}

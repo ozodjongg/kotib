@@ -36,7 +36,7 @@ const EVENTS = {
   unanswered_reminded: 'Javobsiz chatlar eslatildi', summary_made: 'AI xulosa tayyorlandi', morning_sent: 'Ertalabki brifing yuborildi',
   shadow_prepared: 'Soya rejimi: javob jim tayyorlandi', shadow_set: "Soya rejimi o'zgartirildi", shadow_report: 'Soya rejimi natijasi yuborildi',
   style_learn_started: "Uslub o'rganish boshlandi", style_learned: 'Uslub profili yangilandi', style_refine_run: "Uslub o'qitish tekshirildi",
-  birthdays_checked: "Tug'ilgan kunlar tekshirildi", birthday_draft: "Tug'ilgan kun tabrigi tayyorlandi", ask_answered: '/sor savoliga javob berildi',
+  birthdays_checked: "Tug'ilgan kunlar tekshirildi", birthday_draft: "Tug'ilgan kun tabrigi tayyorlandi", ask_answered: '/sor savoliga javob berildi', bot_control: 'Bot chatidan buyruq bajarildi',
   schedule_created: 'Rejalashtirilgan vazifa yaratildi', schedule_updated: "Vazifa o'zgartirildi", schedule_deleted: "Vazifa o'chirildi",
   schedule_run: 'Rejalashtirilgan vazifa bajarildi', plugin_enabled: 'Plagin yoqildi', plugin_disabled: "Plagin o'chirildi", plugin_removed: 'Plagin uzildi', plugin_connected: 'Plagin akkaunti ulandi',
   charity_donation: '💚 Hayriyaga xayriya qilindi', charity_paid: "💚 Hayriya o'tkazmasi belgilandi", charity_manual: "💚 Qo'shimcha xayriya yozildi",
@@ -1219,7 +1219,7 @@ function notifyCard(s) {
     field('Qancha vaqtdan keyin eslatilsin', hours),
     switchRow(pro('Ovozli xabar matni'), "Kontakt yuborgan ovozli xabar matnga o'girilib bot chatiga keladi — yig'ilishda ham o'qiysiz.", s.transcribe_voice, (v) => { s.transcribe_voice = v; }),
     switchRow(pro("Tug'ilgan kun tabriklari"), "Google Contacts'da tug'ilgan kuni bor kontaktlar uchun soat 9:00 da tabrik qoralamasi tayyorlanadi — siz tasdiqlaysiz. Google ulangan bo'lishi kerak.", !s.no_birthdays, (v) => { s.no_birthdays = !v; }),
-    h('p', { class: 'hint' }, "Botga shunchaki yozing: «Aziz bilan nima kelishdik?» (/sor shart emas) — kotib yozishmani o'qib, javob beradi (Pro)."));
+    h('p', { class: 'hint' }, "Botga shunchaki yozing: «Aziz bilan nima kelishdik?», «avto rejimni yoq», «qoralamalarni ko'rsat» — kotib o'zi bajaradi."));
 }
 
 // ---------- O'qitish rejimi: «O'zimdek» uslubi ----------

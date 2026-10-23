@@ -94,6 +94,11 @@ type webAppInfo struct {
 	URL string `json:"url"`
 }
 
+// Typing — chatda "yozmoqda..." holatini ko'rsatadi (~5 soniya).
+func (b *Bot) Typing(ctx context.Context, chatID int64) error {
+	return b.call(ctx, "sendChatAction", map[string]any{"chat_id": chatID, "action": "typing"}, nil)
+}
+
 // Notify mijozga xabar yuboradi; openApp=true bo'lsa "Ochish" (Mini App) tugmasi bilan.
 // Xabar matniga kontakt xabarlarini QO'SHMANG — bildirishnomalar faqat meta ma'lumot.
 func (b *Bot) Notify(ctx context.Context, chatID int64, text string, openApp bool) error {
@@ -374,8 +379,8 @@ func (b *Bot) dispatch(ctx context.Context, u update) {
 		if b.replyTo(ctx, u) {
 			return
 		}
-		// Buyruqsiz oddiy matn — /sor savoli deb qabul qilinadi ("/sor" yozish shart emas).
-		cmd, args = AskCommand, strings.TrimSpace(m.Text)
+		// Buyruqsiz oddiy matn — kotibga erkin so'rov (sozlamalar, qoralamalar, savollar...).
+		cmd, args = TextCommand, strings.TrimSpace(m.Text)
 		if args == "" || b.Handler == nil {
 			return
 		}
@@ -416,8 +421,8 @@ func (b *Bot) callback(ctx context.Context, u update) {
 	}
 }
 
-// AskCommand — buyruqsiz yozilgan oddiy matn shu buyruqqa yo'naltiriladi (/sor).
-const AskCommand = "sor"
+// TextCommand — buyruqsiz yozilgan oddiy matn shu buyruqqa yo'naltiriladi (kotib bilan erkin suhbat).
+const TextCommand = "kotib"
 
 // replyTo — bot xabariga (masalan, qoralama kartasiga) matnli javob. false — bu tugmali
 // bot xabariga javob emas (matn oddiy savol sifatida qayta ishlanadi).

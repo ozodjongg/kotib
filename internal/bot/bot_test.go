@@ -76,7 +76,7 @@ func TestReplyToBotMessage(t *testing.T) {
 		t.Fatalf("replies: %v", h.replies)
 	}
 	// Buyruqsiz oddiy matn — avtomatik /sor.
-	if len(h.cmds) != 1 || h.cmds[0] != "sor|oddiy matn" {
+	if len(h.cmds) != 1 || h.cmds[0] != "kotib|oddiy matn" {
 		t.Fatalf("cmds: %v", h.cmds)
 	}
 	var edited, sent bool
