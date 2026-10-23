@@ -15,6 +15,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ozodjongg/secretar_ai_agent/internal/billing"
 	"github.com/ozodjongg/secretar_ai_agent/internal/bot"
@@ -106,6 +107,23 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	// Hayriya: har obuna to'lovidan ulush (%). Bo'sh/0 — o'chiq.
+	charityPct, err := intEnv("CHARITY_PERCENT", 0, 0, billing.MaxCharityPercent)
+	if err != nil {
+		return err
+	}
+	charityStart, err := billing.ParseCharityStart(env("CHARITY_START"))
+	if err != nil {
+		return err
+	}
+	if utf8.RuneCountInString(env("CHARITY_NAME")) > 64 {
+		return errors.New("CHARITY_NAME 64 belgigacha bo'lishi kerak")
+	}
+	if v := env("CHARITY_URL"); v != "" {
+		if u, err := url.Parse(v); err != nil || u.Scheme != "https" || u.Host == "" {
+			return errors.New("CHARITY_URL https:// bilan boshlanadigan to'liq manzil bo'lishi kerak")
+		}
+	}
 
 	keys, err := crypto.NewStaticKeyFromBase64(env("MASTER_KEY"))
 	if err != nil {
@@ -168,7 +186,11 @@ func run(log *slog.Logger) error {
 	}
 
 	bill := &billing.Service{Store: st, API: ctrlBot, Price: price, ProPrice: proPrice, TrialDays: trialDays, TrialDailyLimit: trialDaily, Exempt: admins, Log: log,
-		Notify: notify}
+		Notify: notify, CharityPercent: charityPct, CharityName: env("CHARITY_NAME"), CharityURL: env("CHARITY_URL"),
+		CharityStartAt: charityStart}
+	if bill.CharityEnabled() {
+		log.Info("hayriya yoqilgan", "percent", charityPct, "name", bill.CharityName)
+	}
 	if bill.Enabled() {
 		log.Info("to'lov yoqilgan (Telegram Stars)", "price", price, "pro_price", proPrice, "trial_days", trialDays, "trial_daily_limit", trialDaily)
 	}
@@ -558,6 +580,7 @@ func janitor(ctx context.Context, st store.Store, bill *billing.Service, notify 
 			log.Warn("janitor style samples", "err", err)
 		}
 		bill.RemindExpiring(ctx, notify)
+		bill.CloseCharityMonths(ctx, notify)
 		select {
 		case <-ctx.Done():
 			return

@@ -187,6 +187,8 @@ func (s *Server) adminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/admin/payments", s.authAdmin(s.handleAdminPayments))
 	mux.HandleFunc("POST /api/admin/refund", s.authAdmin(s.handleAdminRefund))
 	mux.HandleFunc("POST /api/admin/broadcast", s.authAdmin(s.handleAdminBroadcast))
+	mux.HandleFunc("POST /api/admin/charity/{id}/paid", s.authAdmin(s.handleAdminCharityPaid))
+	mux.HandleFunc("POST /api/admin/charity/manual", s.authAdmin(s.handleAdminCharityManual))
 }
 
 func (s *Server) handleAdminOverview(w http.ResponseWriter, r *http.Request, _ int64) {
@@ -647,11 +649,12 @@ func (s *Server) handleAdminPayments(w http.ResponseWriter, r *http.Request, _ i
 		Currency  string    `json:"currency"`
 		Recurring bool      `json:"recurring"`
 		Refunded  bool      `json:"refunded"`
+		Donation  bool      `json:"donation"` // hayriya xayriyasi (obuna emas)
 		CreatedAt time.Time `json:"created_at"`
 	}
 	out := make([]row, 0, len(ps))
 	for _, p := range ps {
-		out = append(out, row{p.ChargeID, p.OwnerID, p.Amount, p.Currency, p.Recurring, p.Refunded, p.CreatedAt})
+		out = append(out, row{p.ChargeID, p.OwnerID, p.Amount, p.Currency, p.Recurring, p.Refunded, p.IsDonation(), p.CreatedAt})
 	}
 	writeJSON(w, 200, map[string]any{"payments": out})
 }
@@ -677,6 +680,6 @@ func (s *Server) handleAdminRefund(w http.ResponseWriter, r *http.Request, admin
 		return
 	}
 	s.adminAudit(r.Context(), admin, p.OwnerID, "admin_refund", fmt.Sprintf("%d %s", p.Amount, p.Currency))
-	s.notifyUser(r.Context(), p.OwnerID, fmt.Sprintf("%d ⭐ hisobingizga qaytarildi. Obuna to'xtatildi.", p.Amount))
+	s.notifyUser(r.Context(), p.OwnerID, refundText(p))
 	writeJSON(w, 200, map[string]any{"ok": true, "amount": p.Amount, "owner_id": p.OwnerID})
 }

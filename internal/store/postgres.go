@@ -336,7 +336,7 @@ func (p *Postgres) Stats(ctx context.Context, now time.Time) (Stats, error) {
 			(SELECT count(*) FROM accounts),
 			(SELECT count(*) FROM accounts WHERE status = 'active'),
 			(SELECT count(*) FROM subscriptions WHERE paid_until > $1),
-			(SELECT COALESCE(sum(amount), 0) FROM payments WHERE NOT refunded),
+			(SELECT COALESCE(sum(amount), 0) FROM payments WHERE NOT refunded AND payload NOT LIKE 'don:%'),
 			(SELECT count(*) FROM referrals),
 			(SELECT count(*) FROM referrals WHERE paid_at IS NOT NULL)`, now).
 		Scan(&st.Accounts, &st.Active, &st.PaidActive, &st.StarsTotal, &st.Referrals, &st.RefPaid)

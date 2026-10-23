@@ -94,6 +94,12 @@ type Billing interface {
 	Grant(ctx context.Context, owner int64, days int, tier billing.Tier) error
 	RevokeGrant(ctx context.Context, owner int64) error
 	Refund(ctx context.Context, chargeID string) (store.Payment, error)
+	// Hayriya (charity.go)
+	CharityEnabled() bool
+	CharityReport(ctx context.Context) (billing.CharityReport, error)
+	DonationLink(ctx context.Context, owner int64, stars int) (string, error)
+	MarkCharityPaid(ctx context.Context, id int64, proof string, admin int64) error
+	AddManualCharity(ctx context.Context, admin int64, stars int, note, proof string) (int64, error)
 }
 
 // Google — Google akkauntini ulash (google.Client). nil → integratsiya o'chiq.
@@ -172,6 +178,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/billing/cancel", s.authMain(s.handleBillingCancel))
 	mux.HandleFunc("POST /api/billing/renew", s.authMain(s.handleBillingRenew))
 	mux.HandleFunc("GET /api/referral", s.authMain(s.handleReferral))
+	mux.HandleFunc("GET /api/charity", s.authMain(s.handleCharity))
+	mux.HandleFunc("POST /api/charity/donate", s.authMain(s.handleCharityDonate))
 	mux.HandleFunc("POST /api/away", s.auth(s.handleAway))
 	mux.HandleFunc("POST /api/style/learn", s.auth(s.handleStyleLearn))
 	mux.HandleFunc("POST /api/style/shadow", s.auth(s.handleStyleShadow))

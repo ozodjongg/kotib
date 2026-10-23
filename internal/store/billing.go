@@ -75,7 +75,7 @@ type Stats struct {
 	Accounts   int
 	Active     int
 	PaidActive int
-	StarsTotal int64 // qaytarilmagan to'lovlar yig'indisi
+	StarsTotal int64 // qaytarilmagan obuna to'lovlari yig'indisi (hayriya xayriyalarisiz)
 	Referrals  int   // taklif orqali kelganlar
 	RefPaid    int   // ulardan to'laganlar
 }
