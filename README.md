@@ -22,6 +22,7 @@ internal/ics/         Google'siz taqvim: .ics fayl va imzolangan havola
 internal/schedule/    rejalashtirilgan AI vazifalar: jadval (bir marta/soat/kun/ish kunlari/hafta), bajaruvchi
 internal/plugin/      plaginlar (connector'lar): internet qidiruvi, YouTube, Google Sheets/Drive, Notion, sport, ob-havo, valyuta kursi; shifrlangan sozlama
 internal/botcmd/      bot buyruqlari (/status, /pause, /obuna, admin /stats, /refund) va to'lov hodisalari
+internal/control/     bot chatidagi erkin matn: Mini App amallari function calling vositalari sifatida (agent)
 webapp/               Mini App (vanilla JS, innerHTML ishlatilmaydi; iliq fil suyagi/terrakota dizayn, yorug'/qorong'i)
 migrations/           Postgres sxema (binary ichiga joylangan, ishga tushganda avtomatik qo'llanadi)
 Dockerfile            distroless, root'siz production image
@@ -117,6 +118,11 @@ sinovda 8 ta** (`billing.HistoryPaid` / `HistoryTrial`). Bitta chatdagi xabarlar
 qayta ishlanadi: keyingi javob oldingisi yuborilgandan keyin tayyorlanadi va uni tarixda ko'radi
 (bir xil javob takrorlanmaydi, tartib buzilmaydi).
 
+Javob yozishdan oldin kotib tarixni o'qib, **javob kerakmi — o'zi aniqlaydi**: kontakt javob olgan savolini
+qayta yozsa («nima qilyapsan?» → javob → yana «nima qilyapsan?»), model chaqirilmasdan o'tkazib yuboriladi;
+«rahmat», «ok» kabi yakunlovchi yoki ma'nosi bir xil takroriy xabarlarda model `[JAVOBSIZ]` qaytaradi va
+hech narsa yuborilmaydi (qoralama ham yaratilmaydi, auditda `skip`).
+
 ## Kechki xulosa, va'dalar va tejalgan vaqt
 
 - **Kechki xulosa** — har kuni soat 21:00 da (egasining vaqt zonasi) bot yuboradi: tayyorlangan va
@@ -151,6 +157,15 @@ Sozlamalar → «Kunlik yordamchi». Hammasi har 5 daqiqalik tekshiruvda, kuniga
   tabrik **qoralamasi** tayyorlanadi (Telegram kontakti telefon yoki ism bo'yicha topiladi). Faqat egasi tasdiqlasa yuboriladi.
 - **`/sor <savol>`** (Pro) — «/sor Aziz bilan nima kelishdik?»: bot savoldagi kontaktni topadi, oxirgi 100 xabarni o'qib javob beradi.
   Qoida bilan kotibdan yopilgan chatlar o'qilmaydi.
+- **Bot chatida oddiy so'z bilan boshqarish** — buyruqsiz yozilgan har qanday matn kotibga so'rov: u Mini App'da
+  qilinadigan amallarni Gemini function calling orqali o'zi bajaradi («avto rejimni yoq», «tinch soatlar 22:00–7:00»,
+  «1 soatga rulda deb qo'y», «qoralamalarni ko'rsat», «Azizga javobni yubor», «har kuni 8:00 da ob-havo yubor»,
+  «ob-havo plaginida shaharni Samarqand qil», «Google'ni ula», «obuna holati», «Aziz bilan nima kelishdik?»).
+  Har bir amal Mini App API'sining o'zi orqali o'tadi (`miniapp.Server.Invoke` → `internal/control`): tekshiruvlar,
+  tarif cheklovlari va audit brauzerdagi bilan bir xil. Suhbat konteksti 30 daqiqa eslab qolinadi (savolga «ha» deb
+  javob berish mumkin), so'rovlar tezligi cheklangan (10 ta, keyin 20 soniyada bitta). Faqat ilovada qoladi:
+  Telegram akkauntni ulash (kod/parol), rozilik, akkauntni o'chirish, avtomatlashtirish havolasi va plagin API kalitlari.
+  Qoralama kartasiga «reply» qilingan matn avvalgidek qoralamani tahrirlaydi.
 
 Bularning hammasi uchun `chat_activity` jadvalida faqat meta saqlanadi: chat, kontakt ismi, oxirgi kiruvchi/chiquvchi
 xabar vaqti (matn yo'q; 30 kun faolligi bo'lmasa o'chiriladi). Egasi qoida bilan kotibni chetlatgan chatlar (`private`)
@@ -527,6 +542,8 @@ Mini App'da faqat `GET /api/me` va akkauntni o'chirish ochiq, bot buyruqlari va 
 - **Model chiqishi** tekshiriladi: havola/@username/karta yoki telefon raqami/AI-sizib chiqishi/uzunlik → draft.
 - **Maxfiylik**: audit logda xabar matni yo'q; ilova har soatda 7 kundan eski draftlar va o'qitish juftliklarini matni bilan tozalaydi, 30 kun faolligi yo'q chat metalarini va 90 kundan eski auditni o'chiradi; "Akkauntni o'chirish" → `auth.logOut` + CASCADE.
   AI xulosa, uslub o'rganish va `/sor` uchun yozishmalar shu payt Telegram'dan o'qiladi va bazaga yozilmaydi; ularning ichidagi buyruqlar modelga «faqat ma'lumot» sifatida o'ralgan holda beriladi.
+  Bot chatidagi erkin so'rovlarda vosita natijalari (sozlamalar, qoralamalar, vazifalar) ham Gemini'ga «faqat ma'lumot» sifatida beriladi;
+  amallar faqat egasining o'z xabari asosida bajariladi, qaytarib bo'lmaydiganlari (yuborish, o'chirish, obunani bekor qilish) — aniq so'ralganda.
 - **Ishonchlilik**: yuborilmay qolgan draft yo'qolmaydi (qayta "pending"ga qaytadi); Telegram fatal xatosida circuit breaker deadlock'siz ishlaydi; xotira cheksiz o'smasligi uchun barcha keshlar chegaralangan.
 
 ## Bilishingiz shart bo'lgan cheklovlar

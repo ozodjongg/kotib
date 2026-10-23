@@ -94,6 +94,11 @@ type webAppInfo struct {
 	URL string `json:"url"`
 }
 
+// Typing — chatda "yozmoqda..." holatini ko'rsatadi (~5 soniya).
+func (b *Bot) Typing(ctx context.Context, chatID int64) error {
+	return b.call(ctx, "sendChatAction", map[string]any{"chat_id": chatID, "action": "typing"}, nil)
+}
+
 // Notify mijozga xabar yuboradi; openApp=true bo'lsa "Ochish" (Mini App) tugmasi bilan.
 // Xabar matniga kontakt xabarlarini QO'SHMANG — bildirishnomalar faqat meta ma'lumot.
 func (b *Bot) Notify(ctx context.Context, chatID int64, text string, openApp bool) error {
@@ -371,8 +376,14 @@ func (b *Bot) dispatch(ctx context.Context, u update) {
 	}
 	cmd, args, ok := parseCommand(m.Text)
 	if !ok {
-		b.replyTo(ctx, u)
-		return
+		if b.replyTo(ctx, u) {
+			return
+		}
+		// Buyruqsiz oddiy matn — kotibga erkin so'rov (sozlamalar, qoralamalar, savollar...).
+		cmd, args = TextCommand, strings.TrimSpace(m.Text)
+		if args == "" || b.Handler == nil {
+			return
+		}
 	}
 	var r Reply
 	if b.Handler != nil {
@@ -410,13 +421,17 @@ func (b *Bot) callback(ctx context.Context, u update) {
 	}
 }
 
-// replyTo — bot xabariga (masalan, qoralama kartasiga) matnli javob.
-func (b *Bot) replyTo(ctx context.Context, u update) {
+// TextCommand — buyruqsiz yozilgan oddiy matn shu buyruqqa yo'naltiriladi (kotib bilan erkin suhbat).
+const TextCommand = "kotib"
+
+// replyTo — bot xabariga (masalan, qoralama kartasiga) matnli javob. false — bu tugmali
+// bot xabariga javob emas (matn oddiy savol sifatida qayta ishlanadi).
+func (b *Bot) replyTo(ctx context.Context, u update) bool {
 	m := u.Message
 	rt := m.ReplyToMessage
 	if b.Handler == nil || rt == nil || rt.Markup == nil || len(rt.Markup.Keyboard) == 0 ||
 		len(rt.Markup.Keyboard[0]) == 0 || strings.TrimSpace(m.Text) == "" {
-		return
+		return false
 	}
 	r, edit := b.Handler.ReplyTo(ctx, m.From.ID, rt.Markup.Keyboard[0][0].Data, m.Text)
 	if edit != "" {
@@ -431,6 +446,7 @@ func (b *Bot) replyTo(ctx context.Context, u update) {
 			b.Log.Warn("bot reply", "err", err)
 		}
 	}
+	return true
 }
 
 // parseCommand "/cmd@BotName args" → ("cmd", "args").

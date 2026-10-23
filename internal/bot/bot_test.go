@@ -75,6 +75,10 @@ func TestReplyToBotMessage(t *testing.T) {
 	if len(h.replies) != 1 || h.replies[0] != "5|d:7:s|Ertaga gaplashamiz" {
 		t.Fatalf("replies: %v", h.replies)
 	}
+	// Buyruqsiz oddiy matn — avtomatik /sor.
+	if len(h.cmds) != 1 || h.cmds[0] != "kotib|oddiy matn" {
+		t.Fatalf("cmds: %v", h.cmds)
+	}
 	var edited, sent bool
 	for _, c := range *calls {
 		if c["_method"] == "editMessageText" && c["message_id"] == float64(42) {

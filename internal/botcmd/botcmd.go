@@ -42,6 +42,17 @@ type Handler struct {
 	BotUsername string
 	// AI — /sor va soya rejimi tugmalari (userbot.Manager); nil → o'chiq.
 	AI Assistant
+	// Agent — bot chatiga oddiy so'z bilan yozilgan so'rovlarni bajaradi (control.Agent):
+	// Mini App'dagi amallar function calling orqali. nil → oddiy matn /sor savoli sifatida.
+	Agent Agent
+	// Typing — "yozmoqda..." holati (bot.Bot.Typing); nil → ko'rsatilmaydi.
+	Typing func(ctx context.Context, chatID int64) error
+}
+
+// Agent — erkin matnli boshqaruv (control.Agent).
+type Agent interface {
+	Allow(user int64) bool
+	Handle(ctx context.Context, user int64, text string) (string, error)
 }
 
 // Assistant — egasi uchun AI yordamchi (userbot.Manager).
@@ -102,6 +113,13 @@ const helpText = `Kotib — Telegram'dagi shaxsiy xabarlaringizga AI yordamida j
 /hayriya — hayriya hisoboti va xayriya qilish
 /sor <savol> — yozishma haqida so'rash, masalan: /sor Aziz bilan nima kelishdik? (Pro)
 
+Buyruqsiz ham bo'ladi — shunchaki yozing, kotib o'zi bajaradi:
+• «Avto rejimni yoq», «tinch soatlarni 22:00 dan qil»
+• «Qoralamalarni ko'rsat», «Azizga tayyorlangan javobni yubor»
+• «1 soatga rulda deb qo'y»
+• «Har kuni 8:00 da ob-havo va dollar kursini yubor»
+• «Aziz bilan nima kelishdik?»
+
 Sozlamalar, qoidalar va qoralamalar — "Ochish" tugmasi orqali ilovada.`
 
 // BannedText — bloklangan foydalanuvchiga bot javobi.
@@ -158,6 +176,11 @@ func (h *Handler) Command(ctx context.Context, from int64, cmd, args string) bot
 		return h.charity(ctx, from, args)
 	case "sor", "so'ra", "ask":
 		return h.ask(ctx, from, args)
+	case bot.TextCommand:
+		if h.Agent == nil {
+			return h.ask(ctx, from, args)
+		}
+		return h.control(ctx, from, args)
 	case "stats":
 		if h.Admins[from] {
 			return h.stats(ctx)

@@ -20,6 +20,7 @@ type fakeTG struct {
 	sent    []string
 	sendErr error
 	histN   []int // History'ga so'ralgan xabarlar soni
+	hist    []llm.Turn
 }
 
 func (f *fakeTG) SendReply(_ context.Context, _ int64, _ int, text string, _ time.Duration) error {
@@ -36,7 +37,7 @@ func (f *fakeTG) History(_ context.Context, _ int64, n int) ([]llm.Turn, error) 
 	f.mu.Lock()
 	f.histN = append(f.histN, n)
 	f.mu.Unlock()
-	return nil, nil
+	return f.hist, nil
 }
 func (f *fakeTG) LogOut(context.Context) error { return nil }
 func (f *fakeTG) Contacts(context.Context) ([]miniapp.ContactInfo, error) {
@@ -566,5 +567,56 @@ func TestVoiceAndGoogleNeedPro(t *testing.T) {
 	e2.p.Handle(context.Background(), msg)
 	if e2.llm.calls != 1 || e2.llm.last.Audio == nil {
 		t.Fatalf("Pro'da ovozli xabarga javob tayyorlanishi kerak: calls=%d", e2.llm.calls)
+	}
+}
+
+func TestRepeatedQuestionNotAnsweredAgain(t *testing.T) {
+	e := newEnv(t, auto)
+	e.tg.hist = []llm.Turn{
+		{Text: "Nima qilyapsan?"},
+		{Text: "Ishdaman, kechroq yozaman", FromOwner: true},
+		{Text: "nima qilyapsan"},
+	}
+	e.p.Handle(context.Background(), in("nima qilyapsan", true))
+	if e.llm.calls != 0 || e.tg.sentCount() != 0 || len(e.drafts()) != 0 {
+		t.Fatalf("takroriy savolga javob yozilmasligi kerak: llm=%d sent=%d drafts=%d", e.llm.calls, e.tg.sentCount(), len(e.drafts()))
+	}
+	// Javob berilmagan yangi savol — odatdagidek.
+	e.p.Handle(context.Background(), in("ertaga kelasanmi?", true))
+	if e.tg.sentCount() != 1 {
+		t.Fatalf("yangi savol: sent=%d", e.tg.sentCount())
+	}
+}
+
+func TestModelNoReplySkips(t *testing.T) {
+	e := newEnv(t, auto)
+	e.llm.reply = llm.NoReply
+	e.p.Handle(context.Background(), in("rahmat", true))
+	if e.llm.calls != 1 || e.tg.sentCount() != 0 || len(e.drafts()) != 0 {
+		t.Fatalf("model javobsiz dedi: sent=%d drafts=%d", e.tg.sentCount(), len(e.drafts()))
+	}
+}
+
+func TestAlreadyAnswered(t *testing.T) {
+	h := []llm.Turn{{Text: "Qayerdasan?"}, {Text: "Uydaman", FromOwner: true}, {Text: "ha"}, {Text: "yaxshi", FromOwner: true}}
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"qayerdasan?", true},
+		{"Qayerdasan", false},                   // bitta so'z, "?"siz — modelga qoldiriladi
+		{"qayerdasan?\nnima qilyapsan?", false}, // ikkinchi savol yangi
+		{"ha", false},                           // qisqa javob — boshqa savolga tegishli bo'lishi mumkin
+		{"nima gap?", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := alreadyAnswered(h, c.in); got != c.want {
+			t.Errorf("%q: %v, kutilgan %v", c.in, got, c.want)
+		}
+	}
+	// Savol so'ralgan, lekin hali javob berilmagan.
+	if alreadyAnswered([]llm.Turn{{Text: "Uydaman", FromOwner: true}, {Text: "Qayerdasan?"}}, "qayerdasan?") {
+		t.Error("javobsiz savol")
 	}
 }

@@ -14,7 +14,7 @@ import (
 // askTimeout — /sor javobi uchun vaqt (yozishmani o'qish + model).
 const askTimeout = 90 * time.Second
 
-const askUsage = "Savolni kontakt ismi bilan yozing, masalan:\n/sor Aziz bilan nima kelishdik?\n/sor Onam ertaga nima olib kelishimni so'radi?"
+const askUsage = "Savolni kontakt ismi bilan yozing (/sor shart emas — shunchaki botga yozing), masalan:\nAziz bilan nima kelishdik?\n/sor Onam ertaga nima olib kelishimni so'radi?"
 
 // ask — /sor: javob bir necha soniya oladi, shuning uchun fonda tayyorlanadi va bot orqali yuboriladi
 // (bot update'larni ketma-ket qayta ishlaydi — uzoq kutish boshqa tugmalarni to'xtatmasin).
@@ -38,6 +38,58 @@ func (h *Handler) ask(ctx context.Context, from int64, question string) bot.Repl
 		}
 	}()
 	return bot.Reply{Text: "🔎 Yozishmani o'qiyapman..."}
+}
+
+// control — buyruqsiz matn: kotib uni Mini App amallari (function calling) bilan bajaradi.
+// Javob bir necha soniya oladi — fonda tayyorlanadi, "yozmoqda..." ko'rsatiladi.
+func (h *Handler) control(ctx context.Context, from int64, text string) bot.Reply {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return bot.Reply{}
+	}
+	if !h.Agent.Allow(from) {
+		return bot.Reply{Text: "Biroz kuting — so'rovlar juda tez kelyapti."}
+	}
+	go func() {
+		actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), askTimeout*2)
+		defer cancel()
+		done := make(chan struct{})
+		defer close(done)
+		if h.Typing != nil {
+			go func() {
+				t := time.NewTicker(4 * time.Second)
+				defer t.Stop()
+				for {
+					_ = h.Typing(actx, from)
+					select {
+					case <-done:
+						return
+					case <-t.C:
+					}
+				}
+			}()
+		}
+		out, err := h.Agent.Handle(actx, from, text)
+		if err != nil {
+			out = "Hozir bajarib bo'lmadi, birozdan keyin qayta urinib ko'ring."
+		}
+		if h.Notify != nil {
+			h.Notify(actx, from, out, err != nil)
+		}
+	}()
+	return bot.Reply{}
+}
+
+// Answer — yozishma haqidagi savolga javob matni (/sor va bot chatidagi kotib uchun).
+func (h *Handler) Answer(ctx context.Context, from int64, question string) string {
+	question = strings.TrimSpace(question)
+	if h.AI == nil {
+		return "Bu funksiya hozircha o'chiq."
+	}
+	if question == "" || len([]rune(question)) > 500 {
+		return askUsage
+	}
+	return h.answer(ctx, from, question)
 }
 
 // answer — savolni asosiy akkauntda, topilmasa qo'shimcha akkauntlarda qidiradi.

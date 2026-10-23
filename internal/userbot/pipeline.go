@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/ozodjongg/secretar_ai_agent/internal/config"
 	"github.com/ozodjongg/secretar_ai_agent/internal/google"
@@ -446,6 +447,11 @@ func (p *Pipeline) Handle(ctx context.Context, in Incoming) {
 	}
 	// Oxirgi kontakt xabarlari (Incoming) tarixda takrorlanmasin.
 	hist = trimTrailingContact(hist, in.Text)
+	if in.Voice == nil && in.Photo == nil && alreadyAnswered(hist, in.Text) {
+		// Kontakt javob olgan savolini qayta yozdi — yana javob yozmaymiz (modelni ham chaqirmaymiz).
+		p.Store.Audit(ctx, p.Owner, "skip", "savolga allaqachon javob berilgan")
+		return
+	}
 
 	// Model sekin javob berishi va bir marta qayta urinish uchun yetarli, lekin cheksiz emas.
 	lctx, cancel := context.WithTimeout(ctx, 75*time.Second)
@@ -469,6 +475,14 @@ func (p *Pipeline) Handle(ctx context.Context, in Incoming) {
 	if err != nil {
 		p.Store.Audit(ctx, p.Owner, "llm_error", "")
 		p.Log.Warn("llm", "owner", p.Owner, "err", err)
+		return
+	}
+	if llm.IsNoReply(reply) {
+		// Model tarixni o'qib, javob shart emas deb topdi (takroriy savol, "rahmat", "ok"...).
+		p.Store.Audit(ctx, p.Owner, "skip", "javob shart emas")
+		if !st.ShadowActive(now) {
+			p.propose(ctx, in, req.Assist, resp)
+		}
 		return
 	}
 
@@ -715,4 +729,47 @@ func trimTrailingContact(h []llm.Turn, incoming string) []llm.Turn {
 		h = h[:len(h)-1]
 	}
 	return h
+}
+
+// alreadyAnswered — kiruvchi xabarning har bir qatori tarixda kontakt tomonidan aynan shu
+// matn bilan yozilgan va undan keyin egasi (yoki kotib) javob bergan bo'lsa true. Masalan,
+// "nima qilyapsan" deb so'rab, javob olgach yana "nima qilyapsan" deb yozsa — qayta javob yozilmaydi.
+func alreadyAnswered(h []llm.Turn, incoming string) bool {
+	found := false
+	for _, line := range strings.Split(incoming, "\n") {
+		q := questionKey(line)
+		if q == "" {
+			continue
+		}
+		if !strings.Contains(line, "?") && (!strings.Contains(q, " ") || len([]rune(q)) < 10) {
+			return false // "ha", "ok" kabi qisqa javoblar har safar boshqa savolga tegishli bo'lishi mumkin
+		}
+		found = true
+		answered := false
+		for i, t := range h {
+			if t.FromOwner || questionKey(t.Text) != q {
+				continue
+			}
+			for _, a := range h[i+1:] {
+				if a.FromOwner {
+					answered = true
+					break
+				}
+			}
+			if answered {
+				break
+			}
+		}
+		if !answered {
+			return false
+		}
+	}
+	return found
+}
+
+// questionKey — solishtirish uchun matn: kichik harf, tinish belgilarisiz, bo'shliqlar bitta.
+func questionKey(s string) string {
+	return strings.Join(strings.FieldsFunc(normalizeText(s), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '\''
+	}), " ")
 }
