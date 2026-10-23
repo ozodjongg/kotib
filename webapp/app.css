@@ -131,7 +131,7 @@ button { font: inherit; cursor: pointer; }
 .field { margin: 14px 0; }
 .field > label, .label { display: block; font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
 .hint { font-size: 12.5px; color: var(--muted); margin-top: 6px; }
-input[type=text], input[type=password], input[type=tel], input[type=time], input[type=search], select, textarea {
+input[type=text], input[type=password], input[type=tel], input[type=time], input[type=search], input[type=number], select, textarea {
   width: 100%; min-height: 44px; padding: 10px 12px; border-radius: 12px;
   border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit;
   transition: border-color .15s ease, box-shadow .15s ease;
@@ -148,6 +148,8 @@ textarea { min-height: 96px; resize: vertical; line-height: 1.5; }
 /* segmentli tanlov (rejim) */
 .segmented { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; background: var(--surface-2); border-radius: 12px; padding: 4px; gap: 4px; }
 .segmented button { border: 0; background: transparent; color: var(--muted); padding: 9px 6px; border-radius: 9px; font-weight: 600; font-size: 14px; }
+.segmented.scroll { overflow-x: auto; grid-auto-columns: max-content; scrollbar-width: none; }
+.segmented.scroll button { padding: 9px 10px; white-space: nowrap; }
 .segmented button.on { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
 
 /* kalit (switch) */
@@ -182,6 +184,9 @@ textarea { min-height: 96px; resize: vertical; line-height: 1.5; }
 .timeline li:first-child { border-top: 0; }
 .timeline .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin-top: 8px; flex: 0 0 auto; }
 .timeline .when { color: var(--muted); font-size: 12.5px; }
+.payouts { list-style: none; margin: 0; padding: 0; }
+.payouts li { padding: 10px 0; border-top: 1px solid var(--border); display: grid; gap: 6px; }
+.payouts li:first-child { border-top: 0; }
 
 /* obuna */
 .price { font-family: var(--serif); font-size: 36px; line-height: 1; }

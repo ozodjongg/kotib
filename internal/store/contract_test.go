@@ -18,7 +18,7 @@ import (
 // Bir xil xulq-atvor talablari Memory va Postgres uchun. Postgres qismi faqat
 // TEST_DATABASE_URL berilganda ishlaydi (CI'da postgres service bilan).
 func TestStoreContract(t *testing.T) {
-	t.Run("memory", func(t *testing.T) { s := store.NewMemory(); contract(t, s); adminContract(t, s) })
+	t.Run("memory", func(t *testing.T) { s := store.NewMemory(); contract(t, s); adminContract(t, s); charityContract(t, s) })
 	t.Run("postgres", func(t *testing.T) {
 		dsn := os.Getenv("TEST_DATABASE_URL")
 		if dsn == "" {
@@ -35,11 +35,12 @@ func TestStoreContract(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if _, err := db.Exec(`TRUNCATE accounts, subscriptions, payments, usage_daily, google_links, actions, hooks, followups, referral_codes, referrals, linked_accounts, link_tokens, chat_activity, style_samples, schedules, plugin_configs, bans CASCADE`); err != nil {
+		if _, err := db.Exec(`TRUNCATE accounts, subscriptions, payments, usage_daily, google_links, actions, hooks, followups, referral_codes, referrals, linked_accounts, link_tokens, chat_activity, style_samples, schedules, plugin_configs, bans, charity_settings, charity_payouts CASCADE`); err != nil {
 			t.Fatal(err)
 		}
 		contract(t, store.NewPostgres(db))
 		adminContract(t, store.NewPostgres(db))
+		charityContract(t, store.NewPostgres(db))
 	})
 }
 
@@ -744,5 +745,83 @@ func adminContract(t *testing.T, s store.Store) {
 	ps, err := s.ListPayments(ctx, 10)
 	if err != nil || len(ps) == 0 {
 		t.Fatalf("payments: %v %v", ps, err)
+	}
+}
+
+func charityContract(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	if got, err := s.CharityStart(ctx, start); err != nil || !got.Equal(start) {
+		t.Fatalf("start: %v %v", got, err)
+	}
+	if got, _ := s.CharityStart(ctx, start.AddDate(0, 2, 0)); !got.Equal(start) {
+		t.Fatalf("start o'zgarmasligi kerak: %v", got)
+	}
+
+	from, to := time.Now().Add(-time.Minute), time.Now().Add(time.Minute)
+	subs0, dons0, err := s.PaymentSums(ctx, from, to) // avvalgi testlar to'lovlari
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []store.Payment{
+		{ChargeID: "ch-s1", OwnerID: 5, Amount: 150, Currency: "XTR", Payload: "sub:5:advanced:0123456789abcdef"},
+		{ChargeID: "ch-s2", OwnerID: 5, Amount: 70, Currency: "XTR", Payload: "sub:5:advanced:0123456789abcdef"},
+		{ChargeID: "ch-d1", OwnerID: 6, Amount: 40, Currency: "XTR", Payload: store.DonationPrefix + "6:0123456789abcdef"},
+	} {
+		if _, err := s.AddPayment(ctx, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.MarkRefunded(ctx, "ch-s2"); err != nil {
+		t.Fatal(err)
+	}
+	subs, dons, err := s.PaymentSums(ctx, from, to)
+	if err != nil || subs-subs0 != 150 || dons-dons0 != 40 {
+		t.Fatalf("sums: %d %d %v", subs, dons, err)
+	}
+	if subs, dons, _ := s.PaymentSums(ctx, time.Now().Add(time.Minute), time.Now().Add(time.Hour)); subs != 0 || dons != 0 {
+		t.Fatalf("bo'sh oraliq: %d %d", subs, dons)
+	}
+	if p, _ := s.GetPayment(ctx, "ch-d1"); !p.IsDonation() {
+		t.Fatal("xayriya belgisi")
+	}
+
+	id, ok, err := s.AddCharityPayout(ctx, store.CharityPayout{Kind: store.CharityMonthly, Period: "2026-10", Share: 15, Donated: 4, Stars: 19})
+	if err != nil || !ok || id == 0 {
+		t.Fatal(id, ok, err)
+	}
+	if _, ok, err := s.AddCharityPayout(ctx, store.CharityPayout{Kind: store.CharityMonthly, Period: "2026-10", Stars: 1}); ok || err != nil {
+		t.Fatalf("oy ikki marta yozilmasin: %v %v", ok, err)
+	}
+	at := time.Now()
+	mid, ok, err := s.AddCharityPayout(ctx, store.CharityPayout{Kind: store.CharityManual, Stars: 500, Note: "naqd", Paid: true, ByAdmin: 9, PaidAt: &at})
+	if err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	if _, ok, _ := s.AddCharityPayout(ctx, store.CharityPayout{Kind: store.CharityManual, Stars: 1, Paid: true, PaidAt: &at}); !ok {
+		t.Fatal("manual cheklanmaydi")
+	}
+	if err := s.MarkCharityPaid(ctx, id, "EQtx", 9, at); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkCharityPaid(ctx, id, "EQtx", 9, at); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("ikki marta: %v", err)
+	}
+	if err := s.MarkCharityPaid(ctx, 999999, "x", 9, at); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal(err)
+	}
+	ps, err := s.ListCharityPayouts(ctx, 0)
+	if err != nil || len(ps) != 3 || ps[2].ID != id || ps[1].ID != mid {
+		t.Fatalf("list: %+v %v", ps, err)
+	}
+	m := ps[2]
+	if !m.Paid || m.Proof != "EQtx" || m.ByAdmin != 9 || m.PaidAt == nil || m.Share != 15 || m.Donated != 4 || m.Stars != 19 || m.Period != "2026-10" {
+		t.Fatalf("monthly: %+v", m)
+	}
+	if ps[1].Note != "naqd" || !ps[1].Paid || ps[1].Kind != store.CharityManual {
+		t.Fatalf("manual: %+v", ps[1])
+	}
+	if ps, _ := s.ListCharityPayouts(ctx, 1); len(ps) != 1 {
+		t.Fatalf("limit: %v", ps)
 	}
 }

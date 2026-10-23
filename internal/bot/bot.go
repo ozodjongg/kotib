@@ -170,14 +170,17 @@ var _ billing.API = (*Bot)(nil)
 
 func (b *Bot) CreateInvoiceLink(ctx context.Context, in billing.InvoiceLink) (string, error) {
 	var link string
-	err := b.call(ctx, "createInvoiceLink", map[string]any{
-		"title":               in.Title,
-		"description":         in.Description,
-		"payload":             in.Payload,
-		"currency":            billing.Currency,
-		"prices":              []map[string]any{{"label": in.Label, "amount": in.Amount}},
-		"subscription_period": in.SubscriptionPeriod,
-	}, &link)
+	params := map[string]any{
+		"title":       in.Title,
+		"description": in.Description,
+		"payload":     in.Payload,
+		"currency":    billing.Currency,
+		"prices":      []map[string]any{{"label": in.Label, "amount": in.Amount}},
+	}
+	if in.SubscriptionPeriod > 0 { // 0 — bir martalik to'lov (hayriya xayriyasi)
+		params["subscription_period"] = in.SubscriptionPeriod
+	}
+	err := b.call(ctx, "createInvoiceLink", params, &link)
 	return link, err
 }
 

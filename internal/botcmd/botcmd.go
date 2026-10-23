@@ -68,6 +68,7 @@ var Commands = []bot.Command{
 	{Name: "resume", Description: "Kotibni davom ettirish"},
 	{Name: "obuna", Description: "Obuna (Telegram Stars)"},
 	{Name: "taklif", Description: "Do'stni taklif qilish — bonus kunlar"},
+	{Name: "hayriya", Description: "Hayriya: hisobot va xayriya qilish"},
 	{Name: "sor", Description: "Yozishma haqida so'rash: /sor Aziz bilan nima kelishdik?"},
 	{Name: "help", Description: "Yordam"},
 }
@@ -98,6 +99,7 @@ const helpText = `Kotib — Telegram'dagi shaxsiy xabarlaringizga AI yordamida j
 /resume — davom ettirish
 /obuna — obunani yoqish (Telegram Stars)
 /taklif — do'stni taklif qilish (bonus kunlar)
+/hayriya — hayriya hisoboti va xayriya qilish
 /sor <savol> — yozishma haqida so'rash, masalan: /sor Aziz bilan nima kelishdik? (Pro)
 
 Sozlamalar, qoidalar va qoralamalar — "Ochish" tugmasi orqali ilovada.`
@@ -152,6 +154,8 @@ func (h *Handler) Command(ctx context.Context, from int64, cmd, args string) bot
 		return h.subscribe(ctx, from)
 	case "taklif", "invite", "referral":
 		return h.invite(ctx, from)
+	case "hayriya", "charity", "donate":
+		return h.charity(ctx, from, args)
 	case "sor", "so'ra", "ask":
 		return h.ask(ctx, from, args)
 	case "stats":
@@ -388,7 +392,7 @@ func (h *Handler) refund(ctx context.Context, chargeID string) bot.Reply {
 		return bot.Reply{Text: "Qaytarib bo'lmadi: " + err.Error()}
 	}
 	if h.Notify != nil {
-		h.Notify(ctx, p.OwnerID, fmt.Sprintf("%d ⭐ hisobingizga qaytarildi. Obuna to'xtatildi.", p.Amount), false)
+		h.Notify(ctx, p.OwnerID, RefundText(p.Amount, p.IsDonation()), false)
 	}
 	return bot.Reply{Text: fmt.Sprintf("Qaytarildi: %d ⭐ (foydalanuvchi %d)", p.Amount, p.OwnerID)}
 }
@@ -412,11 +416,27 @@ func (h *Handler) Paid(ctx context.Context, from int64, p billing.PaymentInfo) {
 	if h.Notify == nil {
 		return
 	}
+	if billing.IsDonation(p.Payload) {
+		h.Notify(ctx, from, fmt.Sprintf("💚 Rahmat! %d ⭐ hayriyaga qo'shildi. Hisobot: /hayriya", p.Amount), false)
+		return
+	}
 	text := "To'lov qabul qilindi, rahmat! ⭐\n"
 	if p.Recurring && !p.FirstRecurring {
 		text = "Obuna avtomatik yangilandi ⭐\n"
 	}
-	h.Notify(ctx, from, text+h.subscriptionLine(ctx, from), true)
+	text += h.subscriptionLine(ctx, from)
+	if share := h.Billing.CharityShare(p.Amount); share > 0 {
+		text += fmt.Sprintf("💚 To'lovingizdan %d ⭐ hayriyaga ajratildi.\n", share)
+	}
+	h.Notify(ctx, from, text, true)
+}
+
+// RefundText — to'lov qaytarilgani haqida mijozga xabar.
+func RefundText(amount int, donation bool) string {
+	if donation {
+		return fmt.Sprintf("%d ⭐ hisobingizga qaytarildi (hayriya xayriyasi).", amount)
+	}
+	return fmt.Sprintf("%d ⭐ hisobingizga qaytarildi. Obuna to'xtatildi.", amount)
 }
 
 func (h *Handler) Refunded(ctx context.Context, from int64, chargeID string) {

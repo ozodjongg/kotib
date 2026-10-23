@@ -39,6 +39,7 @@ const EVENTS = {
   birthdays_checked: "Tug'ilgan kunlar tekshirildi", birthday_draft: "Tug'ilgan kun tabrigi tayyorlandi", ask_answered: '/sor savoliga javob berildi',
   schedule_created: 'Rejalashtirilgan vazifa yaratildi', schedule_updated: "Vazifa o'zgartirildi", schedule_deleted: "Vazifa o'chirildi",
   schedule_run: 'Rejalashtirilgan vazifa bajarildi', plugin_enabled: 'Plagin yoqildi', plugin_disabled: "Plagin o'chirildi", plugin_removed: 'Plagin uzildi', plugin_connected: 'Plagin akkaunti ulandi',
+  charity_donation: '💚 Hayriyaga xayriya qilindi', charity_paid: "💚 Hayriya o'tkazmasi belgilandi", charity_manual: "💚 Qo'shimcha xayriya yozildi",
 };
 
 const state = {
@@ -1668,6 +1669,7 @@ async function viewAccount(view) {
     if (b.enabled) put(view, subscriptionCard(b));
     put(view, accountsCard());
     if (b.enabled && !b.exempt) put(view, referralCard());
+    put(view, charityCard());
   }
   const g = state.me.google || {};
   if (g.enabled) put(view, needsPro() && !g.connected ? proLock('Google', "Kotib taqvimingizdagi band vaqtlarni biladi, uchrashuv va vazifalarni Google Calendar/Tasks'ga qo'shadi.") : googleCard(g));
@@ -1894,12 +1896,12 @@ function adminEntry() {
 async function viewAdmin(view) {
   const tab = state.adminTab || 'overview';
   put(view, h('div', { class: 'card-head' }, h('h1', {}, '👑 Admin'), h('button', { class: 'btn ghost sm', onclick: () => go('home') }, '← Chiqish')),
-    h('div', { class: 'segmented' }, [['overview', 'Umumiy'], ['users', 'Foydalanuvchilar'], ['payments', "To'lovlar"], ['broadcast', 'Xabar']].map(([k, label]) =>
+    h('div', { class: 'segmented scroll' }, [['overview', 'Umumiy'], ['users', 'Foydalanuvchilar'], ['payments', "To'lovlar"], ['charity', 'Hayriya'], ['broadcast', 'Xabar']].map(([k, label]) =>
       h('button', { class: k === tab ? 'on' : '', onclick: () => { state.adminTab = k; haptic('tap'); renderMain(); } }, label))));
   const body = h('div', {}, h('div', { class: 'skeleton' }));
   put(view, body);
   try {
-    await ({ overview: adminOverview, users: adminUsers, payments: adminPayments, broadcast: adminBroadcast })[tab](body);
+    await ({ overview: adminOverview, users: adminUsers, payments: adminPayments, charity: adminCharity, broadcast: adminBroadcast })[tab](body);
   } catch (e) { swap(body, h('p', { class: 'err' }, e.message)); }
 }
 
@@ -2105,11 +2107,11 @@ async function adminPayments(body) {
   swap(body, h('p', { class: 'muted small' }, `Oxirgi ${ps.length} ta to'lov`),
     ps.map((p) => h('div', { class: 'card' },
       h('div', { class: 'row-between' }, h('b', {}, `${p.amount} ⭐`),
-        p.refunded ? h('span', { class: 'badge warn' }, 'Qaytarilgan') : h('span', { class: 'badge ok' }, p.recurring ? 'Obuna' : "To'lov")),
+        p.refunded ? h('span', { class: 'badge warn' }, 'Qaytarilgan') : h('span', { class: 'badge ok' }, p.donation ? '💚 Hayriya' : p.recurring ? 'Obuna' : "To'lov")),
       h('div', { class: 'muted small' }, `${fmtDate(p.created_at)} · `, h('a', { href: '#', onclick: (e) => { e.preventDefault(); openAdmin((v) => viewAdminUser(v, p.owner_id)); } }, 'ID ' + p.owner_id)),
       h('div', { class: 'muted small break' }, p.charge_id),
       p.refunded ? null : h('button', { class: 'btn ghost sm', onclick: busy(async () => {
-        if (!(await confirmBox(`${p.amount} ⭐ foydalanuvchiga qaytarilsinmi? Shu to'lov bergan muddat darhol tugaydi.`))) return;
+        if (!(await confirmBox(p.donation ? `${p.amount} ⭐ xayriya qaytarilsinmi? Hayriya hisobidan ayiriladi.` : `${p.amount} ⭐ foydalanuvchiga qaytarilsinmi? Shu to'lov bergan muddat darhol tugaydi.`))) return;
         await api('POST', '/admin/refund', { charge_id: p.charge_id });
         toast('Qaytarildi'); renderMain();
       }) }, 'Qaytarish'))));
@@ -2130,6 +2132,107 @@ async function adminBroadcast(body) {
       const r = await api('POST', '/admin/broadcast', { text: ta.value });
       ta.value = ''; upd(); toast(`Yuborilmoqda: ${r.recipients} ta foydalanuvchi`);
     }) }, 'Yuborish')));
+}
+
+// ---------- Hayriya ----------
+const DONATION_PRESETS = [50, 100, 500];
+
+function openExternal(url) {
+  if (tg && tg.openLink) tg.openLink(url); else window.open(url, '_blank', 'noopener');
+}
+
+// proofNode — isbot: https havola bo'lsa — bosiladigan, aks holda matn (tx hash).
+function proofNode(proof) {
+  if (!proof) return null;
+  if (/^https:\/\/\S+$/.test(proof)) {
+    return h('a', { href: proof, class: 'small break', onclick: (e) => { e.preventDefault(); openExternal(proof); } }, '🔗 Isbot');
+  }
+  return h('div', { class: 'muted small break' }, 'Isbot: ' + proof);
+}
+
+function payoutTitle(p) {
+  if (p.kind === 'manual') return p.note ? `Qo'shimcha xayriya · ${p.note}` : "Qo'shimcha xayriya";
+  const [y, m] = p.period.split('-');
+  return `${MONTHS[+m - 1] || p.period} ${y}`;
+}
+
+function payoutRow(p, extra) {
+  return h('li', {},
+    h('div', { class: 'row-between' }, h('span', {}, payoutTitle(p)), h('b', {}, `${p.stars} ⭐`)),
+    p.kind === 'monthly' ? h('div', { class: 'muted small' }, `Obunalardan ${p.share} ⭐ · xayriyalar ${p.donated} ⭐` + (p.adjust ? ` · tuzatish ${p.adjust > 0 ? '+' : ''}${p.adjust} ⭐` : '')) : null,
+    h('div', { class: 'row' }, p.paid ? h('span', { class: 'badge ok' }, "O'tkazildi" + (p.paid_at ? ' · ' + fmtDate(p.paid_at) : '')) : h('span', { class: 'badge warn' }, 'Kutilmoqda'), proofNode(p.proof)),
+    extra || null);
+}
+
+async function donate(stars) {
+  const n = Math.floor(Number(stars));
+  if (!(n >= 1 && n <= 10000)) throw new Error("Summa 1–10000 ⭐ bo'lishi kerak");
+  const { link } = await api('POST', '/charity/donate', { stars: n });
+  if (!tg || !tg.openInvoice) { if (tg && tg.openTelegramLink) tg.openTelegramLink(link); return; }
+  tg.openInvoice(link, (status) => {
+    if (status === 'paid') { haptic('success'); toast(`💚 Rahmat! ${n} ⭐ hayriyaga qo'shildi`); setTimeout(renderMain, 1500); }
+    else if (status === 'failed') toast("To'lov amalga oshmadi", true);
+  });
+}
+
+function charityCard() {
+  const card = h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, '💚 Hayriya')), h('div', { class: 'skeleton' }));
+  api('GET', '/charity').then((r) => {
+    if (!r.enabled) { card.remove(); return; }
+    const stat = (n, label) => h('div', { class: 'stat' }, h('div', { class: 'num' }, String(n)), h('div', { class: 'lbl' }, label));
+    const custom = h('input', { type: 'number', min: 1, max: r.max_donation || 10000, inputmode: 'numeric', placeholder: 'Boshqa summa', class: 'grow' });
+    swap(card,
+      h('div', { class: 'card-head' }, h('h3', {}, '💚 Hayriya'), h('span', { class: 'badge ok' }, `${r.percent}%`)),
+      h('p', { class: 'small' }, `Har obuna to'lovining ${r.percent}% i hayriyaga ajratiladi` + (r.name ? ` — «${r.name}»` : '') +
+        ". Summa oyda bir marta tashkilotga o'tkaziladi va isboti shu yerda ko'rsatiladi."),
+      r.url ? h('a', { href: r.url, class: 'small', onclick: (e) => { e.preventDefault(); openExternal(r.url); } }, 'Tashkilot haqida →') : null,
+      h('div', { class: 'stats' }, stat(r.paid_stars + ' ⭐', "O'tkazilgan"), stat(r.accruing_stars + ' ⭐', "Shu oy yig'ilmoqda")),
+      r.pending_stars ? h('p', { class: 'muted small' }, `O'tkazilishi kutilmoqda: ${r.pending_stars} ⭐ (Stars 21 kundan keyin yechib olinadi)`) : null,
+      h('h3', {}, "O'zingiz ham qo'shing"),
+      h('p', { class: 'muted small' }, "Stars balansingizdan — to'liq hayriyaga ketadi."),
+      h('div', { class: 'chips' }, DONATION_PRESETS.map((n) => h('button', { class: 'chip-btn', onclick: busy(() => donate(n)) }, `💚 ${n} ⭐`))),
+      h('div', { class: 'row nowrap' }, custom, h('button', { class: 'btn sm', onclick: busy(() => donate(custom.value)) }, "Qo'shish")),
+      r.payouts.length ? [h('h3', {}, 'Hisobot'), h('ul', { class: 'payouts' }, r.payouts.map((p) => payoutRow(p)))] : null);
+  }).catch(() => card.remove());
+  return card;
+}
+
+async function adminCharity(body) {
+  const r = await api('GET', '/charity');
+  if (!r.enabled) {
+    swap(body, h('div', { class: 'card soft' }, h('p', { class: 'muted' }, "Hayriya yoqilmagan. Serverda CHARITY_PERCENT (masalan 10) ni bering.")));
+    return;
+  }
+  const stars = h('input', { type: 'number', min: 1, inputmode: 'numeric', placeholder: 'Summa (⭐ ekvivalenti)' });
+  const note = h('input', { type: 'text', maxlength: 200, placeholder: 'Izoh: masalan, «Mehr» fondiga naqd' });
+  const proof = h('input', { type: 'text', maxlength: 300, placeholder: 'Isbot: tx hash yoki havola (ixtiyoriy)' });
+  const pending = r.payouts.filter((p) => !p.paid && p.stars > 0);
+  swap(body,
+    h('div', { class: 'kpis' }, kpi(r.paid_stars + ' ⭐', "O'tkazilgan"), kpi(r.pending_stars + ' ⭐', 'Kutilmoqda'),
+      kpi(r.accruing_stars + ' ⭐', "Shu oy yig'ilmoqda"), kpi(r.percent + '%', 'Ulush')),
+    h('div', { class: 'card soft' }, h('p', { class: 'small' },
+      "Oy tugagach summa avtomatik hisoblanadi va sizga bot orqali xabar keladi. Stars'ni @BotFather → Balance (Fragment, 21 kunlik ushlab turishdan keyin) yechib, " +
+      "tashkilotga o'tkazing va quyida isbotini kiriting.")),
+    h('div', { class: 'card' }, h('h3', {}, "O'tkazilishi kerak"),
+      pending.length ? h('ul', { class: 'payouts' }, pending.map((p) => {
+        const inp = h('input', { type: 'text', maxlength: 300, placeholder: 'tx hash yoki https://… havola', class: 'grow' });
+        return payoutRow(p, h('div', { class: 'row nowrap' }, inp, h('button', { class: 'btn sm', onclick: busy(async () => {
+          if (!inp.value.trim()) throw new Error('Isbot kiriting');
+          await api('POST', `/admin/charity/${p.id}/paid`, { proof: inp.value.trim() });
+          toast("O'tkazildi deb belgilandi"); renderMain();
+        }) }, "O'tkazildi")));
+      })) : h('p', { class: 'muted small' }, "Hammasi o'tkazilgan ✅")),
+    h('div', { class: 'card' }, h('h3', {}, "💚 O'zim qo'shaman"),
+      h('p', { class: 'muted small' }, "Stars bilan: balansingizdan botga o'tadi va keyingi oylik summaga qo'shiladi. Stars sotib olish ularni yechib olishdan qimmat, " +
+        "shuning uchun katta summani to'g'ridan-to'g'ri (pul/TON) o'tkazib, pastda yozib qo'ygan ma'qul."),
+      h('div', { class: 'chips' }, DONATION_PRESETS.map((n) => h('button', { class: 'chip-btn', onclick: busy(() => donate(n)) }, `⭐ ${n}`))),
+      h('h3', {}, "Stars'siz xayriyani yozish"),
+      field('Summa', stars), field('Izoh', note), field('Isbot', proof),
+      h('button', { class: 'btn block', onclick: busy(async () => {
+        await api('POST', '/admin/charity/manual', { stars: Math.floor(Number(stars.value)), note: note.value.trim(), proof: proof.value.trim() });
+        toast('Yozildi — rahmat! 💚'); renderMain();
+      }) }, 'Yozish')),
+    r.payouts.length ? h('div', { class: 'card' }, h('h3', {}, 'Tarix'), h('ul', { class: 'payouts' }, r.payouts.map((p) => payoutRow(p)))) : null);
 }
 
 // ---------- Do'stni taklif qilish ----------

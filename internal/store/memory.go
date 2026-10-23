@@ -38,6 +38,9 @@ type Memory struct {
 	plugins   map[pluginKey]PluginConfig
 	bans      map[int64]Ban
 
+	charity      []CharityPayout
+	charityStart time.Time
+
 	// AuditNow — audit yozuvlari vaqti (testda soxta soat); nil → time.Now.
 	AuditNow func() time.Time
 }
@@ -405,7 +408,7 @@ func (m *Memory) Stats(_ context.Context, now time.Time) (Stats, error) {
 		}
 	}
 	for _, p := range m.payments {
-		if !p.Refunded {
+		if !p.Refunded && !p.IsDonation() {
 			st.StarsTotal += int64(p.Amount)
 		}
 	}

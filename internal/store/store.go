@@ -380,4 +380,16 @@ type Store interface {
 	SetBan(ctx context.Context, b Ban) error
 	GetBan(ctx context.Context, owner int64) (Ban, error)
 	DeleteBan(ctx context.Context, owner int64) error
+
+	// Hayriya (DeleteAccount o'chirmaydi — moliyaviy yozuvlar)
+	// CharityStart hisob boshlangan vaqtni qaytaradi; hali yozilmagan bo'lsa candidate'ni saqlaydi.
+	CharityStart(ctx context.Context, candidate time.Time) (time.Time, error)
+	// PaymentSums — [from, to) oralig'idagi qaytarilmagan to'lovlar: obunalar va xayriyalar (DonationPrefix) alohida.
+	PaymentSums(ctx context.Context, from, to time.Time) (subs, donations int64, err error)
+	// AddCharityPayout o'tkazmani yozadi; shu oy (monthly) allaqachon yozilgan bo'lsa false.
+	AddCharityPayout(ctx context.Context, p CharityPayout) (int64, bool, error)
+	// ListCharityPayouts — yangidan eskiga; limit <= 0 — hammasi.
+	ListCharityPayouts(ctx context.Context, limit int) ([]CharityPayout, error)
+	// MarkCharityPaid o'tkazmani to'langan deb belgilaydi (yo'q yoki allaqachon to'langan bo'lsa ErrNotFound).
+	MarkCharityPaid(ctx context.Context, id int64, proof string, admin int64, at time.Time) error
 }

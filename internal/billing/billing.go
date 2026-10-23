@@ -67,8 +67,14 @@ type Service struct {
 	TrialDailyLimit int
 	// Notify — referal mukofoti haqida taklif qiluvchiga xabar; nil → xabarsiz.
 	Notify Notifier
-	Log    *slog.Logger
-	Now    func() time.Time
+	// CharityPercent — har obuna to'lovidan hayriyaga ulush, %; 0 → hayriya o'chiq (charity.go).
+	CharityPercent int
+	// CharityName, CharityURL — tashkilot nomi va sahifasi (Mini App'da ko'rsatiladi; ixtiyoriy).
+	CharityName, CharityURL string
+	// CharityStartAt — hisob boshlanadigan oy (CHARITY_START); nol → yoqilgan oy. Bazaga bir marta yoziladi.
+	CharityStartAt time.Time
+	Log            *slog.Logger
+	Now            func() time.Time
 }
 
 // quotaZone — kunlik limit Toshkent vaqti bilan yarim tunda yangilanadi (UTC+5, yozgi vaqt yo'q).
@@ -342,6 +348,9 @@ func (s *Service) InvoiceLink(ctx context.Context, owner int64, tier Tier) (stri
 // PreCheckout — to'lovdan oldingi tekshiruv. nil → to'lovga ruxsat.
 // Qaytarilgan xato matni mijozga ko'rsatiladi.
 func (s *Service) PreCheckout(ctx context.Context, from int64, currency string, amount int, payload string) error {
+	if IsDonation(payload) {
+		return s.preCheckoutDonation(from, currency, amount, payload)
+	}
 	if !s.Enabled() {
 		return ErrDisabled
 	}
@@ -377,6 +386,9 @@ type PaymentInfo struct {
 func (s *Service) PaymentReceived(ctx context.Context, from int64, p PaymentInfo) error {
 	if p.Currency != Currency || p.Amount <= 0 || p.ChargeID == "" {
 		return fmt.Errorf("kutilmagan to'lov: %s %d", p.Currency, p.Amount)
+	}
+	if IsDonation(p.Payload) {
+		return s.donationReceived(ctx, from, p) // obunaga tegmaydi
 	}
 	// Telegram pulni allaqachon yechgan — payload mos kelmasa ham to'lovchiga (from) yozamiz.
 	if owner, ok := payloadOwner(p.Payload); !ok || owner != from {

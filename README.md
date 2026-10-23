@@ -16,7 +16,7 @@ internal/userbot/     pipeline (Telegram'dan mustaqil), manager, login, gotd.go 
 internal/miniapp/     initData HMAC auth + HTTP API
 internal/store/       Store interfeysi, Postgres, Memory (dev)
 internal/bot/         boshqaruv boti (/start, bildirishnoma)
-internal/billing/     Telegram Stars obunasi: sinov, to'lov tasdig'i, bekor qilish, refund, eslatmalar
+internal/billing/     Telegram Stars obunasi: sinov, to'lov tasdig'i, bekor qilish, refund, eslatmalar; hayriya hisobi
 internal/google/      Google: OAuth (PKCE), Calendar (band vaqt, tadbir), Contacts (eslatma), Tasks
 internal/ics/         Google'siz taqvim: .ics fayl va imzolangan havola
 internal/schedule/    rejalashtirilgan AI vazifalar: jadval (bir marta/soat/kun/ish kunlari/hafta), bajaruvchi
@@ -100,6 +100,9 @@ Wordmark shrifti — Source Serif 4 (SIL Open Font License), matn vektor konturg
 | `TRIAL_DAYS` | bepul sinov kunlari (default 7) |
 | `TRIAL_DAILY_LIMIT` | sinovda kuniga ko'pi bilan nechta javob tayyorlanadi (default 50; 0 — cheksiz). To'langan obunada cheklov yo'q |
 | `ADMIN_IDS` | admin Telegram ID'lari, vergul bilan: `/stats`, `/refund`; adminlar uchun kotib bepul |
+| `CHARITY_PERCENT` | har obuna to'lovidan hayriyaga ulush, % (0–100), masalan `10`. Bo'sh/0 — hayriya o'chiq (pastda) |
+| `CHARITY_NAME`, `CHARITY_URL` | ixtiyoriy: tashkilot nomi (64 belgigacha) va sahifasi (`https://…`) — Mini App va invoice'da ko'rsatiladi |
+| `CHARITY_START` | ixtiyoriy: hisob boshlanadigan oy, `YYYY-MM`. Bo'sh — yoqilgan oy. Birinchi ishga tushishda bazaga yoziladi va keyin o'zgarmaydi |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | ixtiyoriy: Google integratsiyasi (pastda). Bo'sh — o'chiq |
 | `GOOGLE_REDIRECT_URL` | ixtiyoriy; default `<MINIAPP_URL domeni>/oauth/google/callback` |
 | `LISTEN` | aniq manzil (masalan `127.0.0.1:8080`); berilmasa `PORT` ishlatiladi |
@@ -283,6 +286,36 @@ To'lov yoqilganda (`PRICE_STARS`) har mijozning doimiy taklif havolasi bor: `htt
 
 **Blogerlar/kanallar uchun** kod shart emas: @BotFather → bot → **Affiliate Program** — Telegram'ning o'z hamkorlik
 dasturi (Stars to'lovlaridan ulush foizi va muddatini belgilaysiz, hisob-kitobni Telegram yuritadi).
+
+## 💚 Hayriya
+
+`CHARITY_PERCENT` berilsa (masalan `10`), har obuna to'lovining shu foizi hayriyaga ajratiladi; har kim (admin ham)
+o'z Stars balansidan qo'shimcha xayriya qila oladi.
+
+Bot API'da Stars'ni boshqa akkauntga o'tkazadigan metod yo'q: Stars bot balansida yig'iladi va faqat Fragment orqali
+(TON'ga, 21 kunlik ushlab turishdan keyin) yechiladi. Shuning uchun tizim **hisob yuritadi**, o'tkazmani admin qiladi:
+
+1. **Har to'lov** `payments` jadvalida (obuna yoki xayriya — payload `don:` bilan). Obuna to'lovidan keyin mijozga
+   «💚 To'lovingizdan 15 ⭐ hayriyaga ajratildi» xabari boradi.
+2. **Oy tugagach** (Toshkent vaqti, soatlik fon vazifasi) o'tgan oy uchun summa hisoblanadi va `charity_payouts` ga bir
+   marta yoziladi; `ADMIN_IDS` ga bot xabar yuboradi. Hisob **yig'ma**: oy summasi = (boshlanishdan oy oxirigacha obunalar
+   × foiz + xayriyalar) − avvalgi oylarga hisoblangan summa. Shunda yaxlitlash yo'qolmaydi (155 + 155 ⭐ → 31 ⭐, 15 + 15 emas)
+   va keyinroq qaytarilgan (refund) to'lov keyingi oyda «tuzatish» sifatida ayiriladi. Qaytarilgan xayriya ham hisobdan chiqadi.
+3. **Admin** Stars'ni @BotFather → Balance (Fragment) orqali yechib, tashkilotga o'tkazadi va isbotini kiritadi:
+   Mini App → Admin → **Hayriya** → «O'tkazildi» yoki `/hayriya paid <#id> <tx hash yoki havola>`.
+4. **Shaffoflik**: Mini App → Hisob → **💚 Hayriya** va `/hayriya` — foiz, o'tkazilgan, kutilayotgan, shu oy yig'ilayotgan
+   summa va har oylik o'tkazma isboti bilan.
+
+Xayriya qilish:
+- **Stars bilan** (hamma): Mini App'dagi 50/100/500 ⭐ yoki ixtiyoriy summa, botda `/hayriya 250` — bir martalik invoice
+  (`createInvoiceLink`, `subscription_period`siz). Stars to'lovchining balansidan bot balansiga o'tadi va to'liq hayriya
+  hisobiga yoziladi (obuna tushumi — `/stats` «Jami tushum» — ga qo'shilmaydi).
+- **Stars'siz** (admin): Stars sotib olish ularni yechib olishdan qimmat (taxminan $0.02 → $0.013/⭐), shuning uchun katta
+  summani to'g'ridan-to'g'ri (pul/TON) o'tkazib, yozib qo'ygan ma'qul: Mini App → Admin → Hayriya → «Stars'siz xayriyani
+  yozish» yoki `/hayriya manual <summa ⭐ ekvivalenti> <izoh>`. Bu qo'shimcha xayriya — oylik majburiyatni kamaytirmaydi.
+
+API: `GET /api/charity` (hisobot), `POST /api/charity/donate {stars}` (invoice havolasi); admin:
+`POST /api/admin/charity/{id}/paid {proof}`, `POST /api/admin/charity/manual {stars, note, proof}`.
 
 ## Google integratsiyasi (Calendar, Contacts, Tasks)
 
@@ -468,9 +501,11 @@ Mini App'da faqat `GET /api/me` va akkauntni o'chirish ochiq, bot buyruqlari va 
 | `/pause`, `/resume` | hamma | kotibni darhol to'xtatish / davom ettirish |
 | `/obuna` | hamma | tariflar va to'lov havolalari (Advanced / Pro), tarifni almashtirish |
 | `/taklif` | hamma | do'stni taklif qilish havolasi va natijalar (bonus kunlar) |
+| `/hayriya [summa]` | hamma | hayriya hisoboti va xayriya havolalari (`CHARITY_PERCENT` yoqilganda) |
 | `/sor <savol>` | Pro | yozishma haqida savol: «/sor Aziz bilan nima kelishdik?» |
 | `/stats` | `ADMIN_IDS` | akkauntlar, faol obunalar, tushum |
 | `/refund <charge_id>` | `ADMIN_IDS` | to'lovni qaytarish |
+| `/hayriya paid <#id> <isbot>`, `/hayriya manual <summa> <izoh>` | `ADMIN_IDS` | oylik summa o'tkazildi; Stars'siz xayriyani yozish |
 
 ## Xavfsizlik dizayni
 
