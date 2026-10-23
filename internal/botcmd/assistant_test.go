@@ -72,7 +72,7 @@ func TestAskCommand(t *testing.T) {
 	}
 	ai := &fakeAI{answers: map[int64]string{2: "💬 Aziz\n\nertaga 15:00"}}
 	h.AI = ai
-	if r := h.Command(ctx, 1, "sor", ""); !strings.Contains(r.Text, "/sor Aziz") {
+	if r := h.Command(ctx, 1, "sor", ""); !strings.Contains(r.Text, "Aziz bilan") {
 		t.Fatalf("yo'riqnoma: %q", r.Text)
 	}
 	// Asosiy akkauntda topilmadi — qo'shimcha akkauntda (2) topildi.

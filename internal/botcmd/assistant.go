@@ -14,7 +14,7 @@ import (
 // askTimeout — /sor javobi uchun vaqt (yozishmani o'qish + model).
 const askTimeout = 90 * time.Second
 
-const askUsage = "Savolni kontakt ismi bilan yozing, masalan:\n/sor Aziz bilan nima kelishdik?\n/sor Onam ertaga nima olib kelishimni so'radi?"
+const askUsage = "Savolni kontakt ismi bilan yozing (/sor shart emas — shunchaki botga yozing), masalan:\nAziz bilan nima kelishdik?\n/sor Onam ertaga nima olib kelishimni so'radi?"
 
 // ask — /sor: javob bir necha soniya oladi, shuning uchun fonda tayyorlanadi va bot orqali yuboriladi
 // (bot update'larni ketma-ket qayta ishlaydi — uzoq kutish boshqa tugmalarni to'xtatmasin).

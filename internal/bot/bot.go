@@ -371,8 +371,14 @@ func (b *Bot) dispatch(ctx context.Context, u update) {
 	}
 	cmd, args, ok := parseCommand(m.Text)
 	if !ok {
-		b.replyTo(ctx, u)
-		return
+		if b.replyTo(ctx, u) {
+			return
+		}
+		// Buyruqsiz oddiy matn — /sor savoli deb qabul qilinadi ("/sor" yozish shart emas).
+		cmd, args = AskCommand, strings.TrimSpace(m.Text)
+		if args == "" || b.Handler == nil {
+			return
+		}
 	}
 	var r Reply
 	if b.Handler != nil {
@@ -410,13 +416,17 @@ func (b *Bot) callback(ctx context.Context, u update) {
 	}
 }
 
-// replyTo — bot xabariga (masalan, qoralama kartasiga) matnli javob.
-func (b *Bot) replyTo(ctx context.Context, u update) {
+// AskCommand — buyruqsiz yozilgan oddiy matn shu buyruqqa yo'naltiriladi (/sor).
+const AskCommand = "sor"
+
+// replyTo — bot xabariga (masalan, qoralama kartasiga) matnli javob. false — bu tugmali
+// bot xabariga javob emas (matn oddiy savol sifatida qayta ishlanadi).
+func (b *Bot) replyTo(ctx context.Context, u update) bool {
 	m := u.Message
 	rt := m.ReplyToMessage
 	if b.Handler == nil || rt == nil || rt.Markup == nil || len(rt.Markup.Keyboard) == 0 ||
 		len(rt.Markup.Keyboard[0]) == 0 || strings.TrimSpace(m.Text) == "" {
-		return
+		return false
 	}
 	r, edit := b.Handler.ReplyTo(ctx, m.From.ID, rt.Markup.Keyboard[0][0].Data, m.Text)
 	if edit != "" {
@@ -431,6 +441,7 @@ func (b *Bot) replyTo(ctx context.Context, u update) {
 			b.Log.Warn("bot reply", "err", err)
 		}
 	}
+	return true
 }
 
 // parseCommand "/cmd@BotName args" → ("cmd", "args").

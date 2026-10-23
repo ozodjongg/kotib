@@ -1219,7 +1219,7 @@ function notifyCard(s) {
     field('Qancha vaqtdan keyin eslatilsin', hours),
     switchRow(pro('Ovozli xabar matni'), "Kontakt yuborgan ovozli xabar matnga o'girilib bot chatiga keladi — yig'ilishda ham o'qiysiz.", s.transcribe_voice, (v) => { s.transcribe_voice = v; }),
     switchRow(pro("Tug'ilgan kun tabriklari"), "Google Contacts'da tug'ilgan kuni bor kontaktlar uchun soat 9:00 da tabrik qoralamasi tayyorlanadi — siz tasdiqlaysiz. Google ulangan bo'lishi kerak.", !s.no_birthdays, (v) => { s.no_birthdays = !v; }),
-    h('p', { class: 'hint' }, "Botda: /sor Aziz bilan nima kelishdik? — kotib yozishmani o'qib, javob beradi (Pro)."));
+    h('p', { class: 'hint' }, "Botga shunchaki yozing: «Aziz bilan nima kelishdik?» (/sor shart emas) — kotib yozishmani o'qib, javob beradi (Pro)."));
 }
 
 // ---------- O'qitish rejimi: «O'zimdek» uslubi ----------

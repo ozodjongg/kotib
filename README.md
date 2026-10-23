@@ -117,6 +117,11 @@ sinovda 8 ta** (`billing.HistoryPaid` / `HistoryTrial`). Bitta chatdagi xabarlar
 qayta ishlanadi: keyingi javob oldingisi yuborilgandan keyin tayyorlanadi va uni tarixda ko'radi
 (bir xil javob takrorlanmaydi, tartib buzilmaydi).
 
+Javob yozishdan oldin kotib tarixni o'qib, **javob kerakmi — o'zi aniqlaydi**: kontakt javob olgan savolini
+qayta yozsa («nima qilyapsan?» → javob → yana «nima qilyapsan?»), model chaqirilmasdan o'tkazib yuboriladi;
+«rahmat», «ok» kabi yakunlovchi yoki ma'nosi bir xil takroriy xabarlarda model `[JAVOBSIZ]` qaytaradi va
+hech narsa yuborilmaydi (qoralama ham yaratilmaydi, auditda `skip`).
+
 ## Kechki xulosa, va'dalar va tejalgan vaqt
 
 - **Kechki xulosa** — har kuni soat 21:00 da (egasining vaqt zonasi) bot yuboradi: tayyorlangan va
@@ -150,6 +155,8 @@ Sozlamalar → «Kunlik yordamchi». Hammasi har 5 daqiqalik tekshiruvda, kuniga
 - **Tug'ilgan kun tabriklari** (Pro, Google ulangan) — 9:00 da Google Contacts'da bugun tug'ilganlar uchun egasi uslubida
   tabrik **qoralamasi** tayyorlanadi (Telegram kontakti telefon yoki ism bo'yicha topiladi). Faqat egasi tasdiqlasa yuboriladi.
 - **`/sor <savol>`** (Pro) — «/sor Aziz bilan nima kelishdik?»: bot savoldagi kontaktni topadi, oxirgi 100 xabarni o'qib javob beradi.
+  `/sor` yozish shart emas: botga buyruqsiz yozilgan oddiy matn avtomatik savol sifatida qabul qilinadi
+  (qoralama kartasiga «reply» qilingan matn esa avvalgidek qoralamani tahrirlaydi).
   Qoida bilan kotibdan yopilgan chatlar o'qilmaydi.
 
 Bularning hammasi uchun `chat_activity` jadvalida faqat meta saqlanadi: chat, kontakt ismi, oxirgi kiruvchi/chiquvchi

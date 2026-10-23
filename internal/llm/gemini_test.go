@@ -169,3 +169,19 @@ func TestSystemPromptAboutAndRoutine(t *testing.T) {
 		t.Errorf("away ustun emas:\n%s", p)
 	}
 }
+
+func TestIsNoReply(t *testing.T) {
+	for _, s := range []string{NoReply, " [javobsiz] ", "JAVOBSIZ", "\"[JAVOBSIZ]\"", "[JAVOBSIZ]."} {
+		if !IsNoReply(s) {
+			t.Errorf("%q", s)
+		}
+	}
+	for _, s := range []string{"", "Javobsiz qolmaysiz", "ok"} {
+		if IsNoReply(s) {
+			t.Errorf("%q", s)
+		}
+	}
+	if !strings.Contains(SystemPrompt(Request{}), NoReply) {
+		t.Error("system prompt javobsiz belgisini tushuntirmaydi")
+	}
+}

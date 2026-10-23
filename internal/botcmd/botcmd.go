@@ -101,6 +101,7 @@ const helpText = `Kotib — Telegram'dagi shaxsiy xabarlaringizga AI yordamida j
 /taklif — do'stni taklif qilish (bonus kunlar)
 /hayriya — hayriya hisoboti va xayriya qilish
 /sor <savol> — yozishma haqida so'rash, masalan: /sor Aziz bilan nima kelishdik? (Pro)
+  /sor yozish shart emas: botga oddiy xabar yozsangiz ham savol deb qabul qilinadi.
 
 Sozlamalar, qoidalar va qoralamalar — "Ochish" tugmasi orqali ilovada.`
 
