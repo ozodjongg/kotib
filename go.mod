@@ -2,7 +2,7 @@ module github.com/ozodjongg/secretar_ai_agent
 
 go 1.26.0
 
-toolchain go1.26.9
+toolchain go1.26.10
 
 require (
 	github.com/gotd/td v0.162.0
