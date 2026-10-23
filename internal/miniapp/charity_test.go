@@ -54,3 +54,17 @@ func TestCharityAPI(t *testing.T) {
 		t.Fatalf("payouts: %v", m["payouts"])
 	}
 }
+
+func TestCharityMine(t *testing.T) {
+	url, st, bill, _, _ := setupAdmin(t)
+	ctx := context.Background()
+	bill.CharityPercent = 10
+	_, _ = st.AddPayment(ctx, store.Payment{ChargeID: "m1", OwnerID: 20, Amount: 200, Currency: "XTR", Payload: "sub:20:advanced:0123456789abcdef"})
+	_, _ = st.AddPayment(ctx, store.Payment{ChargeID: "m2", OwnerID: 21, Amount: 300, Currency: "XTR", Payload: "sub:21:advanced:0123456789abcdef"})
+	if _, m := do(t, "GET", url+"/api/charity", userAuth("20"), ""); m["mine"] != float64(20) {
+		t.Fatalf("o'z hissasi (200 × 10%%): %v", m["mine"])
+	}
+	if _, m := do(t, "GET", url+"/api/charity", userAuth("1"), ""); m["mine"] != float64(0) {
+		t.Fatalf("to'lamagan: %v", m["mine"])
+	}
+}

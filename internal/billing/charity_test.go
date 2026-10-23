@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -175,5 +176,87 @@ func TestCharityStartPersisted(t *testing.T) {
 	}
 	if _, err := ParseCharityStart("2026/11"); err == nil {
 		t.Fatal("format")
+	}
+}
+
+func TestCharityPaidNotifiesSubscribers(t *testing.T) {
+	s, st, _, c := charitySvc(t)
+	ctx := context.Background()
+	charityNotifyPause = 0
+	s.CharityStartAt = time.Date(2026, 10, 1, 0, 0, 0, 0, quotaZone)
+	for _, id := range []int64{2, 3, 4, 5} {
+		_ = st.UpsertAccount(ctx, store.Account{OwnerID: id, Status: store.StatusActive})
+	}
+	_ = st.SetBan(ctx, store.Ban{OwnerID: 4, By: 99})
+	var mu sync.Mutex
+	got := map[int64]string{}
+	s.Notify = func(_ context.Context, owner int64, text string, _ bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		got[owner] = text
+	}
+	oct := time.Date(2026, 10, 10, 10, 0, 0, 0, quotaZone)
+	sub := "sub:1:advanced:0123456789abcdef"
+	addPay(t, st, "s1", 150, sub, oct)                 // 1 → 15 ⭐
+	addPay(t, st, "s1b", 150, sub, oct.Add(time.Hour)) // yana 1 → jami 30 ⭐
+	_, _ = st.AddPayment(ctx, store.Payment{ChargeID: "s2", OwnerID: 2, Amount: 250, Currency: Currency, Payload: sub, CreatedAt: oct})
+	_, _ = st.AddPayment(ctx, store.Payment{ChargeID: "d3", OwnerID: 3, Amount: 500, Currency: Currency, Payload: "don:3:0123456789abcdef", CreatedAt: oct}) // faqat donor
+	_, _ = st.AddPayment(ctx, store.Payment{ChargeID: "s4", OwnerID: 4, Amount: 150, Currency: Currency, Payload: sub, CreatedAt: oct})                      // bloklangan
+	_, _ = st.AddPayment(ctx, store.Payment{ChargeID: "s5", OwnerID: 5, Amount: 150, Currency: Currency, Payload: sub, CreatedAt: oct})
+	_ = st.MarkRefunded(ctx, "s5")                                                                                                      // qaytarilgan
+	_, _ = st.AddPayment(ctx, store.Payment{ChargeID: "s9", OwnerID: 9, Amount: 150, Currency: Currency, Payload: sub, CreatedAt: oct}) // akkaunt o'chirilgan
+	_, _ = st.AddPayment(ctx, store.Payment{ChargeID: "n1", OwnerID: 1, Amount: 150, Currency: Currency, Payload: sub,
+		CreatedAt: time.Date(2026, 11, 3, 0, 0, 0, 0, quotaZone)}) // boshqa oy
+
+	c.t = time.Date(2026, 11, 20, 0, 0, 0, 0, quotaZone)
+	if mine, err := s.MyCharity(ctx, 3); err != nil || mine != 500 {
+		t.Fatalf("donor hissasi: %d %v", mine, err)
+	}
+	if mine, _ := s.MyCharity(ctx, 1); mine != 45 {
+		t.Fatalf("obunachi hissasi (450 × 10%%): %d", mine)
+	}
+	out := s.CloseCharityMonths(ctx, nil)
+	if len(out) != 1 {
+		t.Fatal(out)
+	}
+	if err := s.MarkCharityPaid(ctx, out[0].ID, "https://tonviewer.com/transaction/abc", 99); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		mu.Lock()
+		n := len(got)
+		mu.Unlock()
+		if n >= 2 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(50 * time.Millisecond) // ortiqcha xabar kelmasin
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 2 {
+		t.Fatalf("faqat obunachilar (1, 2): %v", got)
+	}
+	if !strings.Contains(got[1], "30 ⭐") || !strings.Contains(got[1], "oktabr 2026") || !strings.Contains(got[1], "tonviewer") || !strings.Contains(got[1], "Mehr") {
+		t.Fatalf("1: %s", got[1])
+	}
+	if !strings.Contains(got[2], "25 ⭐") {
+		t.Fatalf("2: %s", got[2])
+	}
+}
+
+func TestManualCharityNoSubscriberNotice(t *testing.T) {
+	s, _, _, _ := charitySvc(t)
+	ctx := context.Background()
+	called := make(chan struct{}, 1)
+	s.Notify = func(context.Context, int64, string, bool) { called <- struct{}{} }
+	if _, err := s.AddManualCharity(ctx, 99, 100, "naqd", ""); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-called:
+		t.Fatal("qo'shimcha xayriya obunachilarga xabar yubormaydi")
+	case <-time.After(50 * time.Millisecond):
 	}
 }

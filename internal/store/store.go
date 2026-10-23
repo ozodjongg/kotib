@@ -386,6 +386,10 @@ type Store interface {
 	CharityStart(ctx context.Context, candidate time.Time) (time.Time, error)
 	// PaymentSums — [from, to) oralig'idagi qaytarilmagan to'lovlar: obunalar va xayriyalar (DonationPrefix) alohida.
 	PaymentSums(ctx context.Context, from, to time.Time) (subs, donations int64, err error)
+	// SubscriberSums — [from, to) oralig'idagi qaytarilmagan obuna to'lovlari (xayriyasiz), ega bo'yicha.
+	SubscriberSums(ctx context.Context, from, to time.Time) (map[int64]int64, error)
+	// OwnerPaymentSums — egasining [from, to) oralig'idagi qaytarilmagan obuna to'lovlari va xayriyalari.
+	OwnerPaymentSums(ctx context.Context, owner int64, from, to time.Time) (subs, donations int64, err error)
 	// AddCharityPayout o'tkazmani yozadi; shu oy (monthly) allaqachon yozilgan bo'lsa false.
 	AddCharityPayout(ctx context.Context, p CharityPayout) (int64, bool, error)
 	// ListCharityPayouts — yangidan eskiga; limit <= 0 — hammasi.

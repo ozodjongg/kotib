@@ -97,6 +97,7 @@ type Billing interface {
 	// Hayriya (charity.go)
 	CharityEnabled() bool
 	CharityReport(ctx context.Context) (billing.CharityReport, error)
+	MyCharity(ctx context.Context, owner int64) (int64, error)
 	DonationLink(ctx context.Context, owner int64, stars int) (string, error)
 	MarkCharityPaid(ctx context.Context, id int64, proof string, admin int64) error
 	AddManualCharity(ctx context.Context, admin int64, stars int, note, proof string) (int64, error)

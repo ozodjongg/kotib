@@ -2187,6 +2187,7 @@ function charityCard() {
         ". Summa oyda bir marta tashkilotga o'tkaziladi va isboti shu yerda ko'rsatiladi."),
       r.url ? h('a', { href: r.url, class: 'small', onclick: (e) => { e.preventDefault(); openExternal(r.url); } }, 'Tashkilot haqida →') : null,
       h('div', { class: 'stats' }, stat(r.paid_stars + ' ⭐', "O'tkazilgan"), stat(r.accruing_stars + ' ⭐', "Shu oy yig'ilmoqda")),
+      r.mine ? h('p', { class: 'small' }, `💚 Sizning hissangiz: ${r.mine} ⭐ — har oy o'tkazilgach, bot sizga isboti bilan xabar beradi.`) : null,
       r.pending_stars ? h('p', { class: 'muted small' }, `O'tkazilishi kutilmoqda: ${r.pending_stars} ⭐ (Stars 21 kundan keyin yechib olinadi)`) : null,
       h('h3', {}, "O'zingiz ham qo'shing"),
       h('p', { class: 'muted small' }, "Stars balansingizdan — to'liq hayriyaga ketadi."),
